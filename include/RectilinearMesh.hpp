@@ -10,7 +10,9 @@ namespace SemiImplicitFV {
 enum class BoundaryCondition {
     Reflecting,  // Wall: reflect normal velocity, copy scalars
     Outflow,     // Zero gradient (extrapolation from nearest interior)
-    Periodic     // Wrap around to opposite boundary
+    Periodic,    // Wrap around to opposite boundary
+    SlipWall,    // Wall: copy tangential velocity, reflect normal velocity, copy scalars
+    NoSlipWall  // Wall: zero velocity, copy scalars
 };
 
 /// Rectilinear mesh supporting 1D, 2D, and 3D grids without AMR.
@@ -171,7 +173,7 @@ private:
     /// If reflectU/V/W is true, the corresponding momentum and velocity
     /// components are negated (for reflecting wall BCs).
     void copyCell(std::size_t dst, std::size_t src,
-                  bool reflectU, bool reflectV, bool reflectW);
+                  double sU, double sV, double sW);
 };
 
 } // namespace SemiImplicitFV

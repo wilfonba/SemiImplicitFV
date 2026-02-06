@@ -155,26 +155,28 @@ void RectilinearMesh::setBoundaryCondition(int face, BoundaryCondition bc) {
 }
 
 void RectilinearMesh::copyCell(std::size_t dst, std::size_t src,
-                               bool reflectU, bool reflectV, bool reflectW)
+                               double sU, double sV, double sW)
 {
-    double su = reflectU ? -1.0 : 1.0;
-    double sv = reflectV ? -1.0 : 1.0;
-    double sw = reflectW ? -1.0 : 1.0;
+    rho[dst]  = rho[src]; // Primitive and conservative
 
-    rho[dst]  = rho[src];
-    rhoU[dst] = su * rhoU[src];
-    rhoV[dst] = sv * rhoV[src];
-    rhoW[dst] = sw * rhoW[src];
-    rhoE[dst] = rhoE[src];
+    rhoU[dst] = sU * rhoU[src]; // Conservative
+    velU[dst] = sU * velU[src]; // Primitive
 
-    velU[dst] = su * velU[src];
-    velV[dst] = sv * velV[src];
-    velW[dst] = sw * velW[src];
-    pres[dst] = pres[src];
-    temp[dst] = temp[src];
-    sigma[dst] = sigma[src];
+    if (dim_ >= 2) {
+    rhoV[dst] = sV * rhoV[src]; // Conservative
+    velV[dst] = sV * velV[src]; // Primitive
+        if (dim_ >= 3) {
+        rhoW[dst] = sW * rhoW[src]; // Conservative
+        velW[dst] = sW * velW[src]; // Primitive
+        }
+    }
+    rhoE[dst] = rhoE[src]; // Conservative
+    pres[dst] = pres[src]; // Primitive
 
-    aux[dst] = aux[src];
+    temp[dst] = temp[src]; // Primitive
+    sigma[dst] = sigma[src]; // Neither
+
+    aux[dst] = aux[src]; // Neither
 }
 
 void RectilinearMesh::applyBoundaryConditions() {
@@ -197,44 +199,66 @@ void RectilinearMesh::fillGhostX() {
             for (int g = 1; g <= ngx_; ++g) {
                 std::size_t ghost = index(-g, j, k);
                 std::size_t src;
-                bool reflect = false;
+                double sU(1.0);
+                double sV(1.0);
+                double sW(1.0);
 
                 switch (bc_[XLow]) {
                 case BoundaryCondition::Reflecting:
                     src = index(g - 1, j, k);
-                    reflect = true;
                     break;
                 case BoundaryCondition::Periodic:
                     src = index(nx_ - g, j, k);
+                    break;
+                case BoundaryCondition::SlipWall:
+                    src = index(g - 1, j, k);
+                    sU = -1.0;
+                    break;
+                case BoundaryCondition::NoSlipWall:
+                    src = index(g - 1, j, k);
+                    sU = -1.0;
+                    sV = -1.0;
+                    sW = -1.0;
                     break;
                 case BoundaryCondition::Outflow:
                 default:
                     src = index(0, j, k);
                     break;
                 }
-                copyCell(ghost, src, reflect, false, false);
+                copyCell(ghost, src, sU, sV, sW);
             }
 
             // x-high
             for (int g = 1; g <= ngx_; ++g) {
                 std::size_t ghost = index(nx_ - 1 + g, j, k);
                 std::size_t src;
-                bool reflect = false;
+                double sU(1.0);
+                double sV(1.0);
+                double sW(1.0);
 
                 switch (bc_[XHigh]) {
                 case BoundaryCondition::Reflecting:
                     src = index(nx_ - g, j, k);
-                    reflect = true;
                     break;
                 case BoundaryCondition::Periodic:
                     src = index(g - 1, j, k);
+                    break;
+                case BoundaryCondition::SlipWall:
+                    src = index(nx_ - g, j, k);
+                    sU = -1.0;
+                    break;
+                case BoundaryCondition::NoSlipWall:
+                    src = index(nx_ - g, j, k);
+                    sU = -1.0;
+                    sV = -1.0;
+                    sW = -1.0;
                     break;
                 case BoundaryCondition::Outflow:
                 default:
                     src = index(nx_ - 1, j, k);
                     break;
                 }
-                copyCell(ghost, src, reflect, false, false);
+                copyCell(ghost, src, sU, sV, sW);
             }
         }
     }
@@ -255,44 +279,66 @@ void RectilinearMesh::fillGhostY() {
             for (int g = 1; g <= ngy_; ++g) {
                 std::size_t ghost = index(i, -g, k);
                 std::size_t src;
-                bool reflect = false;
+                double sU(1.0);
+                double sV(1.0);
+                double sW(1.0);
 
                 switch (bc_[YLow]) {
                 case BoundaryCondition::Reflecting:
                     src = index(i, g - 1, k);
-                    reflect = true;
                     break;
                 case BoundaryCondition::Periodic:
                     src = index(i, ny_ - g, k);
+                    break;
+                case BoundaryCondition::SlipWall:
+                    src = index(i, g - 1, k);
+                    sV = -1.0;
+                    break;
+                case BoundaryCondition::NoSlipWall:
+                    src = index(i, g - 1, k);
+                    sU = -1.0;
+                    sV = -1.0;
+                    sW = -1.0;
                     break;
                 case BoundaryCondition::Outflow:
                 default:
                     src = index(i, 0, k);
                     break;
                 }
-                copyCell(ghost, src, false, reflect, false);
+                copyCell(ghost, src, sU, sV, sW);
             }
 
             // y-high
             for (int g = 1; g <= ngy_; ++g) {
                 std::size_t ghost = index(i, ny_ - 1 + g, k);
                 std::size_t src;
-                bool reflect = false;
+                double sU(1.0);
+                double sV(1.0);
+                double sW(1.0);
 
                 switch (bc_[YHigh]) {
                 case BoundaryCondition::Reflecting:
                     src = index(i, ny_ - g, k);
-                    reflect = true;
                     break;
                 case BoundaryCondition::Periodic:
                     src = index(i, g - 1, k);
+                    break;
+                case BoundaryCondition::SlipWall:
+                    src = index(i, ny_ - g, k);
+                    sV = -1.0;
+                    break;
+                case BoundaryCondition::NoSlipWall:
+                    src = index(i, ny_ - g, k);
+                    sU = -1.0;
+                    sV = -1.0;
+                    sW = -1.0;
                     break;
                 case BoundaryCondition::Outflow:
                 default:
                     src = index(i, ny_ - 1, k);
                     break;
                 }
-                copyCell(ghost, src, false, reflect, false);
+                copyCell(ghost, src, sU, sV, sW);
             }
         }
     }
@@ -315,44 +361,66 @@ void RectilinearMesh::fillGhostZ() {
             for (int g = 1; g <= ngz_; ++g) {
                 std::size_t ghost = index(i, j, -g);
                 std::size_t src;
-                bool reflect = false;
+                double sU(1.0);
+                double sV(1.0);
+                double sW(1.0);
 
                 switch (bc_[ZLow]) {
                 case BoundaryCondition::Reflecting:
                     src = index(i, j, g - 1);
-                    reflect = true;
                     break;
                 case BoundaryCondition::Periodic:
                     src = index(i, j, nz_ - g);
+                    break;
+                case BoundaryCondition::SlipWall:
+                    src = index(i, j, g - 1);
+                    sW = -1.0;
+                    break;
+                case BoundaryCondition::NoSlipWall:
+                    src = index(i, j, g - 1);
+                    sU = -1.0;
+                    sV = -1.0;
+                    sW = -1.0;
                     break;
                 case BoundaryCondition::Outflow:
                 default:
                     src = index(i, j, 0);
                     break;
                 }
-                copyCell(ghost, src, false, false, reflect);
+                copyCell(ghost, src, sU, sV, sW);
             }
 
             // z-high
             for (int g = 1; g <= ngz_; ++g) {
                 std::size_t ghost = index(i, j, nz_ - 1 + g);
                 std::size_t src;
-                bool reflect = false;
+                double sU(1.0);
+                double sV(1.0);
+                double sW(1.0);
 
                 switch (bc_[ZHigh]) {
                 case BoundaryCondition::Reflecting:
                     src = index(i, j, nz_ - g);
-                    reflect = true;
                     break;
                 case BoundaryCondition::Periodic:
                     src = index(i, j, g - 1);
+                    break;
+                case BoundaryCondition::SlipWall:
+                    src = index(i, j, nz_ - g);
+                    sW = -1.0;
+                    break;
+                case BoundaryCondition::NoSlipWall:
+                    src = index(i, j, nz_ - g);
+                    sU = -1.0;
+                    sV = -1.0;
+                    sW = -1.0;
                     break;
                 case BoundaryCondition::Outflow:
                 default:
                     src = index(i, j, nz_ - 1);
                     break;
                 }
-                copyCell(ghost, src, false, false, reflect);
+                copyCell(ghost, src, sU, sV, sW);
             }
         }
     }

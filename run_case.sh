@@ -17,6 +17,7 @@ Options:
   -l, --list        List available cases
   -c, --clean       Clean rebuild (remove build directory first)
   -d, --debug       Build in Debug mode
+  --build-only      Only build, do not run
   -j <N>            Parallel build jobs (default: number of cores)
   -h, --help        Show this help
 
@@ -41,6 +42,7 @@ list_cases() {
 
 # --- Parse arguments ---
 CLEAN=false
+BUILD_ONLY=false
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)"
 CASE_NAME=""
 PROGRAM_ARGS=()
@@ -57,6 +59,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -d|--debug)
             BUILD_TYPE="Debug"
+            shift
+            ;;
+        --build-only)
+            BUILD_ONLY=true
             shift
             ;;
         -j)
@@ -124,8 +130,10 @@ echo "Building $CASE_NAME..."
 cmake --build "$BUILD_DIR" --target "$CASE_NAME" -j "$JOBS"
 
 # --- Run from the case directory so output files land there ---
-echo ""
-echo "=== Running $CASE_NAME ==="
-echo ""
-cd "$CASE_DIR"
-"$BUILD_DIR/$CASE_NAME" "${PROGRAM_ARGS[@]+"${PROGRAM_ARGS[@]}"}"
+if ! "$BUILD_ONLY"; then
+    echo ""
+    echo "=== Running $CASE_NAME ==="
+    echo ""
+    cd "$CASE_DIR"
+    "$BUILD_DIR/$CASE_NAME" "${PROGRAM_ARGS[@]+"${PROGRAM_ARGS[@]}"}"
+fi
