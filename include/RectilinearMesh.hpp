@@ -113,7 +113,8 @@ public:
 
     /// Fill ghost cells for all active dimensions based on current BCs.
     /// Uses an onion-peel ordering so edge/corner ghosts are filled correctly.
-    void applyBoundaryConditions(SolutionState& state) const;
+    void applyBoundaryConditions(SolutionState& state,
+            VarSet varSet = VarSet::PRIM) const;
 
     /// Fill ghost cells for a single scalar field.
     void fillScalarGhosts(std::vector<double>& field) const;
@@ -138,9 +139,9 @@ private:
         const std::vector<double>& physNodes, int nCells, int ng);
 
     // Ghost-fill helpers for each direction.
-    void fillGhostX(SolutionState& state) const;
-    void fillGhostY(SolutionState& state) const;
-    void fillGhostZ(SolutionState& state) const;
+    void fillGhostX(SolutionState& state, VarSet varSet = VarSet::PRIM) const;
+    void fillGhostY(SolutionState& state, VarSet varSet = VarSet::PRIM) const;
+    void fillGhostZ(SolutionState& state, VarSet varSet = VarSet::PRIM) const;
 };
 
 } // namespace SemiImplicitFV

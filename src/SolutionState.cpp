@@ -33,11 +33,49 @@ void SolutionState::allocate(std::size_t totalCells, int dim) {
     aux.assign(totalCells, 0.0);
 }
 
-void SolutionState::copyCell(std::size_t dst, std::size_t src,
-                              double sU, double sV, double sW)
+void SolutionState::copyCell_P(std::size_t dst, std::size_t src,
+                                       double sU, double sV, double sW)
 {
     rho[dst]  = rho[src];
+    velU[dst] = sU * velU[src];
 
+    if (dim_ >= 2) {
+        velV[dst] = sV * velV[src];
+    }
+
+    if (dim_ >= 3) {
+        velW[dst] = sW * velW[src];
+    }
+
+    pres[dst] = pres[src];
+    temp[dst] = temp[src];
+    sigma[dst] = sigma[src];
+    aux[dst] = aux[src];
+}
+
+void SolutionState::copyCell_C(std::size_t dst, std::size_t src,
+                                          double sU, double sV, double sW)
+{
+    rho[dst]  = rho[src];
+    rhoU[dst] = sU * rhoU[src];
+
+    if (dim_ >= 2) {
+        rhoV[dst] = sV * rhoV[src];
+    }
+
+    if (dim_ >= 3) {
+        rhoW[dst] = sW * rhoW[src];
+    }
+
+    rhoE[dst] = rhoE[src];
+    sigma[dst] = sigma[src];
+    aux[dst] = aux[src];
+}
+
+void SolutionState::copyCell(std::size_t dst, std::size_t src,
+                                          double sU, double sV, double sW)
+{
+    rho[dst]  = rho[src];
     rhoU[dst] = sU * rhoU[src];
     velU[dst] = sU * velU[src];
 
@@ -53,10 +91,8 @@ void SolutionState::copyCell(std::size_t dst, std::size_t src,
 
     rhoE[dst] = rhoE[src];
     pres[dst] = pres[src];
-
     temp[dst] = temp[src];
     sigma[dst] = sigma[src];
-
     aux[dst] = aux[src];
 }
 

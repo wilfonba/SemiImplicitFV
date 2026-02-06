@@ -32,6 +32,7 @@ double ExplicitSolver::step(const RectilinearMesh& mesh, SolutionState& state, d
 }
 
 void ExplicitSolver::computeRHS(const RectilinearMesh& mesh, SolutionState& state) {
+
     convertConservativeToPrimitiveVariables(mesh, state, eos_);
     mesh.applyBoundaryConditions(state);
 

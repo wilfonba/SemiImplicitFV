@@ -7,6 +7,11 @@
 
 namespace SemiImplicitFV {
 
+enum class VarSet {
+    CONS,        // Conservative variables
+    PRIM         // Primitive variables
+};
+
 /// Struct-of-arrays storage for all per-cell field data.
 ///
 /// Arrays are sized to totalCells (including ghost cells).  Indexing is
@@ -25,9 +30,15 @@ public:
     /// Spatial dimensionality (1, 2, or 3).
     int dim() const { return dim_; }
 
+    /// Copy primitive field values from src to dst, applying velocity sign multipliers.
+    void copyCell_P(std::size_t dst, std::size_t src,
+                            double sU, double sV, double sW);
+    /// Copy conservative field values from src to dst, applying velocity sign multipliers.
+    void copyCell_C(std::size_t dst, std::size_t src,
+                            double sU, double sV, double sW);
     /// Copy all field values from src to dst, applying velocity sign multipliers.
     void copyCell(std::size_t dst, std::size_t src,
-                  double sU, double sV, double sW);
+                            double sU, double sV, double sW);
 
     /// Gather a ConservativeState bundle from a flat index.
     ConservativeState getConservativeState(std::size_t idx) const;

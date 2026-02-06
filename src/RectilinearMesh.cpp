@@ -121,17 +121,17 @@ void RectilinearMesh::setBoundaryCondition(int face, BoundaryCondition bc) {
     bc_[face] = bc;
 }
 
-void RectilinearMesh::applyBoundaryConditions(SolutionState& state) const {
-    fillGhostX(state);
-    if (dim_ >= 2) fillGhostY(state);
-    if (dim_ >= 3) fillGhostZ(state);
+void RectilinearMesh::applyBoundaryConditions(SolutionState& state, VarSet varSet) const {
+    fillGhostX(state, varSet);
+    if (dim_ >= 2) fillGhostY(state, varSet);
+    if (dim_ >= 3) fillGhostZ(state, varSet);
 }
 
 // ---------------------------------------------------------------------------
 // Ghost fill: x-direction
 // ---------------------------------------------------------------------------
 
-void RectilinearMesh::fillGhostX(SolutionState& state) const {
+void RectilinearMesh::fillGhostX(SolutionState& state, VarSet varSet) const {
     for (int k = 0; k < nz_; ++k) {
         for (int j = 0; j < ny_; ++j) {
             for (int g = 1; g <= ngx_; ++g) {
@@ -159,7 +159,15 @@ void RectilinearMesh::fillGhostX(SolutionState& state) const {
                     src = index(0, j, k);
                     break;
                 }
-                state.copyCell(ghost, src, sU, sV, sW);
+
+                switch (varSet) {
+                case (VarSet::PRIM):
+                    state.copyCell_P(ghost, src, sU, sV, sW);
+                case (VarSet::CONS):
+                    state.copyCell_C(ghost, src, sU, sV, sW);
+                default:
+                    state.copyCell(ghost, src, sU, sV, sW);
+                }
             }
 
             for (int g = 1; g <= ngx_; ++g) {
@@ -187,7 +195,15 @@ void RectilinearMesh::fillGhostX(SolutionState& state) const {
                     src = index(nx_ - 1, j, k);
                     break;
                 }
-                state.copyCell(ghost, src, sU, sV, sW);
+
+                switch (varSet) {
+                case (VarSet::PRIM):
+                    state.copyCell_P(ghost, src, sU, sV, sW);
+                case (VarSet::CONS):
+                    state.copyCell_C(ghost, src, sU, sV, sW);
+                default:
+                    state.copyCell(ghost, src, sU, sV, sW);
+                }
             }
         }
     }
@@ -197,7 +213,7 @@ void RectilinearMesh::fillGhostX(SolutionState& state) const {
 // Ghost fill: y-direction
 // ---------------------------------------------------------------------------
 
-void RectilinearMesh::fillGhostY(SolutionState& state) const {
+void RectilinearMesh::fillGhostY(SolutionState& state, VarSet varSet) const {
     int iLo = -ngx_;
     int iHi = nx_ + ngx_;
 
@@ -228,7 +244,15 @@ void RectilinearMesh::fillGhostY(SolutionState& state) const {
                     src = index(i, 0, k);
                     break;
                 }
-                state.copyCell(ghost, src, sU, sV, sW);
+
+                switch (varSet) {
+                case (VarSet::PRIM):
+                    state.copyCell_P(ghost, src, sU, sV, sW);
+                case (VarSet::CONS):
+                    state.copyCell_C(ghost, src, sU, sV, sW);
+                default:
+                    state.copyCell(ghost, src, sU, sV, sW);
+                }
             }
 
             for (int g = 1; g <= ngy_; ++g) {
@@ -256,7 +280,15 @@ void RectilinearMesh::fillGhostY(SolutionState& state) const {
                     src = index(i, ny_ - 1, k);
                     break;
                 }
-                state.copyCell(ghost, src, sU, sV, sW);
+
+                switch (varSet) {
+                case (VarSet::PRIM):
+                    state.copyCell_P(ghost, src, sU, sV, sW);
+                case (VarSet::CONS):
+                    state.copyCell_C(ghost, src, sU, sV, sW);
+                default:
+                    state.copyCell(ghost, src, sU, sV, sW);
+                }
             }
         }
     }
@@ -266,7 +298,7 @@ void RectilinearMesh::fillGhostY(SolutionState& state) const {
 // Ghost fill: z-direction
 // ---------------------------------------------------------------------------
 
-void RectilinearMesh::fillGhostZ(SolutionState& state) const {
+void RectilinearMesh::fillGhostZ(SolutionState& state, VarSet varSet) const {
     int iLo = -ngx_;
     int iHi = nx_ + ngx_;
     int jLo = -ngy_;
@@ -299,7 +331,15 @@ void RectilinearMesh::fillGhostZ(SolutionState& state) const {
                     src = index(i, j, 0);
                     break;
                 }
-                state.copyCell(ghost, src, sU, sV, sW);
+
+                switch (varSet) {
+                case (VarSet::PRIM):
+                    state.copyCell_P(ghost, src, sU, sV, sW);
+                case (VarSet::CONS):
+                    state.copyCell_C(ghost, src, sU, sV, sW);
+                default:
+                    state.copyCell(ghost, src, sU, sV, sW);
+                }
             }
 
             for (int g = 1; g <= ngz_; ++g) {
@@ -327,7 +367,15 @@ void RectilinearMesh::fillGhostZ(SolutionState& state) const {
                     src = index(i, j, nz_ - 1);
                     break;
                 }
-                state.copyCell(ghost, src, sU, sV, sW);
+
+                switch (varSet) {
+                case (VarSet::PRIM):
+                    state.copyCell_P(ghost, src, sU, sV, sW);
+                case (VarSet::CONS):
+                    state.copyCell_C(ghost, src, sU, sV, sW);
+                default:
+                    state.copyCell(ghost, src, sU, sV, sW);
+                }
             }
         }
     }
