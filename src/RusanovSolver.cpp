@@ -79,3 +79,4 @@ double RusanovSolver::maxWaveSpeed(
 }
 
 } // namespace SemiImplicitFV
+

@@ -136,3 +136,4 @@ double IGRSolver::traceSquared(const GradientTensor& A) {
 }
 
 } // namespace SemiImplicitFV
+

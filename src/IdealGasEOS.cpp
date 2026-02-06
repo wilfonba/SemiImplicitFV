@@ -10,7 +10,7 @@ IdealGasEOS::IdealGasEOS(double gamma, double R)
 double IdealGasEOS::pressure(const ConservativeState& U) const {
     double rho = std::max(U.rho, 1e-14);
     double ke = 0.5 * (U.rhoU[0]*U.rhoU[0] + U.rhoU[1]*U.rhoU[1] + U.rhoU[2]*U.rhoU[2]) / rho;
-    double e = U.rhoE - ke;  // Internal energy per unit volume
+    double e = U.rhoE - ke;
 
     return (gamma_ - 1.0) * e;
 }
@@ -70,6 +70,5 @@ ConservativeState IdealGasEOS::toConservative(const PrimitiveState& W) const {
     return U;
 }
 
-
-
 } // namespace SemiImplicitFV
+

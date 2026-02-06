@@ -63,3 +63,4 @@ inline double normalVelocity(const PrimitiveState& W, const std::array<double, 3
 } // namespace SemiImplicitFV
 
 #endif // RIEMANN_SOLVER_HPP
+

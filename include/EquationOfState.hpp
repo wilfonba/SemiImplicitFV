@@ -38,3 +38,4 @@ public:
 } // namespace SemiImplicitFV
 
 #endif // EQUATION_OF_STATE_HPP
+

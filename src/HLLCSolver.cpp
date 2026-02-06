@@ -148,3 +148,4 @@ double HLLCSolver::maxWaveSpeed(
 }
 
 } // namespace SemiImplicitFV
+

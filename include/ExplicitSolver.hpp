@@ -1,5 +1,5 @@
-#ifndef EXPLICITSOLVER_HPP
-#define EXPLICITSOLVER_HPP
+#ifndef EXPLICIT_SOLVER_HPP
+#define EXPLICIT_SOLVER_HPP
 
 #include "RectilinearMesh.hpp"
 #include "State.hpp"
@@ -53,5 +53,5 @@ private:
 
 } // namespace SemiImplicitFV
 
-#endif /* end of include guard EXPLICITSOLVER_HPP */
+#endif // EXPLICIT_SOLVER_HPP
 

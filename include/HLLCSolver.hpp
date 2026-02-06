@@ -32,3 +32,4 @@ public:
 } // namespace SemiImplicitFV
 
 #endif // HLLC_SOLVER_HPP
+

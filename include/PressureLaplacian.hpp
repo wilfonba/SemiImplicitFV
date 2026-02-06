@@ -1,5 +1,5 @@
-#ifndef PRESSURELAPLACIAN_HPP
-#define PRESSURELAPLACIAN_HPP
+#ifndef PRESSURE_LAPLACIAN_HPP
+#define PRESSURE_LAPLACIAN_HPP
 
 #include "RectilinearMesh.hpp"
 #include <vector>
@@ -14,4 +14,5 @@ double pressureLaplacian(
 
 } // namespace SemiImplicitFV
 
-#endif /* end of include guard PRESSURELAPLACIAN_HPP */
+#endif // PRESSURE_LAPLACIAN_HPP
+

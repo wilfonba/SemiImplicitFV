@@ -70,4 +70,5 @@ ConservativeState StiffenedGasEOS::toConservative(const PrimitiveState& W) const
     return U;
 }
 
-} // SemiImplicitFV
+} // namespace SemiImplicitFV
+

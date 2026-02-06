@@ -74,3 +74,4 @@ double UpwindSolver::maxWaveSpeed(
 }
 
 } // namespace SemiImplicitFV
+

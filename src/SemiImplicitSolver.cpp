@@ -638,3 +638,4 @@ void SemiImplicitSolver::computeVelocityGradients(const RectilinearMesh& mesh) {
 }
 
 } // namespace SemiImplicitFV
+

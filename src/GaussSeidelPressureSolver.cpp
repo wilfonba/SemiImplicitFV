@@ -47,5 +47,5 @@ int GaussSeidelPressureSolver::solve(
     return maxIter;
 }
 
-} // namespace SemiImplicitFV {
+} // namespace SemiImplicitFV
 

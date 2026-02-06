@@ -28,3 +28,4 @@ struct PrimitiveState {
 } // namespace SemiImplicitFV
 
 #endif // STATE_HPP
+
