@@ -98,8 +98,8 @@ int main() {
     std::cout << "Creating mesh with " << numCells << " cells...\n";
     RectilinearMesh mesh = RectilinearMesh::createUniform(
         1, numCells, 0.0, length);
-    mesh.setBoundaryCondition(RectilinearMesh::XLow,  BoundaryCondition::Reflecting);
-    mesh.setBoundaryCondition(RectilinearMesh::XHigh, BoundaryCondition::Reflecting);
+    mesh.setBoundaryCondition(RectilinearMesh::XLow,  BoundaryCondition::Outflow);
+    mesh.setBoundaryCondition(RectilinearMesh::XHigh, BoundaryCondition::Outflow);
 
     // Create equation of state
     auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0);

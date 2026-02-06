@@ -202,7 +202,7 @@ void RectilinearMesh::fillGhostX() {
                 double sW(1.0);
 
                 switch (bc_[XLow]) {
-                case BoundaryCondition::Reflecting:
+                case BoundaryCondition::Symmetry:
                     src = index(g - 1, j, k);
                     break;
                 case BoundaryCondition::Periodic:
@@ -235,7 +235,7 @@ void RectilinearMesh::fillGhostX() {
                 double sW(1.0);
 
                 switch (bc_[XHigh]) {
-                case BoundaryCondition::Reflecting:
+                case BoundaryCondition::Symmetry:
                     src = index(nx_ - g, j, k);
                     break;
                 case BoundaryCondition::Periodic:
@@ -282,7 +282,7 @@ void RectilinearMesh::fillGhostY() {
                 double sW(1.0);
 
                 switch (bc_[YLow]) {
-                case BoundaryCondition::Reflecting:
+                case BoundaryCondition::Symmetry:
                     src = index(i, g - 1, k);
                     break;
                 case BoundaryCondition::Periodic:
@@ -315,7 +315,7 @@ void RectilinearMesh::fillGhostY() {
                 double sW(1.0);
 
                 switch (bc_[YHigh]) {
-                case BoundaryCondition::Reflecting:
+                case BoundaryCondition::Symmetry:
                     src = index(i, ny_ - g, k);
                     break;
                 case BoundaryCondition::Periodic:
@@ -364,7 +364,7 @@ void RectilinearMesh::fillGhostZ() {
                 double sW(1.0);
 
                 switch (bc_[ZLow]) {
-                case BoundaryCondition::Reflecting:
+                case BoundaryCondition::Symmetry:
                     src = index(i, j, g - 1);
                     break;
                 case BoundaryCondition::Periodic:
@@ -397,7 +397,7 @@ void RectilinearMesh::fillGhostZ() {
                 double sW(1.0);
 
                 switch (bc_[ZHigh]) {
-                case BoundaryCondition::Reflecting:
+                case BoundaryCondition::Symmetry:
                     src = index(i, j, nz_ - g);
                     break;
                 case BoundaryCondition::Periodic:

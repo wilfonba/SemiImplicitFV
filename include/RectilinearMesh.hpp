@@ -8,7 +8,7 @@
 namespace SemiImplicitFV {
 
 enum class BoundaryCondition {
-    Reflecting,  // Wall: reflect normal velocity, copy scalars
+    Symmetry,  // symmetry
     Outflow,     // Zero gradient (extrapolation from nearest interior)
     Periodic,    // Wrap around to opposite boundary
     SlipWall,    // Wall: copy tangential velocity, reflect normal velocity, copy scalars
@@ -137,9 +137,7 @@ public:
     // Auxiliary variable
     std::vector<double> aux;
 
-    /// Fill ghost cells for a single scalar field. Uses zero-gradient
-    /// extrapolation for reflecting/outflow boundaries and periodic wrapping
-    /// for periodic boundaries. Onion-peel ordering for corners/edges.
+    /// Fill ghost cells for a single scalar field. 
     void fillScalarGhosts(std::vector<double>& field) const;
 
     /// Allocate (or re-allocate) all field arrays to totalCells(), zero-filled.
@@ -170,8 +168,6 @@ private:
     void fillGhostZ();
 
     /// Copy all field values from src index to dst index.
-    /// If reflectU/V/W is true, the corresponding momentum and velocity
-    /// components are negated (for reflecting wall BCs).
     void copyCell(std::size_t dst, std::size_t src,
                   double sU, double sV, double sW);
 };

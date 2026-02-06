@@ -21,7 +21,7 @@
 #include "SemiImplicitSolver.hpp"
 #include "GaussSeidelPressureSolver.hpp"
 #include "IGR.hpp"
-#include "EquationOfState.hpp"
+#include "IdealGasEOS.hpp"
 
 #include <iostream>
 #include <fstream>
