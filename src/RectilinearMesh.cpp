@@ -162,14 +162,12 @@ void RectilinearMesh::copyCell(std::size_t dst, std::size_t src,
     rhoU[dst] = sU * rhoU[src]; // Conservative
     velU[dst] = sU * velU[src]; // Primitive
 
-    if (dim_ >= 2) {
     rhoV[dst] = sV * rhoV[src]; // Conservative
     velV[dst] = sV * velV[src]; // Primitive
-        if (dim_ >= 3) {
-        rhoW[dst] = sW * rhoW[src]; // Conservative
-        velW[dst] = sW * velW[src]; // Primitive
-        }
-    }
+
+    rhoW[dst] = sW * rhoW[src]; // Conservative
+    velW[dst] = sW * velW[src]; // Primitive
+
     rhoE[dst] = rhoE[src]; // Conservative
     pres[dst] = pres[src]; // Primitive
 

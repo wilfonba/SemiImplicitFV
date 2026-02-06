@@ -108,7 +108,8 @@ int main() {
     initializeSodProblem(mesh, *eos);
 
     // Create advective Riemann solver (pressure-free!)
-    auto riemannSolver = std::make_shared<RusanovAdvectiveSolver>();
+    //auto riemannSolver = std::make_shared<RusanovAdvectiveSolver>();
+    auto riemannSolver = std::make_shared<HLLCAdvectiveSolver>();
 
     // Create pressure solver
     auto pressureSolver = std::make_shared<GaussSeidelPressureSolver>();
