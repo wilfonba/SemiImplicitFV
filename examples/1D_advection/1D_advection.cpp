@@ -1,15 +1,18 @@
 /**
- * Sod Shock Tube Example
+ * 1D Subsonic Advection (Entropy Wave)
  *
- * Demonstrates the semi-implicit finite volume solver (Kwatra et al.)
- * with Information Geometric Regularization (IGR) on the classic
- * Sod shock tube problem.
+ * A Gaussian density pulse advects at uniform subsonic velocity through
+ * a periodic domain.  This is a pure entropy wave: pressure and velocity
+ * are uniform, so the exact solution is a rigid translation of the
+ * initial density profile at the flow velocity u0.
  *
- * Key features:
- * - Flux splitting: advective (pressure-free) and pressure terms
- * - CFL based on material velocity only (not u±c)
- * - Implicit pressure solve avoids acoustic time step restriction
- * - IGR adds entropic pressure Σ to smooth discontinuities
+ * After one full domain traversal the pulse should return to its
+ * starting position, making error measurement straightforward.
+ *
+ * Useful for verifying:
+ *   - Advective flux accuracy and numerical dissipation
+ *   - Periodic boundary condition implementation
+ *   - Convergence rates (vary numCells)
  */
 
 #include "RectilinearMesh.hpp"
@@ -26,39 +29,42 @@
 
 using namespace SemiImplicitFV;
 
-// Initialize Sod shock tube conditions
-void initializeSodProblem(RectilinearMesh& mesh, const IdealGasEOS& eos) {
-    double xMid = 0.5;
+// ---- Problem parameters ----
+static constexpr double rho0    = 1.225;      // Background density  [kg/m³]
+static constexpr double p0      = 101325.0;   // Background pressure [Pa]
+static constexpr double u0      = 50.0;       // Advection velocity  [m/s]  (Mach ≈ 0.15)
+static constexpr double amp     = 0.01;       // Perturbation amplitude (1 %)
+static constexpr double xCenter = 0.5;        // Initial pulse centre
+static constexpr double sigma   = 0.05;       // Pulse width
 
-    // Left state: high pressure
-    PrimitiveState left;
-    left.rho = 1.0;
-    left.u = {0.0, 0.0, 0.0};
-    left.p = 1.0;
-    left.sigma = 0.0;
+// Gaussian density profile with periodic wrapping
+double densityProfile(double x, double xc, double L) {
+    double dx = x - xc;
+    dx -= L * std::round(dx / L);   // shortest periodic distance
+    return rho0 * (1.0 + amp * std::exp(-(dx * dx) / (sigma * sigma)));
+}
 
-    // Right state: low pressure
-    PrimitiveState right;
-    right.rho = 0.125;
-    right.u = {0.0, 0.0, 0.0};
-    right.p = 0.1;
-    right.sigma = 0.0;
-
+void initializeProblem(RectilinearMesh& mesh, const IdealGasEOS& eos,
+                       double xc, double L) {
     for (int i = 0; i < mesh.nx(); ++i) {
         std::size_t idx = mesh.index(i, 0, 0);
+        double x = mesh.cellCentroidX(i);
 
-        const PrimitiveState& W = (mesh.cellCentroidX(i) < xMid) ? left : right;
+        PrimitiveState W;
+        W.rho   = densityProfile(x, xc, L);
+        W.u     = {u0, 0.0, 0.0};
+        W.p     = p0;
+        W.sigma = 0.0;
+        W.T     = eos.temperature(W);
 
-        // Primitive
-        mesh.rho[idx]  = W.rho;
-        mesh.velU[idx] = W.u[0];
-        mesh.velV[idx] = W.u[1];
-        mesh.velW[idx] = W.u[2];
-        mesh.pres[idx] = W.p;
-        mesh.temp[idx] = eos.temperature(W);
-        mesh.sigma[idx] = W.sigma;
+        mesh.rho[idx]   = W.rho;
+        mesh.velU[idx]  = W.u[0];
+        mesh.velV[idx]  = W.u[1];
+        mesh.velW[idx]  = W.u[2];
+        mesh.pres[idx]  = W.p;
+        mesh.temp[idx]  = W.T;
+        mesh.sigma[idx] = 0.0;
 
-        // Conservative
         ConservativeState U = eos.toConservative(W);
         mesh.rhoU[idx] = U.rhoU[0];
         mesh.rhoV[idx] = U.rhoU[1];
@@ -69,138 +75,127 @@ void initializeSodProblem(RectilinearMesh& mesh, const IdealGasEOS& eos) {
 
 void writeSolution(const RectilinearMesh& mesh, const std::string& filename) {
     std::ofstream file(filename);
-    file << "# x rho u p sigma\n";
-
+    file << "# x rho u p\n";
     for (int i = 0; i < mesh.nx(); ++i) {
         std::size_t idx = mesh.index(i, 0, 0);
         file << mesh.cellCentroidX(i) << " "
              << mesh.rho[idx] << " "
              << mesh.velU[idx] << " "
-             << mesh.pres[idx] << " "
-             << mesh.sigma[idx] << "\n";
+             << mesh.pres[idx] << "\n";
     }
-
-    file.close();
 }
 
 int main() {
-    std::cout << "Semi-Implicit FV Solver (Kwatra et al.) with IGR\n";
-    std::cout << "================================================\n";
-    std::cout << "Sod Shock Tube Problem\n\n";
+    std::cout << "Semi-Implicit FV Solver - 1D Subsonic Advection\n";
+    std::cout << "================================================\n\n";
 
-    // Problem setup
-    const int numCells = 1000;
-    const double length = 1.0;
-    const double endTime = 0.2;
+    // ---- Setup ----
+    const int    numCells = 200;
+    const double length   = 1.0;
+    const double endTime  = length / u0;   // one full domain traversal
 
-    // Create mesh (1D uniform)
-    std::cout << "Creating mesh with " << numCells << " cells...\n";
-    RectilinearMesh mesh = RectilinearMesh::createUniform(
-        1, numCells, 0.0, length);
-    mesh.setBoundaryCondition(RectilinearMesh::XLow,  BoundaryCondition::Reflecting);
-    mesh.setBoundaryCondition(RectilinearMesh::XHigh, BoundaryCondition::Reflecting);
-
-    // Create equation of state
     auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0);
 
-    // Initialize solution
-    std::cout << "Initializing Sod shock tube problem...\n";
-    initializeSodProblem(mesh, *eos);
+    PrimitiveState ref;
+    ref.rho = rho0;
+    ref.u   = {u0, 0.0, 0.0};
+    ref.p   = p0;
+    double c0   = eos->soundSpeed(ref);
+    double mach = u0 / c0;
 
-    // Create advective Riemann solver (pressure-free!)
-    auto riemannSolver = std::make_shared<RusanovAdvectiveSolver>();
+    std::cout << "  Cells:    " << numCells << "\n";
+    std::cout << "  u0:       " << u0    << " m/s\n";
+    std::cout << "  c0:       " << c0    << " m/s\n";
+    std::cout << "  Mach:     " << mach  << "\n";
+    std::cout << "  End time: " << endTime << " s  (one domain traversal)\n\n";
 
-    // Create pressure solver
-    auto pressureSolver = std::make_shared<GaussSeidelPressureSolver>();
+    // ---- Mesh (periodic) ----
+    RectilinearMesh mesh = RectilinearMesh::createUniform(1, numCells, 0.0, length);
+    mesh.setBoundaryCondition(RectilinearMesh::XLow,  BoundaryCondition::Periodic);
+    mesh.setBoundaryCondition(RectilinearMesh::XHigh, BoundaryCondition::Periodic);
 
-    // Create IGR solver
+    // ---- Initial condition ----
+    initializeProblem(mesh, *eos, xCenter, length);
+    writeSolution(mesh, "advection_t0.dat");
+
+    // ---- Solver components ----
+    auto riemann  = std::make_shared<RusanovAdvectiveSolver>();
+    auto pressure = std::make_shared<GaussSeidelPressureSolver>();
+
     IGRParams igrParams;
-    igrParams.alphaCoeff = 1.0;       // α = αCoeff * Δx²
+    igrParams.alphaCoeff    = 1.0;
     igrParams.maxIterations = 5;
-    igrParams.tolerance = 1e-10;
-    auto igrSolver = std::make_shared<IGRSolver>(igrParams);
+    igrParams.tolerance     = 1e-10;
+    auto igr = std::make_shared<IGRSolver>(igrParams);
 
-    // Semi-implicit solver parameters
     SemiImplicitParams params;
-    params.cfl = 0.8;                  // Can use larger CFL (no acoustic restriction!)
-    params.maxPressureIters = 1000;
-    params.pressureTol = 1e-8;
-    params.maxDt = 1e-2;
-    params.useIGR = true;
+    params.cfl              = 0.95;
+    params.maxDt            = 1e-3;
+    params.maxPressureIters = 200;
+    params.pressureTol      = 1e-8;
+    params.useIGR           = true;
 
-    // Create semi-implicit solver
-    SemiImplicitSolver solver(riemannSolver, pressureSolver, eos, igrSolver, params);
+    SemiImplicitSolver solver(riemann, pressure, eos, igr, params);
 
-    // Write initial condition
-    writeSolution(mesh, "sod_t0.dat");
-
-    // Compute reference CFL (what explicit would need)
-    double maxC = 0.0;
-    for (int i = 0; i < mesh.nx(); ++i) {
-        std::size_t idx = mesh.index(i, 0, 0);
-        PrimitiveState W;
-        W.rho = mesh.rho[idx];
-        W.u = {mesh.velU[idx], mesh.velV[idx], mesh.velW[idx]};
-        W.p = mesh.pres[idx];
-        maxC = std::max(maxC, eos->soundSpeed(W));
-    }
-    double dx = length / numCells;
-    double explicitDt = 0.5 * dx / maxC;
-
-    std::cout << "\nReference explicit dt (CFL=0.5, acoustic): " << explicitDt << "\n";
-    std::cout << "Semi-implicit allows much larger dt!\n\n";
-
-    // Time integration
-    std::cout << "Running simulation to t = " << endTime << "...\n";
-    std::cout << "Using IGR with alpha_coeff = " << igrParams.alphaCoeff << "\n\n";
-
+    // ---- Time integration ----
+    std::cout << "Running...\n\n";
     double time = 0.0;
-    int step = 0;
+    int    step = 0;
 
     while (time < endTime) {
         double dt = solver.step(mesh, endTime - time);
         time += dt;
         step++;
 
-        if (step % 20 == 0 || step == 1) {
-            double maxSigma = 0.0;
-            for (int i = 0; i < mesh.nx(); ++i) {
-                std::size_t idx = mesh.index(i, 0, 0);
-                maxSigma = std::max(maxSigma, std::abs(mesh.sigma[idx]));
-            }
-
-            std::cout << "  Step " << step << ": t = " << time
+        if (step % 50 == 0 || step == 1) {
+            std::cout << "  Step " << step
+                      << ": t = " << time
                       << ", dt = " << dt
-                      << " (speedup: " << dt / explicitDt << "x)"
                       << ", pressure iters = " << solver.lastPressureIterations()
-                      << ", max|sigma| = " << maxSigma << "\n";
+                      << "\n";
         }
     }
 
-    std::cout << "\nSimulation complete after " << step << " steps.\n";
+    std::cout << "\nDone after " << step << " steps.\n";
 
-    // Compare to explicit
-    int explicitSteps = static_cast<int>(std::ceil(endTime / explicitDt));
-    std::cout << "Explicit method would need ~" << explicitSteps << " steps.\n";
-    std::cout << "Semi-implicit speedup: " << static_cast<double>(explicitSteps) / step << "x\n";
+    // ---- Write results ----
+    writeSolution(mesh, "advection_final.dat");
 
-    // Write final solution
-    writeSolution(mesh, "sod_final.dat");
-    std::cout << "\nSolution written to sod_final.dat\n";
+    // Exact solution: the pulse has translated by u0 * endTime = length,
+    // so with periodic wrapping it should be back at xCenter.
+    double exactCenter = xCenter + u0 * endTime;
 
-    // Summary statistics
-    double maxSigma = 0.0;
-    double minP = 1e10, maxP = 0.0;
+    // ---- Error analysis ----
+    double L1err = 0.0, Linf = 0.0;
+    double dx = length / numCells;
+
     for (int i = 0; i < mesh.nx(); ++i) {
         std::size_t idx = mesh.index(i, 0, 0);
-        maxSigma = std::max(maxSigma, std::abs(mesh.sigma[idx]));
-        minP = std::min(minP, mesh.pres[idx]);
-        maxP = std::max(maxP, mesh.pres[idx]);
+        double x     = mesh.cellCentroidX(i);
+        double exact  = densityProfile(x, exactCenter, length);
+        double err    = std::abs(mesh.rho[idx] - exact);
+        L1err += err * dx;
+        Linf   = std::max(Linf, err);
     }
 
-    std::cout << "\nFinal statistics:\n";
-    std::cout << "  Pressure range: [" << minP << ", " << maxP << "]\n";
-    std::cout << "  Max |sigma|: " << maxSigma << "\n";
+    std::cout << "\nError (density vs. exact advected profile):\n";
+    std::cout << "  L1:   " << L1err << "\n";
+    std::cout << "  Linf: " << Linf  << "\n";
+
+    // Write exact solution for easy comparison / plotting
+    {
+        std::ofstream file("advection_exact.dat");
+        file << "# x rho_exact\n";
+        for (int i = 0; i < mesh.nx(); ++i) {
+            double x = mesh.cellCentroidX(i);
+            file << x << " " << densityProfile(x, exactCenter, length) << "\n";
+        }
+    }
+
+    std::cout << "\nOutput files:\n";
+    std::cout << "  advection_t0.dat     - initial condition\n";
+    std::cout << "  advection_final.dat  - computed solution\n";
+    std::cout << "  advection_exact.dat  - exact solution\n";
 
     return 0;
 }
