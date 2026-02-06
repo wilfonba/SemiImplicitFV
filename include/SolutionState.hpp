@@ -3,9 +3,13 @@
 
 #include "State.hpp"
 #include <vector>
+#include <memory>
 #include <cstddef>
 
 namespace SemiImplicitFV {
+
+class RectilinearMesh;
+class EquationOfState;
 
 enum class VarSet {
     CONS,        // Conservative variables
@@ -51,6 +55,12 @@ public:
 
     /// Scatter a PrimitiveState bundle into a flat index.
     void setPrimitiveState(std::size_t idx, const PrimitiveState& W);
+
+    /// Convert from conservative to primitive variables.
+    void convertConservativeToPrimitiveVariables(
+        const RectilinearMesh& mesh,
+        const std::shared_ptr<EquationOfState>& eos
+        );
 
     // Conservative variables
     std::vector<double> rho;   // density

@@ -5,6 +5,7 @@
 #include "SolutionState.hpp"
 #include "State.hpp"
 #include "RiemannSolver.hpp"
+#include "Reconstruction.hpp"
 #include "IGR.hpp"
 #include "EquationOfState.hpp"
 #include <memory>
@@ -19,9 +20,11 @@ struct ExplicitParams{
     int RKOrder;              // Runge-Kutta order (1, 2, or 3)
     bool useIGR;              // Enable IGR
 
+    ReconstructionOrder reconOrder = ReconstructionOrder::FirstOrder;
+
     ExplicitParams()
         : cfl(0.8)
-        , maxDt(1e-2)
+        , maxDt(1e-4)
         , minDt(1e-12)
         , RKOrder(1)
         , useIGR(true)
@@ -45,13 +48,23 @@ public:
 
     RiemannSolver& riemannSolver() { return *riemannSolver_; }
     const EquationOfState& eos() const { return *eos_; }
+    const Reconstructor& reconstructor() const { return reconstructor_; }
 
 private:
     std::shared_ptr<RiemannSolver> riemannSolver_;
     std::shared_ptr<EquationOfState> eos_;
     std::shared_ptr<IGRSolver> igrSolver_;
     ExplicitParams params_;
+    Reconstructor reconstructor_;
 
+    // RHS storage (flux divergence per conservative variable)
+    std::vector<double> rhsRho_;
+    std::vector<double> rhsRhoU_;
+    std::vector<double> rhsRhoV_;
+    std::vector<double> rhsRhoW_;
+    std::vector<double> rhsRhoE_;
+
+    void ensureStorage(const RectilinearMesh& mesh);
     void computeRHS(const RectilinearMesh& mesh, SolutionState& state);
 };
 

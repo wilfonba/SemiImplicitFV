@@ -39,7 +39,6 @@ set(LIB_SOURCES
     src/JacobiPressureSolver.cpp
     src/StiffenedGasEOS.cpp
     src/IdealGasEOS.cpp
-    src/VariablesConversion.cpp
 )
 
 # Create library

@@ -1,4 +1,6 @@
 #include "SolutionState.hpp"
+#include "RectilinearMesh.hpp"
+#include "EquationOfState.hpp"
 
 namespace SemiImplicitFV {
 
@@ -135,5 +137,27 @@ void SolutionState::setPrimitiveState(std::size_t idx, const PrimitiveState& W) 
     temp[idx]  = W.T;
     sigma[idx] = W.sigma;
 }
+
+void SolutionState::convertConservativeToPrimitiveVariables(
+        const RectilinearMesh& mesh,
+        const std::shared_ptr<EquationOfState>& eos
+        )
+{
+    for (int k = 0; k < mesh.nz(); ++k) {
+        for (int j = 0; j < mesh.ny(); ++j) {
+            for (int i = 0; i < mesh.nx(); ++i) {
+                std::size_t idx = mesh.index(i, j, k);
+                ConservativeState U = getConservativeState(idx);
+                PrimitiveState W = eos->toPrimitive(U);
+                velU[idx] = W.u[0];
+                if (dim_ >= 2) velV[idx] = W.u[1];
+                if (dim_ >= 3) velW[idx] = W.u[2];
+                pres[idx] = W.p;
+                temp[idx] = W.T;
+            }
+        }
+    }
+}
+
 
 } // namespace SemiImplicitFV

@@ -82,8 +82,8 @@ int main() {
     auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0);
     std::cout << "Created ideal gas EOS" << "\n";
 
-    // Create advective Riemann solver (pressure-free!)
-    auto riemannSolver = std::make_shared<HLLCSolver>(eos, false);
+    // Create Riemann solver
+    auto riemannSolver = std::make_shared<HLLCSolver>(eos, true);
     std::cout << "Created Riemann solver \n";
 
     // Create IGR solver
@@ -97,8 +97,6 @@ int main() {
     // Explicit solver parameters
     ExplicitParams params;
     params.cfl = 0.8;
-    params.maxDt = 1e-2;
-    params.minDt = 1e-12;
     params.RKOrder = 1;
     params.useIGR = true;
 
@@ -114,22 +112,6 @@ int main() {
     writeSolution(mesh, state, "sod_t0.dat");
     std::cout << "Wrote initial conditions \n";
 
-    // Compute reference CFL (what explicit would need)
-    double maxC = 0.0;
-    for (int i = 0; i < mesh.nx(); ++i) {
-        std::size_t idx = mesh.index(i, 0, 0);
-        PrimitiveState W;
-        W.rho = state.rho[idx];
-        W.u = {state.velU[idx], 0.0, 0.0};
-        W.p = state.pres[idx];
-        maxC = std::max(maxC, eos->soundSpeed(W));
-    }
-    double dx = length / numCells;
-    double explicitDt = 0.5 * dx / maxC;
-
-    std::cout << "\nReference explicit dt (CFL=0.5, acoustic): " << explicitDt << "\n";
-    std::cout << "Semi-implicit allows much larger dt!\n\n";
-
     // Time integration
     std::cout << "Running simulation to t = " << endTime << "...\n";
     std::cout << "Using IGR with alpha_coeff = " << igrParams.alphaCoeff << "\n\n";
@@ -142,7 +124,7 @@ int main() {
         time += dt;
         step++;
 
-        if (step % 20 == 0 || step == 1) {
+        if (step % 1 == 0 || step == 1) {
             double maxSigma = 0.0;
             for (int i = 0; i < mesh.nx(); ++i) {
                 std::size_t idx = mesh.index(i, 0, 0);
@@ -151,35 +133,15 @@ int main() {
 
             std::cout << "  Step " << step << ": t = " << time
                       << ", dt = " << dt
-                      << " (speedup: " << dt / explicitDt << "x)"
                       << ", max|sigma| = " << maxSigma << "\n";
         }
     }
 
     std::cout << "\nSimulation complete after " << step << " steps.\n";
 
-    // Compare to explicit
-    int explicitSteps = static_cast<int>(std::ceil(endTime / explicitDt));
-    std::cout << "Explicit method would need ~" << explicitSteps << " steps.\n";
-    std::cout << "Semi-implicit speedup: " << static_cast<double>(explicitSteps) / step << "x\n";
-
     // Write final solution
     writeSolution(mesh, state, "sod_final.dat");
     std::cout << "\nSolution written to sod_final.dat\n";
-
-    // Summary statistics
-    double maxSigma = 0.0;
-    double minP = 1e10, maxP = 0.0;
-    for (int i = 0; i < mesh.nx(); ++i) {
-        std::size_t idx = mesh.index(i, 0, 0);
-        maxSigma = std::max(maxSigma, std::abs(state.sigma[idx]));
-        minP = std::min(minP, state.pres[idx]);
-        maxP = std::max(maxP, state.pres[idx]);
-    }
-
-    std::cout << "\nFinal statistics:\n";
-    std::cout << "  Pressure range: [" << minP << ", " << maxP << "]\n";
-    std::cout << "  Max |sigma|: " << maxSigma << "\n";
 
     return 0;
 }
