@@ -174,7 +174,7 @@ int GaussSeidelPressureSolver::solve(
 // =============================================================================
 
 SemiImplicitSolver::SemiImplicitSolver(
-    std::shared_ptr<AdvectiveRiemannSolver> riemannSolver,
+    std::shared_ptr<RiemannSolver> riemannSolver,
     std::shared_ptr<PressureSolver> pressureSolver,
     std::shared_ptr<EquationOfStateBase> eos,
     std::shared_ptr<IGRSolver> igrSolver,
@@ -365,7 +365,7 @@ void SemiImplicitSolver::advectionStep(RectilinearMesh& mesh, double dt) {
                 PrimitiveState left  = gatherPrimitive(mesh, idxL);
                 PrimitiveState right = gatherPrimitive(mesh, idxR);
 
-                AdvectiveFlux flux = riemannSolver_->computeFlux(
+                RiemannFlux flux = riemannSolver_->computeFlux(
                     left, right, {1.0, 0.0, 0.0});
 
                 double area = mesh.faceAreaX(j, k);
@@ -404,7 +404,7 @@ void SemiImplicitSolver::advectionStep(RectilinearMesh& mesh, double dt) {
                     PrimitiveState left  = gatherPrimitive(mesh, idxL);
                     PrimitiveState right = gatherPrimitive(mesh, idxR);
 
-                    AdvectiveFlux flux = riemannSolver_->computeFlux(
+                    RiemannFlux flux = riemannSolver_->computeFlux(
                         left, right, {0.0, 1.0, 0.0});
 
                     double area = mesh.faceAreaY(i, k);
@@ -442,7 +442,7 @@ void SemiImplicitSolver::advectionStep(RectilinearMesh& mesh, double dt) {
                     PrimitiveState left  = gatherPrimitive(mesh, idxL);
                     PrimitiveState right = gatherPrimitive(mesh, idxR);
 
-                    AdvectiveFlux flux = riemannSolver_->computeFlux(
+                    RiemannFlux flux = riemannSolver_->computeFlux(
                         left, right, {0.0, 0.0, 1.0});
 
                     double area = mesh.faceAreaZ(i, j);

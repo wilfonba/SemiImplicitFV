@@ -119,7 +119,7 @@ int main() {
     writeSolution(mesh, "advection_t0.dat");
 
     // ---- Solver components ----
-    auto riemann  = std::make_shared<RusanovAdvectiveSolver>();
+    auto riemann  = std::make_shared<RusanovAdvectiveSolver>(eos);
     auto pressure = std::make_shared<GaussSeidelPressureSolver>();
 
     IGRParams igrParams;

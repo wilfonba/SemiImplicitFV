@@ -92,7 +92,7 @@ public:
 class SemiImplicitSolver {
 public:
     SemiImplicitSolver(
-        std::shared_ptr<AdvectiveRiemannSolver> riemannSolver,
+        std::shared_ptr<RiemannSolver> riemannSolver,
         std::shared_ptr<PressureSolver> pressureSolver,
         std::shared_ptr<EquationOfStateBase> eos,
         std::shared_ptr<IGRSolver> igrSolver = nullptr,
@@ -111,7 +111,7 @@ public:
     double computeTimeStep(const RectilinearMesh& mesh) const;
 
     // Access components
-    AdvectiveRiemannSolver& riemannSolver() { return *riemannSolver_; }
+    RiemannSolver& riemannSolver() { return *riemannSolver_; }
     PressureSolver& pressureSolver() { return *pressureSolver_; }
     const EquationOfStateBase& eos() const { return *eos_; }
 
@@ -119,7 +119,7 @@ public:
     int lastPressureIterations() const { return lastPressureIters_; }
 
 private:
-    std::shared_ptr<AdvectiveRiemannSolver> riemannSolver_;
+    std::shared_ptr<RiemannSolver> riemannSolver_;
     std::shared_ptr<PressureSolver> pressureSolver_;
     std::shared_ptr<EquationOfStateBase> eos_;
     std::shared_ptr<IGRSolver> igrSolver_;
