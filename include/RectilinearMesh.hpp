@@ -1,6 +1,7 @@
 #ifndef RECTILINEAR_MESH_HPP
 #define RECTILINEAR_MESH_HPP
 
+#include "SolutionState.hpp"
 #include <vector>
 #include <array>
 #include <cstddef>
@@ -22,8 +23,7 @@ enum class BoundaryCondition {
 /// (ny=1 for 1D, nz=1 for 1D/2D) with unit width. Ghost cells are only
 /// added in active dimensions.
 ///
-/// Variable storage uses struct-of-arrays layout: one flat array per field,
-/// sized to include ghost cells. Indexing is x-fastest (i varies fastest).
+/// Indexing is x-fastest (i varies fastest).
 class RectilinearMesh {
 public:
     /// Construct from physical node coordinates.
@@ -113,35 +113,10 @@ public:
 
     /// Fill ghost cells for all active dimensions based on current BCs.
     /// Uses an onion-peel ordering so edge/corner ghosts are filled correctly.
-    void applyBoundaryConditions();
+    void applyBoundaryConditions(SolutionState& state) const;
 
-    // --- Variable storage (struct-of-arrays) ---
-    //
-    // Each vector is sized to totalCells(). Access via index(i,j,k).
-    //
-    // Conservative variables
-    std::vector<double> rho;   // density
-    std::vector<double> rhoU;  // x-momentum
-    std::vector<double> rhoV;  // y-momentum
-    std::vector<double> rhoW;  // z-momentum
-    std::vector<double> rhoE;  // total energy
-
-    // Primitive variables
-    std::vector<double> velU;  // x-velocity
-    std::vector<double> velV;  // y-velocity
-    std::vector<double> velW;  // z-velocity
-    std::vector<double> pres;  // pressure
-    std::vector<double> temp;  // temperature
-    std::vector<double> sigma; // entropic pressure (IGR)
-
-    // Auxiliary variable
-    std::vector<double> aux;
-
-    /// Fill ghost cells for a single scalar field. 
+    /// Fill ghost cells for a single scalar field.
     void fillScalarGhosts(std::vector<double>& field) const;
-
-    /// Allocate (or re-allocate) all field arrays to totalCells(), zero-filled.
-    void allocateFields();
 
 private:
     int dim_;
@@ -163,16 +138,11 @@ private:
         const std::vector<double>& physNodes, int nCells, int ng);
 
     // Ghost-fill helpers for each direction.
-    void fillGhostX();
-    void fillGhostY();
-    void fillGhostZ();
-
-    /// Copy all field values from src index to dst index.
-    void copyCell(std::size_t dst, std::size_t src,
-                  double sU, double sV, double sW);
+    void fillGhostX(SolutionState& state) const;
+    void fillGhostY(SolutionState& state) const;
+    void fillGhostZ(SolutionState& state) const;
 };
 
 } // namespace SemiImplicitFV
 
 #endif // RECTILINEAR_MESH_HPP
-

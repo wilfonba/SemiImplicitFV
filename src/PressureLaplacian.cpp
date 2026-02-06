@@ -5,6 +5,7 @@ namespace SemiImplicitFV {
 
 double pressureLaplacian(
     const RectilinearMesh& mesh,
+    const std::vector<double>& rho,
     const std::vector<double>& pressure,
     int i, int j, int k,
     double& offDiag)
@@ -17,8 +18,8 @@ double pressureLaplacian(
     {
         std::size_t xm = mesh.index(i - 1, j, k);
         std::size_t xp = mesh.index(i + 1, j, k);
-        double rhoL = 0.5 * (mesh.rho[idx] + mesh.rho[xm]);
-        double rhoR = 0.5 * (mesh.rho[idx] + mesh.rho[xp]);
+        double rhoL = 0.5 * (rho[idx] + rho[xm]);
+        double rhoR = 0.5 * (rho[idx] + rho[xp]);
         double dL = 0.5 * (mesh.dx(i - 1) + mesh.dx(i));
         double dR = 0.5 * (mesh.dx(i) + mesh.dx(i + 1));
         double cL = 1.0 / (std::max(rhoL, 1e-14) * dL * mesh.dx(i));
@@ -31,8 +32,8 @@ double pressureLaplacian(
     if (mesh.dim() >= 2) {
         std::size_t ym = mesh.index(i, j - 1, k);
         std::size_t yp = mesh.index(i, j + 1, k);
-        double rhoL = 0.5 * (mesh.rho[idx] + mesh.rho[ym]);
-        double rhoR = 0.5 * (mesh.rho[idx] + mesh.rho[yp]);
+        double rhoL = 0.5 * (rho[idx] + rho[ym]);
+        double rhoR = 0.5 * (rho[idx] + rho[yp]);
         double dL = 0.5 * (mesh.dy(j - 1) + mesh.dy(j));
         double dR = 0.5 * (mesh.dy(j) + mesh.dy(j + 1));
         double cL = 1.0 / (std::max(rhoL, 1e-14) * dL * mesh.dy(j));
@@ -45,8 +46,8 @@ double pressureLaplacian(
     if (mesh.dim() >= 3) {
         std::size_t zm = mesh.index(i, j, k - 1);
         std::size_t zp = mesh.index(i, j, k + 1);
-        double rhoL = 0.5 * (mesh.rho[idx] + mesh.rho[zm]);
-        double rhoR = 0.5 * (mesh.rho[idx] + mesh.rho[zp]);
+        double rhoL = 0.5 * (rho[idx] + rho[zm]);
+        double rhoR = 0.5 * (rho[idx] + rho[zp]);
         double dL = 0.5 * (mesh.dz(k - 1) + mesh.dz(k));
         double dR = 0.5 * (mesh.dz(k) + mesh.dz(k + 1));
         double cL = 1.0 / (std::max(rhoL, 1e-14) * dL * mesh.dz(k));
@@ -59,4 +60,3 @@ double pressureLaplacian(
 }
 
 } // namespace SemiImplicitFV
-

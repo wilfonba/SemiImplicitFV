@@ -8,6 +8,7 @@ namespace SemiImplicitFV {
 
 double pressureLaplacian(
     const RectilinearMesh& mesh,
+    const std::vector<double>& rho,
     const std::vector<double>& pressure,
     int i, int j, int k,
     double& offDiag);
@@ -15,4 +16,3 @@ double pressureLaplacian(
 } // namespace SemiImplicitFV
 
 #endif // PRESSURE_LAPLACIAN_HPP
-

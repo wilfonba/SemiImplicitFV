@@ -16,6 +16,7 @@
  */
 
 #include "RectilinearMesh.hpp"
+#include "SolutionState.hpp"
 #include "State.hpp"
 #include "RusanovSolver.hpp"
 #include "SemiImplicitSolver.hpp"
@@ -45,8 +46,8 @@ double densityProfile(double x, double xc, double L) {
     return rho0 * (1.0 + amp * std::exp(-(dx * dx) / (sigma * sigma)));
 }
 
-void initializeProblem(RectilinearMesh& mesh, const IdealGasEOS& eos,
-                       double xc, double L) {
+void initializeProblem(const RectilinearMesh& mesh, SolutionState& state,
+                       const IdealGasEOS& eos, double xc, double L) {
     for (int i = 0; i < mesh.nx(); ++i) {
         std::size_t idx = mesh.index(i, 0, 0);
         double x = mesh.cellCentroidX(i);
@@ -58,31 +59,23 @@ void initializeProblem(RectilinearMesh& mesh, const IdealGasEOS& eos,
         W.sigma = 0.0;
         W.T     = eos.temperature(W);
 
-        mesh.rho[idx]   = W.rho;
-        mesh.velU[idx]  = W.u[0];
-        mesh.velV[idx]  = W.u[1];
-        mesh.velW[idx]  = W.u[2];
-        mesh.pres[idx]  = W.p;
-        mesh.temp[idx]  = W.T;
-        mesh.sigma[idx] = 0.0;
+        state.setPrimitiveState(idx, W);
 
         ConservativeState U = eos.toConservative(W);
-        mesh.rhoU[idx] = U.rhoU[0];
-        mesh.rhoV[idx] = U.rhoU[1];
-        mesh.rhoW[idx] = U.rhoU[2];
-        mesh.rhoE[idx] = U.rhoE;
+        state.setConservativeState(idx, U);
     }
 }
 
-void writeSolution(const RectilinearMesh& mesh, const std::string& filename) {
+void writeSolution(const RectilinearMesh& mesh, const SolutionState& state,
+                   const std::string& filename) {
     std::ofstream file(filename);
     file << "# x rho u p\n";
     for (int i = 0; i < mesh.nx(); ++i) {
         std::size_t idx = mesh.index(i, 0, 0);
         file << mesh.cellCentroidX(i) << " "
-             << mesh.rho[idx] << " "
-             << mesh.velU[idx] << " "
-             << mesh.pres[idx] << "\n";
+             << state.rho[idx] << " "
+             << state.velU[idx] << " "
+             << state.pres[idx] << "\n";
     }
 }
 
@@ -115,9 +108,13 @@ int main() {
     mesh.setBoundaryCondition(RectilinearMesh::XLow,  BoundaryCondition::Periodic);
     mesh.setBoundaryCondition(RectilinearMesh::XHigh, BoundaryCondition::Periodic);
 
+    // Allocate solution state
+    SolutionState state;
+    state.allocate(mesh.totalCells(), mesh.dim());
+
     // ---- Initial condition ----
-    initializeProblem(mesh, *eos, xCenter, length);
-    writeSolution(mesh, "advection_t0.dat");
+    initializeProblem(mesh, state, *eos, xCenter, length);
+    writeSolution(mesh, state, "advection_t0.dat");
 
     // ---- Solver components ----
     auto riemann  = std::make_shared<RusanovSolver>(eos);
@@ -144,7 +141,7 @@ int main() {
     int    step = 0;
 
     while (time < endTime) {
-        double dt = solver.step(mesh, endTime - time);
+        double dt = solver.step(mesh, state, endTime - time);
         time += dt;
         step++;
 
@@ -160,7 +157,7 @@ int main() {
     std::cout << "\nDone after " << step << " steps.\n";
 
     // ---- Write results ----
-    writeSolution(mesh, "advection_final.dat");
+    writeSolution(mesh, state, "advection_final.dat");
 
     // Exact solution: the pulse has translated by u0 * endTime = length,
     // so with periodic wrapping it should be back at xCenter.
@@ -174,7 +171,7 @@ int main() {
         std::size_t idx = mesh.index(i, 0, 0);
         double x     = mesh.cellCentroidX(i);
         double exact  = densityProfile(x, exactCenter, length);
-        double err    = std::abs(mesh.rho[idx] - exact);
+        double err    = std::abs(state.rho[idx] - exact);
         L1err += err * dx;
         Linf   = std::max(Linf, err);
     }

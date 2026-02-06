@@ -6,7 +6,8 @@
 namespace SemiImplicitFV {
 
 int JacobiPressureSolver::solve(
-    RectilinearMesh& mesh,
+    const RectilinearMesh& mesh,
+    const std::vector<double>& rho,
     const std::vector<double>& rhoc2,
     const std::vector<double>& rhs,
     std::vector<double>& pressure,
@@ -28,7 +29,7 @@ int JacobiPressureSolver::solve(
                     double coeff = rhoc2[idx] * dt2;
 
                     double offDiag;
-                    double diagL = pressureLaplacian(mesh, pressure, i, j, k, offDiag);
+                    double diagL = pressureLaplacian(mesh, rho, pressure, i, j, k, offDiag);
 
                     double denom = 1.0 + coeff * diagL;
                     pNew[idx] = (rhs[idx] + coeff * offDiag) / denom;
@@ -39,7 +40,6 @@ int JacobiPressureSolver::solve(
             }
         }
 
-        // Copy new values into pressure (physical cells only)
         for (int k = 0; k < mesh.nz(); ++k)
             for (int j = 0; j < mesh.ny(); ++j)
                 for (int i = 0; i < mesh.nx(); ++i)

@@ -13,7 +13,8 @@ public:
     virtual ~PressureSolver() = default;
 
     virtual int solve(
-        RectilinearMesh& mesh,
+        const RectilinearMesh& mesh,
+        const std::vector<double>& rho,
         const std::vector<double>& rhoc2,
         const std::vector<double>& rhs,
         std::vector<double>& pressure,
@@ -28,4 +29,3 @@ public:
 } // namespace SemiImplicitFV
 
 #endif // PRESSURE_SOLVER_HPP
-

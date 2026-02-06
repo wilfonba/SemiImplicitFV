@@ -2,6 +2,7 @@
 #define SEMI_IMPLICIT_SOLVER_HPP
 
 #include "RectilinearMesh.hpp"
+#include "SolutionState.hpp"
 #include "State.hpp"
 #include "RiemannSolver.hpp"
 #include "IGR.hpp"
@@ -18,6 +19,7 @@ struct SemiImplicitParams {
     double maxDt;             // Maximum time step
     double minDt;             // Minimum time step
     int maxPressureIters;     // Max iterations for pressure solve
+    int RKOrder;              // Runge-Kutta order for advection step (1, 2, or 3)
     double pressureTol;       // Pressure solve tolerance
     bool useIGR;              // Enable IGR regularization
 
@@ -26,6 +28,7 @@ struct SemiImplicitParams {
         , maxDt(1e-2)
         , minDt(1e-12)
         , maxPressureIters(100)
+        , RKOrder(1)
         , pressureTol(1e-8)
         , useIGR(true)
     {}
@@ -33,13 +36,6 @@ struct SemiImplicitParams {
 
 // Semi-implicit time stepper for compressible flow (Kwatra et al.)
 // Combined with Information Geometric Regularization (IGR)
-//
-// Algorithm:
-// 1. Advection step: Compute (ρ)*, (ρu)*, E* using pressure-free fluxes
-// 2. Pressure advection: p^a = p^n - Δt(u^n · ∇p^n)
-// 3. IGR step: Solve for entropic pressure Σ
-// 4. Pressure step: Solve modified Helmholtz equation for p^{n+1}
-// 5. Correction: Update momentum and energy with ∇(p+Σ)
 class SemiImplicitSolver {
 public:
     SemiImplicitSolver(
@@ -56,10 +52,10 @@ public:
     const SemiImplicitParams& parameters() const { return params_; }
 
     // Perform one time step
-    double step(RectilinearMesh& mesh, double targetDt = -1.0);
+    double step(const RectilinearMesh& mesh, SolutionState& state, double targetDt = -1.0);
 
     // Compute stable time step (CFL based on material velocity only)
-    double computeAdvectiveTimeStep(const RectilinearMesh& mesh) const;
+    double computeAdvectiveTimeStep(const RectilinearMesh& mesh, const SolutionState& state) const;
 
     // Access components
     RiemannSolver& riemannSolver() { return *riemannSolver_; }
@@ -92,38 +88,17 @@ private:
     std::vector<double> divUstar_;
     std::vector<GradientTensor> gradU_;
 
-    // Step 1: Explicit advection (pressure-free)
-    void advectionStep(RectilinearMesh& mesh, double dt);
-
-    // Step 2: Advect pressure (for RHS of pressure equation)
-    void advectPressure(const RectilinearMesh& mesh, double dt);
-
-    // Step 3: Solve IGR for entropic pressure Σ
-    void solveIGR(RectilinearMesh& mesh);
-
-    // Step 4: Solve pressure Poisson equation
-    void solvePressure(RectilinearMesh& mesh, double dt);
-
-    // Step 5: Correct momentum and energy
-    void correctionStep(RectilinearMesh& mesh, double dt);
-
-    // Compute divergence of velocity at each cell
-    void computeDivergence(const RectilinearMesh& mesh, std::vector<double>& divU);
-
-    // Compute velocity gradients for IGR
-    void computeVelocityGradients(const RectilinearMesh& mesh);
-
-    // Gather mesh SoA fields into a PrimitiveState bundle
-    static PrimitiveState gatherPrimitive(const RectilinearMesh& mesh, std::size_t idx);
-
-    // Write star conservative state into mesh and convert to primitives
-    void writeStarToMesh(RectilinearMesh& mesh);
-
-    // Resize internal storage to match mesh
+    void advectionStep(const RectilinearMesh& mesh, const SolutionState& state, double dt);
+    void advectPressure(const RectilinearMesh& mesh, const SolutionState& state, double dt);
+    void solveIGR(const RectilinearMesh& mesh, SolutionState& state);
+    void solvePressure(const RectilinearMesh& mesh, SolutionState& state, double dt);
+    void correctionStep(const RectilinearMesh& mesh, SolutionState& state, double dt);
+    void computeDivergence(const RectilinearMesh& mesh, const SolutionState& state, std::vector<double>& divU);
+    void computeVelocityGradients(const RectilinearMesh& mesh, const SolutionState& state);
+    void writeStarToState(const RectilinearMesh& mesh, SolutionState& state);
     void ensureStorage(const RectilinearMesh& mesh);
 };
 
 } // namespace SemiImplicitFV
 
 #endif // SEMI_IMPLICIT_SOLVER_HPP
-

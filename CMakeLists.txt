@@ -25,7 +25,9 @@ endif()
 
 # Library sources
 set(LIB_SOURCES
+    src/SolutionState.cpp
     src/RectilinearMesh.cpp
+    src/Reconstruction.cpp
     src/UpwindSolver.cpp
     src/RusanovSolver.cpp
     src/HLLCSolver.cpp
@@ -37,6 +39,7 @@ set(LIB_SOURCES
     src/JacobiPressureSolver.cpp
     src/StiffenedGasEOS.cpp
     src/IdealGasEOS.cpp
+    src/VariablesConversion.cpp
 )
 
 # Create library

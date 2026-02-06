@@ -11,7 +11,8 @@ namespace SemiImplicitFV {
 class GaussSeidelPressureSolver : public PressureSolver {
 public:
     int solve(
-        RectilinearMesh& mesh,
+        const RectilinearMesh& mesh,
+        const std::vector<double>& rho,
         const std::vector<double>& rhoc2,
         const std::vector<double>& rhs,
         std::vector<double>& pressure,
@@ -26,4 +27,3 @@ public:
 } // namespace SemiImplicitFV
 
 #endif // GAUSS_SEIDEL_PRESSURE_SOLVER_HPP
-

@@ -6,7 +6,8 @@
 namespace SemiImplicitFV {
 
 int GaussSeidelPressureSolver::solve(
-    RectilinearMesh& mesh,
+    const RectilinearMesh& mesh,
+    const std::vector<double>& rho,
     const std::vector<double>& rhoc2,
     const std::vector<double>& rhs,
     std::vector<double>& pressure,
@@ -27,7 +28,7 @@ int GaussSeidelPressureSolver::solve(
                     double coeff = rhoc2[idx] * dt2;
 
                     double offDiag;
-                    double diagL = pressureLaplacian(mesh, pressure, i, j, k, offDiag);
+                    double diagL = pressureLaplacian(mesh, rho, pressure, i, j, k, offDiag);
 
                     double denom = 1.0 + coeff * diagL;
                     double pOld = pressure[idx];
@@ -48,4 +49,3 @@ int GaussSeidelPressureSolver::solve(
 }
 
 } // namespace SemiImplicitFV
-
