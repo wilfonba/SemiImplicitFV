@@ -22,7 +22,7 @@ struct SemiImplicitParams {
 
     SemiImplicitParams()
         : cfl(0.8)            // Can use larger CFL since no acoustic restriction
-        , maxDt(1.0)
+        , maxDt(1e-2)
         , minDt(1e-12)
         , maxPressureIters(100)
         , pressureTol(1e-8)

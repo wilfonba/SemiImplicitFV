@@ -43,10 +43,19 @@ if(ENABLE_OPENMP)
     target_link_libraries(SemiImplicitFV PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
-# Examples
+# Examples — auto-discover every examples/<case>/*.cpp
 if(BUILD_EXAMPLES)
-    add_executable(sod_shock examples/sod_shock.cpp)
-    target_link_libraries(sod_shock PRIVATE SemiImplicitFV)
+    file(GLOB EXAMPLE_DIRS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/examples
+         ${CMAKE_CURRENT_SOURCE_DIR}/examples/*)
+    foreach(CASE_DIR ${EXAMPLE_DIRS})
+        if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/${CASE_DIR})
+            file(GLOB CASE_SOURCES examples/${CASE_DIR}/*.cpp)
+            if(CASE_SOURCES)
+                add_executable(${CASE_DIR} ${CASE_SOURCES})
+                target_link_libraries(${CASE_DIR} PRIVATE SemiImplicitFV)
+            endif()
+        endif()
+    endforeach()
 endif()
 
 # Install

@@ -89,7 +89,7 @@ int main() {
     std::cout << "Sod Shock Tube Problem\n\n";
 
     // Problem setup
-    const int numCells = 200;
+    const int numCells = 1000;
     const double length = 1.0;
     const double endTime = 0.2;
 
@@ -123,8 +123,9 @@ int main() {
     // Semi-implicit solver parameters
     SemiImplicitParams params;
     params.cfl = 0.8;                  // Can use larger CFL (no acoustic restriction!)
-    params.maxPressureIters = 100;
+    params.maxPressureIters = 1000;
     params.pressureTol = 1e-8;
+    params.maxDt = 1e-2;
     params.useIGR = true;
 
     // Create semi-implicit solver

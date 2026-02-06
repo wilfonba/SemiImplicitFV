@@ -130,3 +130,7 @@ vcpkg_installed/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+.claude
+
+*.dat
