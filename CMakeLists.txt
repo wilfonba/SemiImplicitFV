@@ -26,10 +26,17 @@ endif()
 # Library sources
 set(LIB_SOURCES
     src/RectilinearMesh.cpp
-    src/RiemannSolver.cpp
+    src/UpwindSolver.cpp
+    src/RusanovSolver.cpp
+    src/HLLCSolver.cpp
     src/IGR.cpp
     src/SemiImplicitSolver.cpp
-    src/EquationOfState.cpp
+    src/ExplicitSolver.cpp
+    src/PressureLaplacian.cpp
+    src/GaussSeidelPressureSolver.cpp
+    src/JacobiPressureSolver.cpp
+    src/StiffenedGasEOS.cpp
+    src/IdealGasEOS.cpp
 )
 
 # Create library

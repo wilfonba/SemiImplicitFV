@@ -17,8 +17,9 @@
 
 #include "RectilinearMesh.hpp"
 #include "State.hpp"
-#include "RiemannSolver.hpp"
+#include "RusanovSolver.hpp"
 #include "SemiImplicitSolver.hpp"
+#include "GaussSeidelPressureSolver.hpp"
 #include "IGR.hpp"
 #include "EquationOfState.hpp"
 
@@ -119,7 +120,7 @@ int main() {
     writeSolution(mesh, "advection_t0.dat");
 
     // ---- Solver components ----
-    auto riemann  = std::make_shared<RusanovAdvectiveSolver>(eos);
+    auto riemann  = std::make_shared<RusanovSolver>(eos);
     auto pressure = std::make_shared<GaussSeidelPressureSolver>();
 
     IGRParams igrParams;

@@ -14,10 +14,11 @@
 
 #include "RectilinearMesh.hpp"
 #include "State.hpp"
-#include "RiemannSolver.hpp"
+#include "HLLCSolver.hpp"
 #include "SemiImplicitSolver.hpp"
+#include "GaussSeidelPressureSolver.hpp"
 #include "IGR.hpp"
-#include "EquationOfState.hpp"
+#include "IdealGasEOS.hpp"
 
 #include <iostream>
 #include <fstream>
@@ -108,7 +109,7 @@ int main() {
     initializeSodProblem(mesh, *eos);
 
     // Create advective Riemann solver (pressure-free!)
-    auto riemannSolver = std::make_shared<HLLCSolver>(eos, true);
+    auto riemannSolver = std::make_shared<HLLCSolver>(eos, false);
 
     // Create pressure solver
     auto pressureSolver = std::make_shared<GaussSeidelPressureSolver>();

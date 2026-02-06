@@ -6,6 +6,7 @@
 #include "RiemannSolver.hpp"
 #include "IGR.hpp"
 #include "EquationOfState.hpp"
+#include "PressureSolver.hpp"
 #include <memory>
 #include <vector>
 
@@ -30,56 +31,6 @@ struct SemiImplicitParams {
     {}
 };
 
-// Abstract pressure solver interface
-class PressureSolver {
-public:
-    virtual ~PressureSolver() = default;
-
-    virtual int solve(
-        RectilinearMesh& mesh,
-        const std::vector<double>& rhoc2,
-        const std::vector<double>& rhs,
-        std::vector<double>& pressure,
-        double dt,
-        double tolerance,
-        int maxIter
-    ) = 0;
-
-    virtual std::string name() const = 0;
-};
-
-// Jacobi pressure solver
-class JacobiPressureSolver : public PressureSolver {
-public:
-    int solve(
-        RectilinearMesh& mesh,
-        const std::vector<double>& rhoc2,
-        const std::vector<double>& rhs,
-        std::vector<double>& pressure,
-        double dt,
-        double tolerance,
-        int maxIter
-    ) override;
-
-    std::string name() const override { return "Jacobi"; }
-};
-
-// Gauss-Seidel pressure solver
-class GaussSeidelPressureSolver : public PressureSolver {
-public:
-    int solve(
-        RectilinearMesh& mesh,
-        const std::vector<double>& rhoc2,
-        const std::vector<double>& rhs,
-        std::vector<double>& pressure,
-        double dt,
-        double tolerance,
-        int maxIter
-    ) override;
-
-    std::string name() const override { return "GaussSeidel"; }
-};
-
 // Semi-implicit time stepper for compressible flow (Kwatra et al.)
 // Combined with Information Geometric Regularization (IGR)
 //
@@ -94,7 +45,7 @@ public:
     SemiImplicitSolver(
         std::shared_ptr<RiemannSolver> riemannSolver,
         std::shared_ptr<PressureSolver> pressureSolver,
-        std::shared_ptr<EquationOfStateBase> eos,
+        std::shared_ptr<EquationOfState> eos,
         std::shared_ptr<IGRSolver> igrSolver = nullptr,
         const SemiImplicitParams& params = SemiImplicitParams()
     );
@@ -108,12 +59,12 @@ public:
     double step(RectilinearMesh& mesh, double targetDt = -1.0);
 
     // Compute stable time step (CFL based on material velocity only)
-    double computeTimeStep(const RectilinearMesh& mesh) const;
+    double computeAdvectiveTimeStep(const RectilinearMesh& mesh) const;
 
     // Access components
     RiemannSolver& riemannSolver() { return *riemannSolver_; }
     PressureSolver& pressureSolver() { return *pressureSolver_; }
-    const EquationOfStateBase& eos() const { return *eos_; }
+    const EquationOfState& eos() const { return *eos_; }
 
     // Statistics
     int lastPressureIterations() const { return lastPressureIters_; }
@@ -121,7 +72,7 @@ public:
 private:
     std::shared_ptr<RiemannSolver> riemannSolver_;
     std::shared_ptr<PressureSolver> pressureSolver_;
-    std::shared_ptr<EquationOfStateBase> eos_;
+    std::shared_ptr<EquationOfState> eos_;
     std::shared_ptr<IGRSolver> igrSolver_;
     SemiImplicitParams params_;
 
