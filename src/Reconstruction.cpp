@@ -34,7 +34,7 @@ Reconstructor::Reconstructor(ReconstructionOrder order)
 
 int Reconstructor::requiredGhostCells() const {
     switch (order_) {
-        case ReconstructionOrder::FirstOrder: return 1;
+        case ReconstructionOrder::WENO1:     return 1;
         case ReconstructionOrder::WENO3:     return 2;
         case ReconstructionOrder::WENO5:     return 3;
     }
@@ -204,7 +204,7 @@ void Reconstructor::reconstructX(const RectilinearMesh& mesh, const SolutionStat
                 left = PrimitiveState{};
                 right = PrimitiveState{};
 
-                if (order_ == ReconstructionOrder::FirstOrder) {
+                if (order_ == ReconstructionOrder::WENO1) {
                     std::size_t idxL = mesh.index(i - 1, j, k);
                     std::size_t idxR = mesh.index(i, j, k);
                     left.rho   = rho[idxL];
@@ -286,7 +286,7 @@ void Reconstructor::reconstructY(const RectilinearMesh& mesh, const SolutionStat
                 left = PrimitiveState{};
                 right = PrimitiveState{};
 
-                if (order_ == ReconstructionOrder::FirstOrder) {
+                if (order_ == ReconstructionOrder::WENO1) {
                     std::size_t idxL = mesh.index(i, j - 1, k);
                     std::size_t idxR = mesh.index(i, j, k);
                     left.rho   = rho[idxL];
@@ -362,7 +362,7 @@ void Reconstructor::reconstructZ(const RectilinearMesh& mesh, const SolutionStat
                 left = PrimitiveState{};
                 right = PrimitiveState{};
 
-                if (order_ == ReconstructionOrder::FirstOrder) {
+                if (order_ == ReconstructionOrder::WENO1) {
                     std::size_t idxL = mesh.index(i, j, k - 1);
                     std::size_t idxR = mesh.index(i, j, k);
                     left.rho   = rho[idxL];
@@ -414,7 +414,7 @@ void Reconstructor::reconstructZ(const RectilinearMesh& mesh, const SolutionStat
 }
 
 void Reconstructor::reconstruct(
-        const SimulationConfig& config,
+        [[maybe_unused]] const SimulationConfig& config,
         const RectilinearMesh& mesh,
         const SolutionState& state)
 {

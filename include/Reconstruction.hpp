@@ -11,14 +11,14 @@
 namespace SemiImplicitFV {
 
 enum class ReconstructionOrder {
-    FirstOrder,   // piecewise constant (copies cell values)
+    WENO1,        // piecewise constant (copies cell values)
     WENO3,        // 3rd order WENO (r=2, needs 2 ghost cells)
     WENO5         // 5th order WENO (r=3, needs 3 ghost cells)
 };
 
 class Reconstructor {
 public:
-    explicit Reconstructor(ReconstructionOrder order = ReconstructionOrder::FirstOrder);
+    explicit Reconstructor(ReconstructionOrder order = ReconstructionOrder::WENO1);
 
     /// Perform reconstruction on all faces for all active dimensions.
     /// Precondition: ghost cells in state must already be filled.

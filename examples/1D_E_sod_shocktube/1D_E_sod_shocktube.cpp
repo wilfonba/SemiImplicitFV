@@ -66,7 +66,7 @@ void writeSolution(const RectilinearMesh& mesh, const SolutionState& state, cons
 int main() {
     const int numCells = 1000;
     const double length = 1.0;
-    const double constDt = 1e-4;
+    [[maybe_unused]] const double constDt = 1e-4;
     const double endTime = 0.2;
 
     SimulationConfig config;
@@ -96,8 +96,8 @@ int main() {
     params.cfl = 0.1;
     //params.constDt = constDt;
     params.RKOrder = 1;
-    params.useIGR = true;
-    params.reconOrder = ReconstructionOrder::WENO3;
+    params.useIGR = false;
+    params.reconOrder = ReconstructionOrder::WENO1;
 
     ExplicitSolver solver(riemannSolver, eos, igrSolver, params);
     initializeSodProblem(mesh, state, *eos);
@@ -114,7 +114,7 @@ int main() {
         time += dt;
         step++;
 
-        if (step % 1 == 0 || step == 1) {
+        if (step % 20 == 0 || step == 1) {
             double maxSigma = 0.0;
             for (int i = 0; i < mesh.nx(); ++i) {
                 std::size_t idx = mesh.index(i, 0, 0);

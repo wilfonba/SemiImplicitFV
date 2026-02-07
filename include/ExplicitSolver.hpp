@@ -22,7 +22,7 @@ struct ExplicitParams{
     int RKOrder;              // Runge-Kutta order (1, 2, or 3)
     bool useIGR;              // Enable IGR
 
-    ReconstructionOrder reconOrder = ReconstructionOrder::FirstOrder;
+    ReconstructionOrder reconOrder = ReconstructionOrder::WENO1;
 
     ExplicitParams()
         : cfl(0.8)
