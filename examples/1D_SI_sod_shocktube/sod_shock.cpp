@@ -90,14 +90,14 @@ int main() {
 
     // Create mesh (1D uniform)
     RectilinearMesh mesh = RectilinearMesh::createUniform(
-        config.dim, numCells, 0.0, length);
+        config, numCells, 0.0, length);
     mesh.setBoundaryCondition(RectilinearMesh::XLow,  BoundaryCondition::Outflow);
     mesh.setBoundaryCondition(RectilinearMesh::XHigh, BoundaryCondition::Outflow);
     std::cout << "Created mesh with " << mesh.nx() << " cells.\n";
 
     // Allocate solution state
     SolutionState state;
-    state.allocate(mesh.totalCells(), mesh.dim());
+    state.allocate(mesh.totalCells(), config);
 
     // Create equation of state
     auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0, config);

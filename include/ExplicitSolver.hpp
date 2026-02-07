@@ -19,7 +19,6 @@ struct ExplicitParams{
     double constDt;           // Constant time step (if > 0, overrides CFL-based time step)
     double maxDt;             // Maximum time step
     double minDt;             // Minimum time step
-    int RKOrder;              // Runge-Kutta order (1, 2, or 3)
     bool useIGR;              // Enable IGR
 
     ReconstructionOrder reconOrder = ReconstructionOrder::WENO1;
@@ -29,7 +28,6 @@ struct ExplicitParams{
         , constDt(-1.0)
         , maxDt(1e-4)
         , minDt(1e-12)
-        , RKOrder(1)
         , useIGR(true)
     {}
 };
@@ -46,9 +44,11 @@ public:
     ~ExplicitSolver() = default;
 
     double step(const SimulationConfig& config,
-            const RectilinearMesh& mesh, SolutionState& state, double targetDt = -1.0);
+                const RectilinearMesh& mesh,
+                SolutionState& state,
+                double targetDt = -1.0);
 
-    double computeAcousticTimeStep(const RectilinearMesh& mesh, const SolutionState& state) const;
+    double computeAcousticTimeStep(const RectilinearMesh& mesh, SolutionState& state) const;
 
     RiemannSolver& riemannSolver() { return *riemannSolver_; }
     const EquationOfState& eos() const { return *eos_; }
@@ -71,6 +71,11 @@ private:
     void ensureStorage(const RectilinearMesh& mesh);
     void computeRHS(const SimulationConfig& config,
             const RectilinearMesh& mesh, SolutionState& state);
+
+    /// Returns the SSP-RK blending coefficient alpha for a given stage.
+    /// U = alpha * U^n + (1 - alpha) * U_current
+    double sspRKBlendCoeff(const SimulationConfig& config, int stage) const;
+
 };
 
 } // namespace SemiImplicitFV

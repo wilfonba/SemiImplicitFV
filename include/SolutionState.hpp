@@ -2,6 +2,7 @@
 #define SOLUTION_STATE_HPP
 
 #include "State.hpp"
+#include "SimulationConfig.hpp"
 #include <vector>
 #include <memory>
 #include <cstddef>
@@ -25,8 +26,8 @@ public:
     SolutionState() = default;
 
     /// Allocate field arrays to the given size, zero-filled.
-    /// Only velocity components active for the given dimensionality are allocated.
-    void allocate(std::size_t totalCells, int dim);
+    /// Backup arrays for multi-stage time stepping are allocated when config.RKOrder > 1.
+    void allocate(std::size_t totalCells, const SimulationConfig& config);
 
     /// Number of cells this state is allocated for.
     std::size_t size() const { return rho.size(); }
@@ -83,8 +84,21 @@ public:
     std::vector<double> temp;  // temperature
     std::vector<double> sigma; // entropic pressure (IGR)
 
+    // Backup conservative variables (for multi-stage time stepping)
+    std::vector<double> rho0;
+    std::vector<double> rhoU0;
+    std::vector<double> rhoV0;
+    std::vector<double> rhoW0;
+    std::vector<double> rhoE0;
+
     // Auxiliary variable
     std::vector<double> aux;
+
+    /// Save conservative variables for a single cell to backup storage.
+    void saveConservativeCell(std::size_t idx);
+
+    /// Blend conservative variables: primary = alpha * backup + (1 - alpha) * primary
+    void blendConservativeCell(std::size_t idx, double alpha);
 
 private:
     int dim_ = 3;

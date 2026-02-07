@@ -1,4 +1,5 @@
 #include "ExplicitSolver.hpp"
+#include "SimulationConfig.hpp"
 #include <cmath>
 #include <algorithm>
 #include <limits>
@@ -32,7 +33,9 @@ void ExplicitSolver::ensureStorage(const RectilinearMesh& mesh) {
 }
 
 double ExplicitSolver::step(const SimulationConfig& config,
-        const RectilinearMesh& mesh, SolutionState& state, double targetDt) {
+                            const RectilinearMesh& mesh,
+                            SolutionState& state,
+                            double targetDt) {
     double dt;
     if (params_.constDt > 0) {
         dt = params_.constDt;
@@ -45,21 +48,34 @@ double ExplicitSolver::step(const SimulationConfig& config,
     }
 
     ensureStorage(mesh);
-    int dim = mesh.dim();
 
-    // Compute RHS = -div(F)
-    computeRHS(config, mesh, state);
+    for (int s = 1; s <= config.RKOrder; ++s) {
 
-    // Forward Euler: U^{n+1} = U^n + dt * RHS
-    for (int k = 0; k < mesh.nz(); ++k) {
-        for (int j = 0; j < mesh.ny(); ++j) {
-            for (int i = 0; i < mesh.nx(); ++i) {
-                std::size_t idx = mesh.index(i, j, k);
-                state.rho[idx]  += dt * rhsRho_[idx];
-                state.rhoU[idx] += dt * rhsRhoU_[idx];
-                if (dim >= 2) state.rhoV[idx] += dt * rhsRhoV_[idx];
-                if (dim >= 3) state.rhoW[idx] += dt * rhsRhoW_[idx];
-                state.rhoE[idx] += dt * rhsRhoE_[idx];
+        computeRHS(config, mesh, state);
+
+        for (int k = 0; k < mesh.nz(); ++k) {
+            for (int j = 0; j < mesh.ny(); ++j) {
+                for (int i = 0; i < mesh.nx(); ++i) {
+                    std::size_t idx = mesh.index(i, j, k);
+
+                    // Save U^n before first stage modifies it
+                    if (s == 1 && config.RKOrder > 1) {
+                        state.saveConservativeCell(idx);
+                    }
+
+                    // Forward Euler update
+                    state.rho[idx]  += dt * rhsRho_[idx];
+                    state.rhoU[idx] += dt * rhsRhoU_[idx];
+                    if (config.dim >= 2) state.rhoV[idx] += dt * rhsRhoV_[idx];
+                    if (config.dim >= 3) state.rhoW[idx] += dt * rhsRhoW_[idx];
+                    state.rhoE[idx] += dt * rhsRhoE_[idx];
+
+                    // SSP-RK blending: U = alpha * U^n + (1-alpha) * U
+                    if (config.RKOrder > 1 && s >= 2) {
+                        double alpha = sspRKBlendCoeff(config, s);
+                        state.blendConservativeCell(idx, alpha);
+                    }
+                }
             }
         }
     }
@@ -67,8 +83,19 @@ double ExplicitSolver::step(const SimulationConfig& config,
     return dt;
 }
 
+double ExplicitSolver::sspRKBlendCoeff(const SimulationConfig& config, int stage) const {
+    // SSP-RK2: U^(n+1) = 1/2 * U^n + 1/2 * [U^(1) + dt*L(U^(1))]
+    if (config.RKOrder == 2 && stage == 2) return 0.5;
+    // SSP-RK3: stage 2: U^(2) = 3/4 * U^n + 1/4 * [U^(1) + dt*L(U^(1))]
+    if (config.RKOrder == 3 && stage == 2) return 3.0 / 4.0;
+    // SSP-RK3: stage 3: U^(n+1) = 1/3 * U^n + 2/3 * [U^(2) + dt*L(U^(2))]
+    if (config.RKOrder == 3 && stage == 3) return 1.0 / 3.0;
+    return 0.0;
+}
+
 void ExplicitSolver::computeRHS(const SimulationConfig& config,
-        const RectilinearMesh& mesh, SolutionState& state) {
+        const RectilinearMesh& mesh,
+        SolutionState& state) {
     state.convertConservativeToPrimitiveVariables(mesh, eos_);
     mesh.applyBoundaryConditions(state, VarSet::PRIM);
     reconstructor_.reconstruct(config, mesh, state);
@@ -195,7 +222,7 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
     }
 }
 
-double ExplicitSolver::computeAcousticTimeStep(const RectilinearMesh& mesh, const SolutionState& state) const {
+double ExplicitSolver::computeAcousticTimeStep(const RectilinearMesh& mesh, SolutionState& state) const {
     double maxSpeed = 0.0;
     double minDx = std::numeric_limits<double>::max();
 

@@ -33,12 +33,15 @@ RectilinearMesh::RectilinearMesh(const SimulationConfig& config,
         throw std::invalid_argument("RectilinearMesh: zNodes must have at least 2 entries for 3D");
     }
 
+    dim_ = config.dim;
+    nGhost_ = config.nGhost;
+
     nx_ = static_cast<int>(xNodes.size()) - 1;
     ny_ = static_cast<int>(yNodes.size()) - 1;
     nz_ = static_cast<int>(zNodes.size()) - 1;
 
     // Ghost cells only in active dimensions.
-    ngx_ = config.nGhost;
+    ngx_ = nGhost_;
     ngy_ = (dim_ >= 2) ? nGhost_ : 0;
     ngz_ = (dim_ >= 3) ? nGhost_ : 0;
 

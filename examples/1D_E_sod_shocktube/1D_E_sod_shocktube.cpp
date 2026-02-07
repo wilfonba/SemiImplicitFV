@@ -72,6 +72,7 @@ int main() {
     SimulationConfig config;
     config.dim = 1;
     config.nGhost = 4;
+    config.RKOrder = 3;
 
     RectilinearMesh mesh = RectilinearMesh::createUniform(
         config, numCells, 0.0, length);
@@ -80,10 +81,10 @@ int main() {
     std::cout << "Created mesh with " << mesh.nx() << " cells.\n";
 
     SolutionState state;
-    state.allocate(mesh.totalCells(), mesh.dim());
+    state.allocate(mesh.totalCells(), config);
 
     auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0, config);
-    auto riemannSolver = std::make_shared<LFSolver>(eos, true, config);
+    auto riemannSolver = std::make_shared<HLLCSolver>(eos, true, config);
 
     IGRParams igrParams;
     igrParams.alphaCoeff = 1.0;       // α = αCoeff * Δx²
@@ -95,9 +96,8 @@ int main() {
     ExplicitParams params;
     params.cfl = 0.1;
     //params.constDt = constDt;
-    params.RKOrder = 1;
     params.useIGR = false;
-    params.reconOrder = ReconstructionOrder::WENO1;
+    params.reconOrder = ReconstructionOrder::WENO5;
 
     ExplicitSolver solver(riemannSolver, eos, igrSolver, params);
     initializeSodProblem(mesh, state, *eos);

@@ -4,8 +4,8 @@
 
 namespace SemiImplicitFV {
 
-void SolutionState::allocate(std::size_t totalCells, int dim) {
-    dim_ = dim;
+void SolutionState::allocate(std::size_t totalCells, const SimulationConfig& config) {
+    dim_ = config.dim;
 
     rho.assign(totalCells, 0.0);
     rhoU.assign(totalCells, 0.0);
@@ -33,6 +33,15 @@ void SolutionState::allocate(std::size_t totalCells, int dim) {
     }
 
     aux.assign(totalCells, 0.0);
+
+    // Allocate backup arrays for multi-stage time stepping
+    if (config.RKOrder > 1) {
+        rho0.assign(totalCells, 0.0);
+        rhoU0.assign(totalCells, 0.0);
+        rhoE0.assign(totalCells, 0.0);
+        if (dim_ >= 2) rhoV0.assign(totalCells, 0.0); else rhoV0.clear();
+        if (dim_ >= 3) rhoW0.assign(totalCells, 0.0); else rhoW0.clear();
+    }
 }
 
 void SolutionState::copyCell_P(std::size_t dst, std::size_t src,
@@ -178,6 +187,22 @@ void SolutionState::convertPrimitiveToConservativeVariables(
             }
         }
     }
+}
+
+void SolutionState::saveConservativeCell(std::size_t idx) {
+    rho0[idx]  = rho[idx];
+    rhoU0[idx] = rhoU[idx];
+    if (dim_ >= 2) rhoV0[idx] = rhoV[idx];
+    if (dim_ >= 3) rhoW0[idx] = rhoW[idx];
+    rhoE0[idx] = rhoE[idx];
+}
+
+void SolutionState::blendConservativeCell(std::size_t idx, double alpha) {
+    rho[idx]  = alpha * rho0[idx]  + (1.0 - alpha) * rho[idx];
+    rhoU[idx] = alpha * rhoU0[idx] + (1.0 - alpha) * rhoU[idx];
+    if (dim_ >= 2) rhoV[idx] = alpha * rhoV0[idx] + (1.0 - alpha) * rhoV[idx];
+    if (dim_ >= 3) rhoW[idx] = alpha * rhoW0[idx] + (1.0 - alpha) * rhoW[idx];
+    rhoE[idx] = alpha * rhoE0[idx] + (1.0 - alpha) * rhoE[idx];
 }
 
 } // namespace SemiImplicitFV

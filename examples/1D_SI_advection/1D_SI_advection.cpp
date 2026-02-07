@@ -110,13 +110,13 @@ int main() {
     std::cout << "  End time: " << endTime << " s  (one domain traversal)\n\n";
 
     // ---- Mesh (periodic) ----
-    RectilinearMesh mesh = RectilinearMesh::createUniform(config.dim, numCells, 0.0, length);
+    RectilinearMesh mesh = RectilinearMesh::createUniform(config, numCells, 0.0, length);
     mesh.setBoundaryCondition(RectilinearMesh::XLow,  BoundaryCondition::Periodic);
     mesh.setBoundaryCondition(RectilinearMesh::XHigh, BoundaryCondition::Periodic);
 
     // Allocate solution state
     SolutionState state;
-    state.allocate(mesh.totalCells(), mesh.dim());
+    state.allocate(mesh.totalCells(), config);
 
     // ---- Initial condition ----
     initializeProblem(mesh, state, *eos, xCenter, length);
