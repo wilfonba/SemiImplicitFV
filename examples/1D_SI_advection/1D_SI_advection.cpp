@@ -23,6 +23,7 @@
 #include "GaussSeidelPressureSolver.hpp"
 #include "IGR.hpp"
 #include "IdealGasEOS.hpp"
+#include "SimulationConfig.hpp"
 
 #include <iostream>
 #include <fstream>
@@ -88,7 +89,12 @@ int main() {
     const double length   = 1.0;
     const double endTime  = length / u0;   // one full domain traversal
 
-    auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0);
+    // Simulation config
+    SimulationConfig config;
+    config.dim = 1;
+    config.nGhost = 2;
+
+    auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0, config);
 
     PrimitiveState ref;
     ref.rho = rho0;
@@ -104,7 +110,7 @@ int main() {
     std::cout << "  End time: " << endTime << " s  (one domain traversal)\n\n";
 
     // ---- Mesh (periodic) ----
-    RectilinearMesh mesh = RectilinearMesh::createUniform(1, numCells, 0.0, length);
+    RectilinearMesh mesh = RectilinearMesh::createUniform(config.dim, numCells, 0.0, length);
     mesh.setBoundaryCondition(RectilinearMesh::XLow,  BoundaryCondition::Periodic);
     mesh.setBoundaryCondition(RectilinearMesh::XHigh, BoundaryCondition::Periodic);
 
@@ -117,7 +123,7 @@ int main() {
     writeSolution(mesh, state, "advection_t0.dat");
 
     // ---- Solver components ----
-    auto riemann  = std::make_shared<RusanovSolver>(eos);
+    auto riemann  = std::make_shared<RusanovSolver>(eos, false, config);
     auto pressure = std::make_shared<GaussSeidelPressureSolver>();
 
     IGRParams igrParams;

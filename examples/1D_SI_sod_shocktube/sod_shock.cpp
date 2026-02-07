@@ -20,6 +20,7 @@
 #include "GaussSeidelPressureSolver.hpp"
 #include "IGR.hpp"
 #include "IdealGasEOS.hpp"
+#include "SimulationConfig.hpp"
 
 #include <iostream>
 #include <fstream>
@@ -82,9 +83,14 @@ int main() {
     const double length = 1.0;
     const double endTime = 0.2;
 
+    // Simulation config
+    SimulationConfig config;
+    config.dim = 1;
+    config.nGhost = 2;
+
     // Create mesh (1D uniform)
     RectilinearMesh mesh = RectilinearMesh::createUniform(
-        1, numCells, 0.0, length);
+        config.dim, numCells, 0.0, length);
     mesh.setBoundaryCondition(RectilinearMesh::XLow,  BoundaryCondition::Outflow);
     mesh.setBoundaryCondition(RectilinearMesh::XHigh, BoundaryCondition::Outflow);
     std::cout << "Created mesh with " << mesh.nx() << " cells.\n";
@@ -94,11 +100,11 @@ int main() {
     state.allocate(mesh.totalCells(), mesh.dim());
 
     // Create equation of state
-    auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0);
+    auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0, config);
     std::cout << "Created ideal gas EOS" << "\n";
 
     // Create advective Riemann solver (pressure-free!)
-    auto riemannSolver = std::make_shared<HLLCSolver>(eos, false);
+    auto riemannSolver = std::make_shared<HLLCSolver>(eos, false, config);
     std::cout << "Created Riemann solver \n";
 
     // Create pressure solver

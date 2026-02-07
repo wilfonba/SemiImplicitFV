@@ -1,4 +1,5 @@
 #include "Reconstruction.hpp"
+#include <iostream>
 #include <cassert>
 
 namespace SemiImplicitFV {
@@ -412,8 +413,12 @@ void Reconstructor::reconstructZ(const RectilinearMesh& mesh, const SolutionStat
     }
 }
 
-void Reconstructor::reconstruct(const RectilinearMesh& mesh, const SolutionState& state) {
-    assert(mesh.nGhost() >= requiredGhostCells());
+void Reconstructor::reconstruct(
+        const SimulationConfig& config,
+        const RectilinearMesh& mesh,
+        const SolutionState& state)
+{
+    assert(config.nGhost >= requiredGhostCells());
     ensureStorage(mesh);
     reconstructX(mesh, state);
     if (dim_ >= 2) reconstructY(mesh, state);

@@ -1,4 +1,5 @@
 #include "RectilinearMesh.hpp"
+#include "SimulationConfig.hpp"
 #include <iostream>
 #include <algorithm>
 #include <stdexcept>
@@ -9,17 +10,17 @@ namespace SemiImplicitFV {
 // Construction
 // ---------------------------------------------------------------------------
 
-RectilinearMesh::RectilinearMesh(int dim,
+RectilinearMesh::RectilinearMesh(const SimulationConfig& config,
                                  const std::vector<double>& xNodes,
                                  const std::vector<double>& yNodes,
-                                 const std::vector<double>& zNodes,
-                                 int nGhost)
-    : dim_(dim), nGhost_(nGhost)
+                                 const std::vector<double>& zNodes)
 {
+    int dim = config.dim;
+
     if (dim < 1 || dim > 3) {
         throw std::invalid_argument("RectilinearMesh: dim must be 1, 2, or 3");
     }
-    if (nGhost < 0) {
+    if (config.nGhost < 0) {
         throw std::invalid_argument("RectilinearMesh: nGhost must be non-negative");
     }
     if (xNodes.size() < 2) {
@@ -37,7 +38,7 @@ RectilinearMesh::RectilinearMesh(int dim,
     nz_ = static_cast<int>(zNodes.size()) - 1;
 
     // Ghost cells only in active dimensions.
-    ngx_ = nGhost_;
+    ngx_ = config.nGhost;
     ngy_ = (dim_ >= 2) ? nGhost_ : 0;
     ngz_ = (dim_ >= 3) ? nGhost_ : 0;
 
@@ -51,11 +52,10 @@ RectilinearMesh::RectilinearMesh(int dim,
 }
 
 RectilinearMesh RectilinearMesh::createUniform(
-    int dim,
+    const SimulationConfig& config,
     int nx, double xMin, double xMax,
     int ny, double yMin, double yMax,
-    int nz, double zMin, double zMax,
-    int nGhost)
+    int nz, double zMin, double zMax)
 {
     auto linspace = [](int n, double lo, double hi) {
         std::vector<double> nodes(n + 1);
@@ -66,11 +66,10 @@ RectilinearMesh RectilinearMesh::createUniform(
         return nodes;
     };
 
-    return RectilinearMesh(dim,
+    return RectilinearMesh(config,
                            linspace(nx, xMin, xMax),
                            linspace(ny, yMin, yMax),
-                           linspace(nz, zMin, zMax),
-                           nGhost);
+                           linspace(nz, zMin, zMax));
 }
 
 // ---------------------------------------------------------------------------
@@ -163,10 +162,13 @@ void RectilinearMesh::fillGhostX(SolutionState& state, VarSet varSet) const {
                 switch (varSet) {
                 case (VarSet::PRIM):
                     state.copyCell_P(ghost, src, sU, sV, sW);
+                    break;
                 case (VarSet::CONS):
                     state.copyCell_C(ghost, src, sU, sV, sW);
+                    break;
                 default:
                     state.copyCell(ghost, src, sU, sV, sW);
+                    break;
                 }
             }
 
@@ -199,10 +201,13 @@ void RectilinearMesh::fillGhostX(SolutionState& state, VarSet varSet) const {
                 switch (varSet) {
                 case (VarSet::PRIM):
                     state.copyCell_P(ghost, src, sU, sV, sW);
+                    break;
                 case (VarSet::CONS):
                     state.copyCell_C(ghost, src, sU, sV, sW);
+                    break;
                 default:
                     state.copyCell(ghost, src, sU, sV, sW);
+                    break;
                 }
             }
         }
@@ -248,10 +253,13 @@ void RectilinearMesh::fillGhostY(SolutionState& state, VarSet varSet) const {
                 switch (varSet) {
                 case (VarSet::PRIM):
                     state.copyCell_P(ghost, src, sU, sV, sW);
+                    break;
                 case (VarSet::CONS):
                     state.copyCell_C(ghost, src, sU, sV, sW);
+                    break;
                 default:
                     state.copyCell(ghost, src, sU, sV, sW);
+                    break;
                 }
             }
 
@@ -284,10 +292,13 @@ void RectilinearMesh::fillGhostY(SolutionState& state, VarSet varSet) const {
                 switch (varSet) {
                 case (VarSet::PRIM):
                     state.copyCell_P(ghost, src, sU, sV, sW);
+                    break;
                 case (VarSet::CONS):
                     state.copyCell_C(ghost, src, sU, sV, sW);
+                    break;
                 default:
                     state.copyCell(ghost, src, sU, sV, sW);
+                    break;
                 }
             }
         }
@@ -335,10 +346,13 @@ void RectilinearMesh::fillGhostZ(SolutionState& state, VarSet varSet) const {
                 switch (varSet) {
                 case (VarSet::PRIM):
                     state.copyCell_P(ghost, src, sU, sV, sW);
+                    break;
                 case (VarSet::CONS):
                     state.copyCell_C(ghost, src, sU, sV, sW);
+                    break;
                 default:
                     state.copyCell(ghost, src, sU, sV, sW);
+                    break;
                 }
             }
 
@@ -371,10 +385,13 @@ void RectilinearMesh::fillGhostZ(SolutionState& state, VarSet varSet) const {
                 switch (varSet) {
                 case (VarSet::PRIM):
                     state.copyCell_P(ghost, src, sU, sV, sW);
+                    break;
                 case (VarSet::CONS):
                     state.copyCell_C(ghost, src, sU, sV, sW);
+                    break;
                 default:
                     state.copyCell(ghost, src, sU, sV, sW);
+                    break;
                 }
             }
         }

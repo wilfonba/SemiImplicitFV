@@ -3,6 +3,7 @@
 
 #include "State.hpp"
 #include "EquationOfState.hpp"
+#include "SimulationConfig.hpp"
 #include <array>
 #include <memory>
 #include <string>
@@ -25,8 +26,9 @@ struct RiemannFlux {
 class RiemannSolver {
 public:
     explicit RiemannSolver(std::shared_ptr<EquationOfState> eos,
-                           bool includePressure = false)
-        : eos_(std::move(eos)), includePressure_(includePressure) {}
+                           bool includePressure = false,
+                           const SimulationConfig& config = {})
+        : eos_(std::move(eos)), includePressure_(includePressure), config_(config) {}
 
     virtual ~RiemannSolver() = default;
 
@@ -49,15 +51,20 @@ public:
 
     bool includePressure() const { return includePressure_; }
     const EquationOfState& eos() const { return *eos_; }
+    int dim() const { return config_.dim; }
 
 protected:
     std::shared_ptr<EquationOfState> eos_;
     bool includePressure_;
+    SimulationConfig config_;
 };
 
 // Utility used by solver implementations
-inline double normalVelocity(const PrimitiveState& W, const std::array<double, 3>& n) {
-    return W.u[0] * n[0] + W.u[1] * n[1] + W.u[2] * n[2];
+inline double normalVelocity(const PrimitiveState& W, const std::array<double, 3>& n, int dim = 3) {
+    double vn = 0.0;
+    for (int d = 0; d < dim; ++d)
+        vn += W.u[d] * n[d];
+    return vn;
 }
 
 } // namespace SemiImplicitFV

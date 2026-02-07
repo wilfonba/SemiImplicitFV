@@ -1,15 +1,16 @@
-#ifndef UPWIND_SOLVER_HPP
-#define UPWIND_SOLVER_HPP
+#ifndef LF_SOLVER_HPP
+#define LF_SOLVER_HPP
 
 #include "RiemannSolver.hpp"
 
 namespace SemiImplicitFV {
 
-class UpwindSolver : public RiemannSolver {
+class LFSolver : public RiemannSolver {
 public:
-    explicit UpwindSolver(std::shared_ptr<EquationOfState> eos,
-                          bool includePressure = false)
-        : RiemannSolver(std::move(eos), includePressure) {}
+    explicit LFSolver(std::shared_ptr<EquationOfState> eos,
+                          bool includePressure = false,
+                          const SimulationConfig& config = {})
+        : RiemannSolver(std::move(eos), includePressure, config) {}
 
     RiemannFlux computeFlux(
         const PrimitiveState& left,
@@ -24,11 +25,11 @@ public:
     ) const override;
 
     std::string name() const override {
-        return includePressure_ ? "Upwind" : "UpwindAdvective";
+        return includePressure_ ? "LF" : "LFAdvective";
     }
 };
 
 } // namespace SemiImplicitFV
 
-#endif // UPWIND_SOLVER_HPP
+#endif // LF_SOLVER_HPP
 

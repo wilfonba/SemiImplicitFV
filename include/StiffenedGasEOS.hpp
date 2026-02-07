@@ -8,7 +8,8 @@ namespace SemiImplicitFV {
 
 class StiffenedGasEOS : public EquationOfState {
 public:
-    StiffenedGasEOS(double gamma, double pInf, double R);
+    StiffenedGasEOS(double gamma, double pInf, double R,
+                    const SimulationConfig& config = {});
 
     double pressure(const ConservativeState& U) const override;
     double temperature(const PrimitiveState& W) const override;

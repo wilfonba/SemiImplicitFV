@@ -3,6 +3,7 @@
 
 #include "RectilinearMesh.hpp"
 #include "SolutionState.hpp"
+#include "SimulationConfig.hpp"
 #include "State.hpp"
 #include "RiemannSolver.hpp"
 #include "Reconstruction.hpp"
@@ -15,6 +16,7 @@ namespace SemiImplicitFV {
 
 struct ExplicitParams{
     double cfl;               // CFL number (based on material velocity)
+    double constDt;           // Constant time step (if > 0, overrides CFL-based time step)
     double maxDt;             // Maximum time step
     double minDt;             // Minimum time step
     int RKOrder;              // Runge-Kutta order (1, 2, or 3)
@@ -24,6 +26,7 @@ struct ExplicitParams{
 
     ExplicitParams()
         : cfl(0.8)
+        , constDt(-1.0)
         , maxDt(1e-4)
         , minDt(1e-12)
         , RKOrder(1)
@@ -42,7 +45,8 @@ public:
 
     ~ExplicitSolver() = default;
 
-    double step(const RectilinearMesh& mesh, SolutionState& state, double targetDt = -1.0);
+    double step(const SimulationConfig& config,
+            const RectilinearMesh& mesh, SolutionState& state, double targetDt = -1.0);
 
     double computeAcousticTimeStep(const RectilinearMesh& mesh, const SolutionState& state) const;
 
@@ -65,7 +69,8 @@ private:
     std::vector<double> rhsRhoE_;
 
     void ensureStorage(const RectilinearMesh& mesh);
-    void computeRHS(const RectilinearMesh& mesh, SolutionState& state);
+    void computeRHS(const SimulationConfig& config,
+            const RectilinearMesh& mesh, SolutionState& state);
 };
 
 } // namespace SemiImplicitFV

@@ -31,8 +31,15 @@ void ExplicitSolver::ensureStorage(const RectilinearMesh& mesh) {
     rhsRhoE_.resize(n);
 }
 
-double ExplicitSolver::step(const RectilinearMesh& mesh, SolutionState& state, double targetDt) {
-    double dt = computeAcousticTimeStep(mesh, state);
+double ExplicitSolver::step(const SimulationConfig& config,
+        const RectilinearMesh& mesh, SolutionState& state, double targetDt) {
+    double dt;
+    if (params_.constDt > 0) {
+        dt = params_.constDt;
+    } else {
+        dt = computeAcousticTimeStep(mesh, state);
+    }
+
     if (targetDt > 0) {
         dt = std::min(dt, targetDt);
     }
@@ -41,7 +48,7 @@ double ExplicitSolver::step(const RectilinearMesh& mesh, SolutionState& state, d
     int dim = mesh.dim();
 
     // Compute RHS = -div(F)
-    computeRHS(mesh, state);
+    computeRHS(config, mesh, state);
 
     // Forward Euler: U^{n+1} = U^n + dt * RHS
     for (int k = 0; k < mesh.nz(); ++k) {
@@ -60,10 +67,11 @@ double ExplicitSolver::step(const RectilinearMesh& mesh, SolutionState& state, d
     return dt;
 }
 
-void ExplicitSolver::computeRHS(const RectilinearMesh& mesh, SolutionState& state) {
+void ExplicitSolver::computeRHS(const SimulationConfig& config,
+        const RectilinearMesh& mesh, SolutionState& state) {
     state.convertConservativeToPrimitiveVariables(mesh, eos_);
     mesh.applyBoundaryConditions(state, VarSet::PRIM);
-    reconstructor_.reconstruct(mesh, state);
+    reconstructor_.reconstruct(config, mesh, state);
 
     int dim = mesh.dim();
 
@@ -204,6 +212,8 @@ double ExplicitSolver::computeAcousticTimeStep(const RectilinearMesh& mesh, cons
                 if (mesh.dim() >= 2) speed2 += state.velV[idx] * state.velV[idx];
                 if (mesh.dim() >= 3) speed2 += state.velW[idx] * state.velW[idx];
                 double u = std::sqrt(speed2);
+                double c = eos_->soundSpeed(state.getPrimitiveState(idx));
+                u += c;
 
                 maxSpeed = std::max(maxSpeed, u);
             }

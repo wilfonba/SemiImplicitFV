@@ -9,8 +9,9 @@ namespace SemiImplicitFV {
 class HLLCSolver : public RiemannSolver {
 public:
     explicit HLLCSolver(std::shared_ptr<EquationOfState> eos,
-                        bool includePressure = false)
-        : RiemannSolver(std::move(eos), includePressure) {}
+                        bool includePressure = false,
+                        const SimulationConfig& config = {})
+        : RiemannSolver(std::move(eos), includePressure, config) {}
 
     RiemannFlux computeFlux(
         const PrimitiveState& left,

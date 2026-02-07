@@ -2,14 +2,18 @@
 
 namespace SemiImplicitFV {
 
-IdealGasEOS::IdealGasEOS(double gamma, double R)
-    : gamma_(gamma)
+IdealGasEOS::IdealGasEOS(double gamma, double R, const SimulationConfig& config)
+    : EquationOfState(config)
+    , gamma_(gamma)
     , R_(R)
 {}
 
 double IdealGasEOS::pressure(const ConservativeState& U) const {
     double rho = std::max(U.rho, 1e-14);
-    double ke = 0.5 * (U.rhoU[0]*U.rhoU[0] + U.rhoU[1]*U.rhoU[1] + U.rhoU[2]*U.rhoU[2]) / rho;
+    double ke = 0.0;
+    for (int d = 0; d < config_.dim; ++d)
+        ke += U.rhoU[d] * U.rhoU[d];
+    ke *= 0.5 / rho;
     double e = U.rhoE - ke;
 
     return (gamma_ - 1.0) * e;
@@ -32,7 +36,10 @@ double IdealGasEOS::internalEnergy(const PrimitiveState& W) const {
 }
 
 double IdealGasEOS::totalEnergy(const PrimitiveState& W) const {
-    double ke = 0.5 * (W.u[0]*W.u[0] + W.u[1]*W.u[1] + W.u[2]*W.u[2]);
+    double ke = 0.0;
+    for (int d = 0; d < config_.dim; ++d)
+        ke += W.u[d] * W.u[d];
+    ke *= 0.5;
     return internalEnergy(W) + ke;
 }
 
@@ -41,11 +48,13 @@ PrimitiveState IdealGasEOS::toPrimitive(const ConservativeState& U) const {
 
     W.rho = std::max(U.rho, 1e-14);
 
-    W.u[0] = U.rhoU[0] / W.rho;
-    W.u[1] = U.rhoU[1] / W.rho;
-    W.u[2] = U.rhoU[2] / W.rho;
+    for (int d = 0; d < config_.dim; ++d)
+        W.u[d] = U.rhoU[d] / W.rho;
 
-    double ke = 0.5 * W.rho * (W.u[0]*W.u[0] + W.u[1]*W.u[1] + W.u[2]*W.u[2]);
+    double ke = 0.0;
+    for (int d = 0; d < config_.dim; ++d)
+        ke += W.u[d] * W.u[d];
+    ke *= 0.5 * W.rho;
     double e = U.rhoE - ke;
 
     W.p = std::max((gamma_ - 1.0) * e, 1e-14);
@@ -58,11 +67,13 @@ ConservativeState IdealGasEOS::toConservative(const PrimitiveState& W) const {
     ConservativeState U;
 
     U.rho = W.rho;
-    U.rhoU[0] = W.rho * W.u[0];
-    U.rhoU[1] = W.rho * W.u[1];
-    U.rhoU[2] = W.rho * W.u[2];
+    for (int d = 0; d < config_.dim; ++d)
+        U.rhoU[d] = W.rho * W.u[d];
 
-    double ke = 0.5 * W.rho * (W.u[0]*W.u[0] + W.u[1]*W.u[1] + W.u[2]*W.u[2]);
+    double ke = 0.0;
+    for (int d = 0; d < config_.dim; ++d)
+        ke += W.u[d] * W.u[d];
+    ke *= 0.5 * W.rho;
     double e = W.p / (gamma_ - 1.0);
 
     U.rhoE = e + ke;

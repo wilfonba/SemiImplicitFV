@@ -2,6 +2,7 @@
 #define EQUATION_OF_STATE_HPP
 
 #include "State.hpp"
+#include "SimulationConfig.hpp"
 #include <string>
 
 namespace SemiImplicitFV {
@@ -9,7 +10,11 @@ namespace SemiImplicitFV {
 // Abstract equation of state interface
 class EquationOfState {
 public:
+    explicit EquationOfState(const SimulationConfig& config = {}) : config_(config) {}
     virtual ~EquationOfState() = default;
+
+    const SimulationConfig& config() const { return config_; }
+    int dim() const { return config_.dim; }
 
     // Compute pressure from conservative state
     virtual double pressure(const ConservativeState& U) const = 0;
@@ -33,6 +38,9 @@ public:
     virtual ConservativeState toConservative(const PrimitiveState& W) const = 0;
 
     virtual std::string name() const = 0;
+
+protected:
+    SimulationConfig config_;
 };
 
 } // namespace SemiImplicitFV

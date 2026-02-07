@@ -28,7 +28,7 @@ set(LIB_SOURCES
     src/SolutionState.cpp
     src/RectilinearMesh.cpp
     src/Reconstruction.cpp
-    src/UpwindSolver.cpp
+    src/LFSolver.cpp
     src/RusanovSolver.cpp
     src/HLLCSolver.cpp
     src/IGR.cpp

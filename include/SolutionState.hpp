@@ -62,6 +62,12 @@ public:
         const std::shared_ptr<EquationOfState>& eos
         );
 
+    /// Convert from primitive to conservative variables.
+    void convertPrimitiveToConservativeVariables(
+        const RectilinearMesh& mesh,
+        const std::shared_ptr<EquationOfState>& eos
+        );
+
     // Conservative variables
     std::vector<double> rho;   // density
     std::vector<double> rhoU;  // x-momentum

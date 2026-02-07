@@ -2,6 +2,7 @@
 #define RECTILINEAR_MESH_HPP
 
 #include "SolutionState.hpp"
+#include "SimulationConfig.hpp"
 #include <vector>
 #include <array>
 #include <cstddef>
@@ -29,18 +30,16 @@ public:
     /// Construct from physical node coordinates.
     /// For 1D: pass only xNodes (yNodes/zNodes default to {0,1}).
     /// For 2D: pass xNodes and yNodes (zNodes defaults to {0,1}).
-    RectilinearMesh(int dim,
+    RectilinearMesh(const SimulationConfig& config,
                     const std::vector<double>& xNodes,
                     const std::vector<double>& yNodes = {0.0, 1.0},
-                    const std::vector<double>& zNodes = {0.0, 1.0},
-                    int nGhost = 2);
+                    const std::vector<double>& zNodes = {0.0, 1.0});
 
     /// Convenience factory for uniform grids.
-    static RectilinearMesh createUniform(int dim,
+    static RectilinearMesh createUniform(const SimulationConfig& config,
                                          int nx, double xMin, double xMax,
                                          int ny = 1, double yMin = 0.0, double yMax = 1.0,
-                                         int nz = 1, double zMin = 0.0, double zMax = 1.0,
-                                         int nGhost = 2);
+                                         int nz = 1, double zMin = 0.0, double zMax = 1.0);
 
     // --- Grid topology ---
 

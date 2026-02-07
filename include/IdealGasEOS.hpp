@@ -8,7 +8,8 @@ namespace SemiImplicitFV {
 
 class IdealGasEOS : public EquationOfState {
 public:
-    explicit IdealGasEOS(double gamma = 1.4, double R = 287.0);
+    explicit IdealGasEOS(double gamma = 1.4, double R = 287.0,
+                         const SimulationConfig& config = {});
 
     double pressure(const ConservativeState& U) const override;
     double temperature(const PrimitiveState& W) const override;

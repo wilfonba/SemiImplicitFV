@@ -2,9 +2,11 @@
 #include "SolutionState.hpp"
 #include "State.hpp"
 #include "HLLCSolver.hpp"
+#include "LFSolver.hpp"
 #include "ExplicitSolver.hpp"
 #include "IGR.hpp"
 #include "IdealGasEOS.hpp"
+#include "SimulationConfig.hpp"
 
 #include <iostream>
 #include <fstream>
@@ -62,31 +64,27 @@ void writeSolution(const RectilinearMesh& mesh, const SolutionState& state, cons
 }
 
 int main() {
-    // Problem setup
     const int numCells = 1000;
     const double length = 1.0;
+    const double constDt = 1e-4;
     const double endTime = 0.2;
 
-    // Create mesh (1D uniform)
+    SimulationConfig config;
+    config.dim = 1;
+    config.nGhost = 4;
+
     RectilinearMesh mesh = RectilinearMesh::createUniform(
-        1, numCells, 0.0, length);
+        config, numCells, 0.0, length);
     mesh.setBoundaryCondition(RectilinearMesh::XLow,  BoundaryCondition::Outflow);
     mesh.setBoundaryCondition(RectilinearMesh::XHigh, BoundaryCondition::Outflow);
     std::cout << "Created mesh with " << mesh.nx() << " cells.\n";
 
-    // Allocate solution state
     SolutionState state;
     state.allocate(mesh.totalCells(), mesh.dim());
 
-    // Create equation of state
-    auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0);
-    std::cout << "Created ideal gas EOS" << "\n";
+    auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0, config);
+    auto riemannSolver = std::make_shared<LFSolver>(eos, true, config);
 
-    // Create Riemann solver
-    auto riemannSolver = std::make_shared<HLLCSolver>(eos, true);
-    std::cout << "Created Riemann solver \n";
-
-    // Create IGR solver
     IGRParams igrParams;
     igrParams.alphaCoeff = 1.0;       // α = αCoeff * Δx²
     igrParams.maxIterations = 5;
@@ -94,25 +92,17 @@ int main() {
     auto igrSolver = std::make_shared<IGRSolver>(igrParams);
     std::cout << "Created IGR solver \n";
 
-    // Explicit solver parameters
     ExplicitParams params;
-    params.cfl = 0.8;
+    params.cfl = 0.1;
+    //params.constDt = constDt;
     params.RKOrder = 1;
     params.useIGR = true;
+    params.reconOrder = ReconstructionOrder::WENO3;
 
-    // Create explicit solver
     ExplicitSolver solver(riemannSolver, eos, igrSolver, params);
-    std::cout << "Created explicit solver \n";
-
-    // Initialize solution
     initializeSodProblem(mesh, state, *eos);
-    std::cout << "Initialized sod shock tube problem \n";
-
-    // Write initial condition
     writeSolution(mesh, state, "sod_t0.dat");
-    std::cout << "Wrote initial conditions \n";
 
-    // Time integration
     std::cout << "Running simulation to t = " << endTime << "...\n";
     std::cout << "Using IGR with alpha_coeff = " << igrParams.alphaCoeff << "\n\n";
 
@@ -120,7 +110,7 @@ int main() {
     int step = 0;
 
     while (time < endTime) {
-        double dt = solver.step(mesh, state, endTime - time);
+        double dt = solver.step(config, mesh, state, endTime - time);
         time += dt;
         step++;
 
@@ -135,6 +125,7 @@ int main() {
                       << ", dt = " << dt
                       << ", max|sigma| = " << maxSigma << "\n";
         }
+
     }
 
     std::cout << "\nSimulation complete after " << step << " steps.\n";

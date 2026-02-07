@@ -3,6 +3,7 @@
 
 #include "RectilinearMesh.hpp"
 #include "SolutionState.hpp"
+#include "SimulationConfig.hpp"
 #include "State.hpp"
 #include <vector>
 #include <cstddef>
@@ -21,7 +22,9 @@ public:
 
     /// Perform reconstruction on all faces for all active dimensions.
     /// Precondition: ghost cells in state must already be filled.
-    void reconstruct(const RectilinearMesh& mesh, const SolutionState& state);
+    void reconstruct(const SimulationConfig& config,
+            const RectilinearMesh& mesh,
+            const SolutionState& state);
 
     /// Minimum ghost cells needed for the chosen order.
     int requiredGhostCells() const;

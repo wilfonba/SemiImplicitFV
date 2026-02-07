@@ -159,5 +159,25 @@ void SolutionState::convertConservativeToPrimitiveVariables(
     }
 }
 
+void SolutionState::convertPrimitiveToConservativeVariables(
+        const RectilinearMesh& mesh,
+        const std::shared_ptr<EquationOfState>& eos
+        )
+{
+    for (int k = 0; k < mesh.nz(); ++k) {
+        for (int j = 0; j < mesh.ny(); ++j) {
+            for (int i = 0; i < mesh.nx(); ++i) {
+                std::size_t idx = mesh.index(i, j, k);
+                PrimitiveState W = getPrimitiveState(idx);
+                ConservativeState U = eos->toConservative(W);
+                rho[idx] = U.rho;
+                rhoU[idx] = U.rhoU[0];
+                if (dim_ >= 2) rhoV[idx] = U.rhoU[1];
+                if (dim_ >= 3) rhoW[idx] = U.rhoU[2];
+                rhoE[idx] = U.rhoE;
+            }
+        }
+    }
+}
 
 } // namespace SemiImplicitFV
