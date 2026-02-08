@@ -30,6 +30,9 @@ void ExplicitSolver::ensureStorage(const RectilinearMesh& mesh) {
     if (dim >= 2) rhsRhoV_.resize(n); else rhsRhoV_.clear();
     if (dim >= 3) rhsRhoW_.resize(n); else rhsRhoW_.clear();
     rhsRhoE_.resize(n);
+    if (igrSolver_) {
+        gradU_.resize(n);
+    }
 }
 
 double ExplicitSolver::step(const SimulationConfig& config,
@@ -50,6 +53,11 @@ double ExplicitSolver::step(const SimulationConfig& config,
     ensureStorage(mesh);
 
     for (int s = 1; s <= config.RKOrder; ++s) {
+
+        state.convertConservativeToPrimitiveVariables(mesh, eos_);
+        mesh.applyBoundaryConditions(state, VarSet::PRIM);
+
+        if (config.useIGR && igrSolver_) solveIGR(config, mesh, state);
 
         computeRHS(config, mesh, state);
 
@@ -93,11 +101,74 @@ double ExplicitSolver::sspRKBlendCoeff(const SimulationConfig& config, int stage
     return 0.0;
 }
 
+void ExplicitSolver::solveIGR(const SimulationConfig& config,
+        const RectilinearMesh& mesh,
+        SolutionState& state) {
+    if (!igrSolver_) return;
+
+    computeVelocityGradients(config, mesh, state);
+
+    igrSolver_->solveEntropicPressure(config, mesh, state, gradU_);
+}
+
+void ExplicitSolver::computeVelocityGradients(const SimulationConfig& config, const RectilinearMesh& mesh, const SolutionState& state) {
+    int dim = mesh.dim();
+    for (int k = 0; k < mesh.nz(); ++k) {
+        for (int j = 0; j < mesh.ny(); ++j) {
+            for (int i = 0; i < mesh.nx(); ++i) {
+                std::size_t idx = mesh.index(i, j, k);
+
+                std::size_t xm = mesh.index(i - 1, j, k);
+                std::size_t xp = mesh.index(i + 1, j, k);
+                std::array<double, 3> u_xm = {state.velU[xm],
+                                               (dim >= 2) ? state.velV[xm] : 0.0,
+                                               (dim >= 3) ? state.velW[xm] : 0.0};
+                std::array<double, 3> u_xp = {state.velU[xp],
+                                               (dim >= 2) ? state.velV[xp] : 0.0,
+                                               (dim >= 3) ? state.velW[xp] : 0.0};
+
+                std::array<double, 3> u_ym, u_yp;
+                double dyj;
+                if (dim >= 2) {
+                    std::size_t ym = mesh.index(i, j - 1, k);
+                    std::size_t yp = mesh.index(i, j + 1, k);
+                    u_ym = {state.velU[ym], state.velV[ym],
+                            (dim >= 3) ? state.velW[ym] : 0.0};
+                    u_yp = {state.velU[yp], state.velV[yp],
+                            (dim >= 3) ? state.velW[yp] : 0.0};
+                    dyj = mesh.dy(j);
+                } else {
+                    u_ym = u_yp = {state.velU[idx], 0.0, 0.0};
+                    dyj = 1.0;
+                }
+
+                std::array<double, 3> u_zm, u_zp;
+                double dzk;
+                if (dim >= 3) {
+                    std::size_t zm = mesh.index(i, j, k - 1);
+                    std::size_t zp = mesh.index(i, j, k + 1);
+                    u_zm = {state.velU[zm], state.velV[zm], state.velW[zm]};
+                    u_zp = {state.velU[zp], state.velV[zp], state.velW[zp]};
+                    dzk = mesh.dz(k);
+                } else {
+                    u_zm = u_zp = {state.velU[idx],
+                                   (dim >= 2) ? state.velV[idx] : 0.0,
+                                   0.0};
+                    dzk = 1.0;
+                }
+
+                gradU_[idx] = IGRSolver::computeVelocityGradient(
+                    u_xm, u_xp, u_ym, u_yp, u_zm, u_zp,
+                    mesh.dx(i), dyj, dzk, config.dim);
+            }
+        }
+    }
+}
+
+
 void ExplicitSolver::computeRHS(const SimulationConfig& config,
         const RectilinearMesh& mesh,
         SolutionState& state) {
-    state.convertConservativeToPrimitiveVariables(mesh, eos_);
-    mesh.applyBoundaryConditions(state, VarSet::PRIM);
     reconstructor_.reconstruct(config, mesh, state);
 
     int dim = mesh.dim();

@@ -32,7 +32,7 @@ set(LIB_SOURCES
     src/RusanovSolver.cpp
     src/HLLCSolver.cpp
     src/IGR.cpp
-    src/SemiImplicitSolver.cpp
+    #src/SemiImplicitSolver.cpp
     src/ExplicitSolver.cpp
     src/PressureLaplacian.cpp
     src/GaussSeidelPressureSolver.cpp

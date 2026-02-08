@@ -2,6 +2,7 @@
 #include "SolutionState.hpp"
 #include "State.hpp"
 #include "HLLCSolver.hpp"
+#include "LFSolver.hpp"
 #include "ExplicitSolver.hpp"
 #include "IGR.hpp"
 #include "IdealGasEOS.hpp"
@@ -15,8 +16,7 @@
 
 using namespace SemiImplicitFV;
 
-// 2D Riemann problem Configuration 3 (Lax & Liu, 1998)
-// Four constant states separated by discontinuities at (x,y) = (0.5, 0.5)
+// Four constant states separated by discontinuities at (x,y) = (0.75, 0.75)
 void initializeRiemannProblem(const RectilinearMesh& mesh, SolutionState& state, const IdealGasEOS& eos) {
     double xMid = 0.75;
     double yMid = 0.75;
@@ -59,7 +59,7 @@ void initializeRiemannProblem(const RectilinearMesh& mesh, SolutionState& state,
             if (x >= xMid && y >= yMid)      W = &q1;
             else if (x < xMid && y >= yMid)  W = &q2;
             else if (x < xMid && y < yMid)   W = &q3;
-            else                              W = &q4;
+            else                             W = &q4;
 
             PrimitiveState Wt = *W;
             Wt.T = eos.temperature(*W);
@@ -76,12 +76,13 @@ int main() {
     const double length = 1.0;
     const double endTime = 0.8;
     const double outputInterval = 0.008;
-    const int printInterval = 20;
+    const int printInterval = 1;
 
     SimulationConfig config;
     config.dim = 2;
     config.nGhost = 4;
     config.RKOrder = 3;
+    config.useIGR = true;
 
     RectilinearMesh mesh = RectilinearMesh::createUniform(
         config, N, 0.0, length, N, 0.0, length);
@@ -95,21 +96,20 @@ int main() {
     state.allocate(mesh.totalCells(), config);
 
     auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0, config);
-    auto riemannSolver = std::make_shared<HLLCSolver>(eos, true, config);
+    auto riemannSolver = std::make_shared<LFSolver>(eos, true, config);
 
     IGRParams igrParams;
-    igrParams.alphaCoeff = 1.0;
-    igrParams.maxIterations = 5;
-    igrParams.tolerance = 1e-10;
+    igrParams.alphaCoeff = 10.0;
+    igrParams.IGRIters= 5;
     auto igrSolver = std::make_shared<IGRSolver>(igrParams);
 
     ExplicitParams params;
     params.cfl = 0.6;
-    params.useIGR = false;
-    params.reconOrder = ReconstructionOrder::UPWIND5;
+    params.reconOrder = ReconstructionOrder::UPWIND3;
 
     ExplicitSolver solver(riemannSolver, eos, igrSolver, params);
     initializeRiemannProblem(mesh, state, *eos);
+    state.smoothFields(mesh, 10);
 
     // Initialize VTK time-series file
     VTKWriter::writePVD("VTK/riemann2d.pvd", "w");

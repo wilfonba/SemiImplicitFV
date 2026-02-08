@@ -68,6 +68,8 @@ private:
     std::vector<double> rhsRhoW_;
     std::vector<double> rhsRhoE_;
 
+    std::vector<GradientTensor> gradU_;
+
     void ensureStorage(const RectilinearMesh& mesh);
     void computeRHS(const SimulationConfig& config,
             const RectilinearMesh& mesh, SolutionState& state);
@@ -75,6 +77,9 @@ private:
     /// Returns the SSP-RK blending coefficient alpha for a given stage.
     /// U = alpha * U^n + (1 - alpha) * U_current
     double sspRKBlendCoeff(const SimulationConfig& config, int stage) const;
+
+    void solveIGR(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state);
+    void computeVelocityGradients(const SimulationConfig& config, const RectilinearMesh& mesh, const SolutionState& state);
 
 };
 

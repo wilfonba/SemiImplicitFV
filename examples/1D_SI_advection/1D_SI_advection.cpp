@@ -128,8 +128,7 @@ int main() {
 
     IGRParams igrParams;
     igrParams.alphaCoeff    = 1.0;
-    igrParams.maxIterations = 5;
-    igrParams.tolerance     = 1e-10;
+    igrParams.IGRIters = 5;
     auto igr = std::make_shared<IGRSolver>(igrParams);
 
     SemiImplicitParams params;

@@ -36,11 +36,12 @@ RiemannFlux LFSolver::computeFlux(
         flux.energyFlux += 0.5 * (left.p * uL + right.p * uR);
     }
 
-    //std::cout << "Flux = " << flux.massFlux << ", "
-              //<< flux.momentumFlux[0] << ", "
-              //<< flux.momentumFlux[1] << ", "
-              //<< flux.momentumFlux[2] << ", "
-              //<< flux.energyFlux << std::endl;
+    if (config_.useIGR) {
+        for (int i = 0; i < dim_; ++i) {
+            flux.momentumFlux[i] += 0.5 * (left.sigma + right.sigma) * normal[i];
+        }
+        flux.energyFlux += 0.5 * (left.sigma * uL + right.sigma * uR);
+    }
 
     return flux;
 }

@@ -14,7 +14,8 @@ class EquationOfState;
 
 enum class VarSet {
     CONS,        // Conservative variables
-    PRIM         // Primitive variables
+    PRIM,        // Primitive variables
+    SIGMA,       // Entropic pressure (IGR)
 };
 
 /// Struct-of-arrays storage for all per-cell field data.
@@ -99,6 +100,11 @@ public:
 
     /// Blend conservative variables: primary = alpha * backup + (1 - alpha) * primary
     void blendConservativeCell(std::size_t idx, double alpha);
+
+    /// Smooth all conservative and primitive fields using explicit heat equation
+    /// iterations (forward Euler with diffusion number 1/2d).
+    /// Call after setting the sharp IC and before the time loop.
+    void smoothFields(const RectilinearMesh& mesh, int nIterations);
 
 private:
     int dim_ = 3;

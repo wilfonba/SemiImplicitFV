@@ -63,7 +63,7 @@ void initializeRiemannProblem(const RectilinearMesh& mesh, SolutionState& state,
 
 int main() {
     const int N1 = 200;
-    const int N2 = 20;
+    const int N2 = 200;
     const double length = 1.0;
     const double endTime = 0.2;
     int testDir = 1;
@@ -71,7 +71,8 @@ int main() {
     SimulationConfig config;
     config.dim = 2;
     config.nGhost = 4;
-    config.RKOrder = 1;
+    config.RKOrder = 3;
+    config.useIGR = true;
 
     RectilinearMesh mesh = RectilinearMesh::createUniform(
         config, N1, 0.0, length, N2, 0.0, length);
@@ -85,21 +86,21 @@ int main() {
     state.allocate(mesh.totalCells(), config);
 
     auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0, config);
-    auto riemannSolver = std::make_shared<HLLCSolver>(eos, true, config);
+    auto riemannSolver = std::make_shared<LFSolver>(eos, true, config);
 
     IGRParams igrParams;
-    igrParams.alphaCoeff = 1.0;
-    igrParams.maxIterations = 5;
-    igrParams.tolerance = 1e-10;
+    igrParams.alphaCoeff = 10.0;
+    igrParams.IGRIters= 5;
     auto igrSolver = std::make_shared<IGRSolver>(igrParams);
 
     ExplicitParams params;
     params.cfl = 0.1;
-    params.useIGR = false;
-    params.reconOrder = ReconstructionOrder::WENO5;
+    //params.constDt = 1e-3;
+    params.reconOrder = ReconstructionOrder::UPWIND5;
 
     ExplicitSolver solver(riemannSolver, eos, igrSolver, params);
     initializeRiemannProblem(mesh, state, *eos, testDir);
+    state.smoothFields(mesh, 10);
 
     // Initialize VTK time-series file
     VTKWriter::writePVD("VTK/quasi1D_sod.pvd", "w");

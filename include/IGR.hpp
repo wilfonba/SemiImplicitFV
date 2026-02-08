@@ -1,6 +1,8 @@
 #ifndef IGR_HPP
 #define IGR_HPP
 
+#include "RectilinearMesh.hpp"
+#include "SolutionState.hpp"
 #include <array>
 #include <string>
 
@@ -12,13 +14,13 @@ using GradientTensor = std::array<std::array<double, 3>, 3>;
 // Parameters for Information Geometric Regularization
 struct IGRParams {
     double alphaCoeff;        // Coefficient for alpha = alphaCoeff * dx^2
-    int maxIterations;        // Max iterations for elliptic solve
-    double tolerance;         // Convergence tolerance for elliptic solve
+    int IGRIters;             // Max iterations for elliptic solve
+    int IGRWarmStartIters;    // Iterations for warm start (initial guess)
 
     IGRParams()
         : alphaCoeff(1.0)
-        , maxIterations(5)
-        , tolerance(1e-10)
+        , IGRIters(5)
+        , IGRWarmStartIters(50)
     {}
 };
 
@@ -43,15 +45,10 @@ public:
     // Solve for entropic pressure Σ at a single cell
     // Uses Jacobi/Gauss-Seidel iteration with warm start
     // Returns the converged value of Σ
-    double solveEntropicPressure(
-        double rhs,              // α[tr(∇u)² + tr²(∇u)]
-        double rho,              // Density at cell
-        double alpha,            // Regularization parameter
-        double dx,               // Mesh spacing (for Laplacian discretization)
-        double sigmaWarmStart,   // Previous Σ value for warm start
-        const std::array<double, 6>& neighborSigmaRho, // Σ/ρ at neighbors (±x, ±y, ±z)
-        int nNeighbors = 6       // Number of active neighbors (2*dim)
-    ) const;
+    void solveEntropicPressure(const SimulationConfig& config,
+            const RectilinearMesh& mesh,
+            SolutionState& state,
+            std::vector<GradientTensor> gradU);
 
     // Compute velocity gradient tensor from cell-centered velocities
     // Uses central differences
@@ -62,7 +59,8 @@ public:
         const std::array<double, 3>& u_yp,  // u at y+1
         const std::array<double, 3>& u_zm,  // u at z-1
         const std::array<double, 3>& u_zp,  // u at z+1
-        double dx, double dy, double dz
+        double dx, double dy, double dz,
+        int dim
     );
 
     // Compute trace of a tensor

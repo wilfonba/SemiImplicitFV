@@ -1,6 +1,7 @@
 #include "IGR.hpp"
 #include <cmath>
 #include <algorithm>
+#include <iostream>
 
 namespace SemiImplicitFV {
 
@@ -24,57 +25,94 @@ double IGRSolver::computeIGRRhs(const GradientTensor& gradU, double alpha) const
     return alpha * (trSq + trSquared);
 }
 
-double IGRSolver::solveEntropicPressure(
-    double rhs,
-    double rho,
-    double alpha,
-    double dx,
-    double sigmaWarmStart,
-    const std::array<double, 6>& neighborSigmaRho,
-    int nNeighbors
-) const {
+void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
+        const RectilinearMesh& mesh,
+        SolutionState& state,
+        std::vector<GradientTensor> gradU) {
     // Solve: rhs = Σ/ρ - α∇·(∇Σ/ρ)
-    // Discretize Laplacian: ∇·(∇Σ/ρ) ≈ (1/dx²) * sum of (Σ/ρ)_neighbors - 6*(Σ/ρ)_center
-    //
-    // Let φ = Σ/ρ, then:
-    //   rhs = φ - α * Laplacian(φ)
-    //   rhs = φ - α * (1/dx²) * [sum(φ_neighbors) - 6*φ]
-    //   rhs = φ + (6*α/dx²)*φ - (α/dx²)*sum(φ_neighbors)
-    //   rhs = φ*(1 + 6*α/dx²) - (α/dx²)*sum(φ_neighbors)
-    //
-    // Solving for φ:
-    //   φ = [rhs + (α/dx²)*sum(φ_neighbors)] / (1 + 6*α/dx²)
-    //
-    // Then Σ = ρ * φ
-
-    double dx2 = dx * dx;
-    double coeff = alpha / dx2;
-    double diagCoeff = 1.0 + nNeighbors * coeff;
-
-    // Sum of neighbor φ = Σ/ρ values
-    // neighborSigmaRho = [x-, x+, y-, y+, z-, z+]
-    double neighborSum = 0.0;
-    for (int i = 0; i < nNeighbors; ++i) {
-        neighborSum += neighborSigmaRho[i];
-    }
-
     // Jacobi iteration with warm start
-    double phi = sigmaWarmStart / std::max(rho, 1e-14);
+    int maxIters = config.step == 0 ? params_.IGRWarmStartIters : params_.IGRIters;
+    double alpha = params_.alphaCoeff * mesh.dx(0) * mesh.dx(0); // Assuming uniform grid for simplicity
+    std::size_t idx; // for indexing current, left, right cells
+    std::size_t idxl, idxr;
+    std::size_t idyl, idyr;
+    std::size_t idzl, idzr;
+    double rho_lx, rho_rx, rho_ly, rho_ry, rho_lz, rho_rz;
+    double dx2, dy2, dz2;
+    double fd_coeff;
 
-    for (int iter = 0; iter < params_.maxIterations; ++iter) {
-        double phiNew = (rhs + coeff * neighborSum) / diagCoeff;
+    for (int iter = 0; iter < maxIters; ++iter) {
+        for (int k = 0; k < mesh.nz(); ++k) {
+            for (int j = 0; j < mesh.ny(); ++j) {
+                for (int i = 0; i < mesh.nx(); ++i) {
 
-        // Check convergence
-        if (std::abs(phiNew - phi) < params_.tolerance) {
-            phi = phiNew;
-            break;
+                    idx = mesh.index(i,j,k);
+                    idxl = mesh.index(i - 1, j, k);
+                    idxr = mesh.index(i + 1, j, k);
+
+                    rho_lx = state.rho[idxl];
+                    rho_rx = state.rho[idxr];
+                    dx2 = 1.0 / (mesh.dx(i) * mesh.dx(i));
+                    fd_coeff = state.rho[idx];
+                    fd_coeff += 1.0 / fd_coeff + alpha *
+                        (dx2 * (1.0 / rho_lx + 1.0 / rho_rx));
+
+                    if (config.dim >= 2) {
+                        idxl = mesh.index(i, j - 1, k);
+                        idxr = mesh.index(i, j + 1, k);
+                        rho_ly = state.rho[idxl];
+                        rho_ry = state.rho[idxr];
+                        dy2 = 1.0 / (mesh.dy(j) * mesh.dy(j));
+                        fd_coeff += alpha * dy2 * (1.0 / rho_ly + 1.0 / rho_ry);
+
+                        if (config.dim >= 3) {
+                            idxl = mesh.index(i, j, k - 1);
+                            idxr = mesh.index(i, j, k + 1);
+                            rho_lz = state.rho[idxl];
+                            rho_rz = state.rho[idxr];
+                            dz2 = 1.0 / (mesh.dz(k) * mesh.dz(k));
+                            fd_coeff += alpha * dz2 * (1.0 / rho_lz + 1.0 / rho_rz);
+                        }
+                    }
+
+                    if (config.dim == 1) {
+                        idxl = mesh.index(i - 1, j, k);
+                        idxr = mesh.index(i + 1, j, k);
+
+                        state.sigma[idx] = (alpha / fd_coeff) *
+                            (dx2 * (state.sigma[idxl] / rho_lx + state.sigma[idxr] / rho_rx) +
+                            computeIGRRhs(gradU[idx], alpha) / fd_coeff);
+                    }
+                    else if (config.dim == 2) {
+                        idyl = mesh.index(i, j + 1, k);
+                        idyr = mesh.index(i, j - 1, k);
+                        idxl = mesh.index(i - 1, j, k);
+                        idxr = mesh.index(i + 1, j, k);
+
+                        state.sigma[idx] = (alpha / fd_coeff) *
+                            (dx2 * (state.sigma[idxl] / rho_lx + state.sigma[idxr] / rho_rx) +
+                             dy2 * (state.sigma[idyl] / rho_ly + state.sigma[idyr] / rho_ry) +
+                             computeIGRRhs(gradU[idx], alpha) / fd_coeff);
+                    }
+                    else if (config.dim == 3) {
+                        idzl = mesh.index(i, j, k + 1);
+                        idzr = mesh.index(i, j, k - 1);
+                        idyl = mesh.index(i, j + 1, k);
+                        idyr = mesh.index(i, j - 1, k);
+                        idxl = mesh.index(i - 1, j, k);
+                        idxr = mesh.index(i + 1, j, k);
+
+                        state.sigma[idx] = (alpha / fd_coeff) *
+                            (dx2 * (state.sigma[idxl] / rho_lx + state.sigma[idxr] / rho_rx) +
+                             dy2 * (state.sigma[idyl] / rho_ly + state.sigma[idyr] / rho_ry) +
+                             dz2 * (state.sigma[idzl] / rho_lz + state.sigma[idzr] / rho_rz) +
+                             computeIGRRhs(gradU[idx], alpha) / fd_coeff);
+                    }
+                }
+            }
         }
-
-        phi = phiNew;
+        mesh.fillScalarGhosts(state.sigma);
     }
-
-    // Convert back to Σ
-    return rho * phi;
 }
 
 GradientTensor IGRSolver::computeVelocityGradient(
@@ -84,7 +122,8 @@ GradientTensor IGRSolver::computeVelocityGradient(
     const std::array<double, 3>& u_yp,
     const std::array<double, 3>& u_zm,
     const std::array<double, 3>& u_zp,
-    double dx, double dy, double dz
+    double dx, double dy, double dz,
+    int dim
 ) {
     GradientTensor grad;
 
@@ -97,18 +136,23 @@ GradientTensor IGRSolver::computeVelocityGradient(
 
     // d/dx derivatives
     grad[0][0] = (u_xp[0] - u_xm[0]) * invDx;  // du/dx
-    grad[1][0] = (u_xp[1] - u_xm[1]) * invDx;  // dv/dx
-    grad[2][0] = (u_xp[2] - u_xm[2]) * invDx;  // dw/dx
 
     // d/dy derivatives
-    grad[0][1] = (u_yp[0] - u_ym[0]) * invDy;  // du/dy
-    grad[1][1] = (u_yp[1] - u_ym[1]) * invDy;  // dv/dy
-    grad[2][1] = (u_yp[2] - u_ym[2]) * invDy;  // dw/dy
+    if (dim >= 2) {
+        grad[1][0] = (u_xp[1] - u_xm[1]) * invDx;  // dv/dx
 
-    // d/dz derivatives
-    grad[0][2] = (u_zp[0] - u_zm[0]) * invDz;  // du/dz
-    grad[1][2] = (u_zp[1] - u_zm[1]) * invDz;  // dv/dz
-    grad[2][2] = (u_zp[2] - u_zm[2]) * invDz;  // dw/dz
+        grad[0][1] = (u_yp[0] - u_ym[0]) * invDy;  // du/dy
+        grad[1][1] = (u_yp[1] - u_ym[1]) * invDy;  // dv/dy
+
+        if (dim >= 3) {
+            grad[2][1] = (u_yp[2] - u_ym[2]) * invDy;  // dw/dy
+            grad[2][0] = (u_xp[2] - u_xm[2]) * invDx;  // dw/dx
+
+            grad[0][2] = (u_zp[0] - u_zm[0]) * invDz;  // du/dz
+            grad[1][2] = (u_zp[1] - u_zm[1]) * invDz;  // dv/dz
+            grad[2][2] = (u_zp[2] - u_zm[2]) * invDz;  // dw/dz
+        }
+    }
 
     return grad;
 }
