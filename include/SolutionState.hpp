@@ -92,6 +92,15 @@ public:
     std::vector<double> rhoW0;
     std::vector<double> rhoE0;
 
+    // Start state for semi-implicit solve
+    std::vector<double> rhoUStar;
+    std::vector<double> rhoVStar;
+    std::vector<double> rhoWStar;
+    std::vector<double> rhoEstar;
+    std::vector<double> pAdvected;
+    std::vector<double> rhoc2;      // rho * c^2 for implicit pressure solve
+    std::vector<double> divUStar;   // divergence of velocity field at start of time step
+
     // Auxiliary variable
     std::vector<double> aux;
 

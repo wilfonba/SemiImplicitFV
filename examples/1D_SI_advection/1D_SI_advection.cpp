@@ -1,25 +1,11 @@
-/**
- * 1D Subsonic Advection (Entropy Wave)
- *
- * A Gaussian density pulse advects at uniform subsonic velocity through
- * a periodic domain.  This is a pure entropy wave: pressure and velocity
- * are uniform, so the exact solution is a rigid translation of the
- * initial density profile at the flow velocity u0.
- *
- * After one full domain traversal the pulse should return to its
- * starting position, making error measurement straightforward.
- *
- * Useful for verifying:
- *   - Advective flux accuracy and numerical dissipation
- *   - Periodic boundary condition implementation
- *   - Convergence rates (vary numCells)
- */
-
 #include "RectilinearMesh.hpp"
 #include "SolutionState.hpp"
 #include "State.hpp"
 #include "RusanovSolver.hpp"
+#include "LFSolver.hpp"
 #include "SemiImplicitSolver.hpp"
+#include "ExplicitSolver.hpp"
+#include "VTKWriter.hpp"
 #include "GaussSeidelPressureSolver.hpp"
 #include "IGR.hpp"
 #include "IdealGasEOS.hpp"
@@ -35,7 +21,7 @@ using namespace SemiImplicitFV;
 // ---- Problem parameters ----
 static constexpr double rho0    = 1.225;      // Background density  [kg/m³]
 static constexpr double p0      = 101325.0;   // Background pressure [Pa]
-static constexpr double u0      = 50.0;       // Advection velocity  [m/s]  (Mach ≈ 0.15)
+static constexpr double u0      = 1.0;       // Advection velocity  [m/s]  (Mach ≈ 0.15)
 static constexpr double amp     = 0.01;       // Perturbation amplitude (1 %)
 static constexpr double xCenter = 0.5;        // Initial pulse centre
 static constexpr double sigma   = 0.05;       // Pulse width
@@ -81,11 +67,8 @@ void writeSolution(const RectilinearMesh& mesh, const SolutionState& state,
 }
 
 int main() {
-    std::cout << "Semi-Implicit FV Solver - 1D Subsonic Advection\n";
-    std::cout << "================================================\n\n";
-
     // ---- Setup ----
-    const int    numCells = 200;
+    const int    numCells = 1000;
     const double length   = 1.0;
     const double endTime  = length / u0;   // one full domain traversal
 
@@ -93,6 +76,9 @@ int main() {
     SimulationConfig config;
     config.dim = 1;
     config.nGhost = 2;
+    config.RKOrder = 1;
+    config.useIGR = true;
+    config.semiImplicit = true;
 
     auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0, config);
 
@@ -118,87 +104,67 @@ int main() {
     SolutionState state;
     state.allocate(mesh.totalCells(), config);
 
-    // ---- Initial condition ----
-    initializeProblem(mesh, state, *eos, xCenter, length);
-    writeSolution(mesh, state, "advection_t0.dat");
-
-    // ---- Solver components ----
-    auto riemann  = std::make_shared<RusanovSolver>(eos, false, config);
-    auto pressure = std::make_shared<GaussSeidelPressureSolver>();
-
     IGRParams igrParams;
-    igrParams.alphaCoeff    = 1.0;
+    igrParams.alphaCoeff = 10.0;
     igrParams.IGRIters = 5;
-    auto igr = std::make_shared<IGRSolver>(igrParams);
+    auto igrSolver = std::make_shared<IGRSolver>(igrParams);
+    auto riemannSolver  = std::make_shared<LFSolver>(eos, false, config);
+    auto pressureSolver = std::make_shared<GaussSeidelPressureSolver>();
 
     SemiImplicitParams params;
-    params.cfl              = 0.95;
-    params.maxDt            = 1e-3;
+    params.cfl              = 0.8;
+    params.maxDt            = 1e-2;
     params.maxPressureIters = 200;
-    params.pressureTol      = 1e-8;
-    params.useIGR           = true;
+    SemiImplicitSolver solver(mesh, riemannSolver, pressureSolver, eos, igrSolver, params);
 
-    SemiImplicitSolver solver(riemann, pressure, eos, igr, params);
+    //ExplicitParams params;
+    //params.cfl = 0.5;
+    //params.reconOrder = ReconstructionOrder::UPWIND3;
+    //ExplicitSolver solver(mesh, riemannSolver, eos, igrSolver, params);
+
+    initializeProblem(mesh, state, *eos, xCenter, length);
+
+    // Initialize VTK time-series file
+    VTKWriter::writePVD("VTK/1D_advection.pvd", "w");
+    VTKWriter::writeVTR("VTK/1D_advection_0.vtr", mesh, state);
+    VTKWriter::writePVD("VTK/1D_advection.pvd", "a", 0.0, "1D_advection_0.vtr");
+    int fileNum = 1;
+    const double outputInterval = endTime / 100.0;
+    const int printInterval = 1;
+
 
     // ---- Time integration ----
-    std::cout << "Running...\n\n";
     double time = 0.0;
-    int    step = 0;
 
     while (time < endTime) {
-        double dt = solver.step(mesh, state, endTime - time);
+        double dt = solver.step(config, mesh, state, endTime - time);
         time += dt;
-        step++;
+        config.step++;
 
-        if (step % 50 == 0 || step == 1) {
-            std::cout << "  Step " << step
-                      << ": t = " << time
+        if (std::abs(time - fileNum * outputInterval) <= dt) {
+            // Write VTK output
+            std::string vtrFile = "1D_advection_" + std::to_string(fileNum) + ".vtr";
+            VTKWriter::writeVTR("VTK/" + vtrFile, mesh, state);
+            VTKWriter::writePVD("VTK/1D_advection.pvd", "a", time, vtrFile);
+            fileNum++;
+        }
+
+        if (config.step % printInterval == 0 || config.step == 1) {
+            double maxSigma = 0.0;
+            for (int i = 0; i < mesh.nx(); ++i) {
+                std::size_t idx = mesh.index(i, 0, 0);
+                maxSigma = std::max(maxSigma, std::abs(state.sigma[idx]));
+            }
+
+            std::cout << "  Step " << config.step << ": t = " << time
                       << ", dt = " << dt
-                      << ", pressure iters = " << solver.lastPressureIterations()
-                      << "\n";
+                      << ", max|sigma| = " << maxSigma << "\n";
         }
+
     }
 
-    std::cout << "\nDone after " << step << " steps.\n";
-
-    // ---- Write results ----
-    writeSolution(mesh, state, "advection_final.dat");
-
-    // Exact solution: the pulse has translated by u0 * endTime = length,
-    // so with periodic wrapping it should be back at xCenter.
-    double exactCenter = xCenter + u0 * endTime;
-
-    // ---- Error analysis ----
-    double L1err = 0.0, Linf = 0.0;
-    double dx = length / numCells;
-
-    for (int i = 0; i < mesh.nx(); ++i) {
-        std::size_t idx = mesh.index(i, 0, 0);
-        double x     = mesh.cellCentroidX(i);
-        double exact  = densityProfile(x, exactCenter, length);
-        double err    = std::abs(state.rho[idx] - exact);
-        L1err += err * dx;
-        Linf   = std::max(Linf, err);
-    }
-
-    std::cout << "\nError (density vs. exact advected profile):\n";
-    std::cout << "  L1:   " << L1err << "\n";
-    std::cout << "  Linf: " << Linf  << "\n";
-
-    // Write exact solution for easy comparison / plotting
-    {
-        std::ofstream file("advection_exact.dat");
-        file << "# x rho_exact\n";
-        for (int i = 0; i < mesh.nx(); ++i) {
-            double x = mesh.cellCentroidX(i);
-            file << x << " " << densityProfile(x, exactCenter, length) << "\n";
-        }
-    }
-
-    std::cout << "\nOutput files:\n";
-    std::cout << "  advection_t0.dat     - initial condition\n";
-    std::cout << "  advection_final.dat  - computed solution\n";
-    std::cout << "  advection_exact.dat  - exact solution\n";
+    std::cout << "\nSimulation complete after " << config.step << " steps.\n";
+    VTKWriter::writePVD("VTK/1D_advection.pvd", "close");
 
     return 0;
 }

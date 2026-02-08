@@ -32,6 +32,17 @@ void SolutionState::allocate(std::size_t totalCells, const SimulationConfig& con
         velW.clear();
     }
 
+    // Allocate star states for semi-implicit time stepping
+    if (config.semiImplicit) {
+        rhoUStar.assign(totalCells, 0.0);
+        if (dim_ >= 2) rhoVStar.assign(totalCells, 0.0); else rhoVStar.clear();
+        if (dim_ >= 3) rhoWStar.assign(totalCells, 0.0); else rhoWStar.clear();
+        rhoEstar.assign(totalCells, 0.0);
+        pAdvected.assign(totalCells, 0.0);
+        rhoc2.assign(totalCells, 0.0);
+        divUStar.assign(totalCells, 0.0);
+    }
+
     aux.assign(totalCells, 0.0);
 
     // Allocate backup arrays for multi-stage time stepping

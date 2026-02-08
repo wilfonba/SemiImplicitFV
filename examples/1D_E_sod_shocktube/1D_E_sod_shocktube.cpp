@@ -84,7 +84,7 @@ int main() {
     //params.constDt = constDt;
     params.reconOrder = ReconstructionOrder::UPWIND3;
 
-    ExplicitSolver solver(riemannSolver, eos, igrSolver, params);
+    ExplicitSolver solver(mesh, riemannSolver, eos, igrSolver, params);
     initializeSodProblem(mesh, state, *eos);
 
     // Initialize VTK time-series file

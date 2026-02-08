@@ -23,6 +23,9 @@ class Reconstructor {
 public:
     explicit Reconstructor(ReconstructionOrder order = ReconstructionOrder::WENO1);
 
+    /// Allocate face arrays for the given mesh dimensions.
+    void allocate(const RectilinearMesh& mesh);
+
     /// Perform reconstruction on all faces for all active dimensions.
     /// Precondition: ghost cells in state must already be filled.
     void reconstruct(const SimulationConfig& config,
@@ -68,7 +71,6 @@ private:
     std::vector<PrimitiveState> yLeft_, yRight_;
     std::vector<PrimitiveState> zLeft_, zRight_;
 
-    void ensureStorage(const RectilinearMesh& mesh);
     void reconstructX(const RectilinearMesh& mesh, const SolutionState& state);
     void reconstructY(const RectilinearMesh& mesh, const SolutionState& state);
     void reconstructZ(const RectilinearMesh& mesh, const SolutionState& state);

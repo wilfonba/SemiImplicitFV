@@ -35,6 +35,7 @@ struct ExplicitParams{
 class ExplicitSolver {
 public:
     ExplicitSolver(
+        const RectilinearMesh& mesh,
         std::shared_ptr<RiemannSolver> riemannSolver,
         std::shared_ptr<EquationOfState> eos,
         std::shared_ptr<IGRSolver> igrSolver = nullptr,
@@ -70,7 +71,6 @@ private:
 
     std::vector<GradientTensor> gradU_;
 
-    void ensureStorage(const RectilinearMesh& mesh);
     void computeRHS(const SimulationConfig& config,
             const RectilinearMesh& mesh, SolutionState& state);
 

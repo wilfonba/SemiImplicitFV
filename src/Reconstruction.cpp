@@ -32,6 +32,29 @@ Reconstructor::Reconstructor(ReconstructionOrder order)
     : order_(order)
 {}
 
+void Reconstructor::allocate(const RectilinearMesh& mesh) {
+    dim_ = mesh.dim();
+    nx_ = mesh.nx();
+    ny_ = mesh.ny();
+    nz_ = mesh.nz();
+
+    numXFaces_ = static_cast<std::size_t>(nx_ + 1) * ny_ * nz_;
+    xLeft_.resize(numXFaces_);
+    xRight_.resize(numXFaces_);
+
+    if (dim_ >= 2) {
+        numYFaces_ = static_cast<std::size_t>(nx_) * (ny_ + 1) * nz_;
+        yLeft_.resize(numYFaces_);
+        yRight_.resize(numYFaces_);
+    }
+
+    if (dim_ >= 3) {
+        numZFaces_ = static_cast<std::size_t>(nx_) * ny_ * (nz_ + 1);
+        zLeft_.resize(numZFaces_);
+        zRight_.resize(numZFaces_);
+    }
+}
+
 int Reconstructor::requiredGhostCells() const {
     switch (order_) {
         case ReconstructionOrder::WENO1:     return 1;
@@ -54,43 +77,6 @@ std::size_t Reconstructor::yFaceIndex(int i, int j, int k) const {
 
 std::size_t Reconstructor::zFaceIndex(int i, int j, int k) const {
     return static_cast<std::size_t>(i + nx_ * (j + ny_ * k));
-}
-
-void Reconstructor::ensureStorage(const RectilinearMesh& mesh) {
-    int newDim = mesh.dim();
-    int newNx = mesh.nx(), newNy = mesh.ny(), newNz = mesh.nz();
-
-    if (dim_ == newDim && nx_ == newNx && ny_ == newNy && nz_ == newNz)
-        return;
-
-    dim_ = newDim;
-    nx_ = newNx;
-    ny_ = newNy;
-    nz_ = newNz;
-
-    numXFaces_ = static_cast<std::size_t>(nx_ + 1) * ny_ * nz_;
-    xLeft_.resize(numXFaces_);
-    xRight_.resize(numXFaces_);
-
-    if (dim_ >= 2) {
-        numYFaces_ = static_cast<std::size_t>(nx_) * (ny_ + 1) * nz_;
-        yLeft_.resize(numYFaces_);
-        yRight_.resize(numYFaces_);
-    } else {
-        numYFaces_ = 0;
-        yLeft_.clear();
-        yRight_.clear();
-    }
-
-    if (dim_ >= 3) {
-        numZFaces_ = static_cast<std::size_t>(nx_) * ny_ * (nz_ + 1);
-        zLeft_.resize(numZFaces_);
-        zRight_.resize(numZFaces_);
-    } else {
-        numZFaces_ = 0;
-        zLeft_.clear();
-        zRight_.clear();
-    }
 }
 
 double Reconstructor::weno3Left(const double* v) {
@@ -462,7 +448,6 @@ void Reconstructor::reconstruct(
         const SolutionState& state)
 {
     assert(config.nGhost >= requiredGhostCells());
-    ensureStorage(mesh);
     reconstructX(mesh, state);
     if (dim_ >= 2) reconstructY(mesh, state);
     if (dim_ >= 3) reconstructZ(mesh, state);

@@ -5,9 +5,11 @@
 #include "SolutionState.hpp"
 #include "State.hpp"
 #include "RiemannSolver.hpp"
+#include "Reconstruction.hpp"
 #include "IGR.hpp"
 #include "EquationOfState.hpp"
 #include "PressureSolver.hpp"
+#include "SimulationConfig.hpp"
 #include <memory>
 #include <vector>
 
@@ -22,6 +24,8 @@ struct SemiImplicitParams {
     int RKOrder;              // Runge-Kutta order for advection step (1, 2, or 3)
     double pressureTol;       // Pressure solve tolerance
     bool useIGR;              // Enable IGR regularization
+
+    ReconstructionOrder reconOrder = ReconstructionOrder::WENO1;
 
     SemiImplicitParams()
         : cfl(0.8)            // Can use larger CFL since no acoustic restriction
@@ -39,6 +43,7 @@ struct SemiImplicitParams {
 class SemiImplicitSolver {
 public:
     SemiImplicitSolver(
+        const RectilinearMesh& mesh,
         std::shared_ptr<RiemannSolver> riemannSolver,
         std::shared_ptr<PressureSolver> pressureSolver,
         std::shared_ptr<EquationOfState> eos,
@@ -52,7 +57,7 @@ public:
     const SemiImplicitParams& parameters() const { return params_; }
 
     // Perform one time step
-    double step(const RectilinearMesh& mesh, SolutionState& state, double targetDt = -1.0);
+    double step(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state, double targetDt = -1.0);
 
     // Compute stable time step (CFL based on material velocity only)
     double computeAdvectiveTimeStep(const RectilinearMesh& mesh, const SolutionState& state) const;
@@ -73,30 +78,30 @@ private:
     SemiImplicitParams params_;
 
     int lastPressureIters_;
+    Reconstructor reconstructor_;
 
-    // Internal storage (SoA, sized to mesh.totalCells())
-    std::vector<double> rhoStar_;
-    std::vector<double> rhoUStar_;
-    std::vector<double> rhoVStar_;
-    std::vector<double> rhoWStar_;
-    std::vector<double> rhoEStar_;
-
-    std::vector<double> pAdvected_;
-    std::vector<double> rhoc2_;
     std::vector<double> pressureRhs_;
     std::vector<double> pressure_;
     std::vector<double> divUstar_;
     std::vector<GradientTensor> gradU_;
 
-    void advectionStep(const RectilinearMesh& mesh, const SolutionState& state, double dt);
-    void advectPressure(const RectilinearMesh& mesh, const SolutionState& state, double dt);
-    void solveIGR(const RectilinearMesh& mesh, SolutionState& state);
+    // RHS storage (flux divergence per conservative variable)
+    std::vector<double> rhsRho_;
+    std::vector<double> rhsRhoU_;
+    std::vector<double> rhsRhoV_;
+    std::vector<double> rhsRhoW_;
+    std::vector<double> rhsRhoE_;
+    std::vector<double> rhsPadvected_;
+
+    double sspRKBlendCoeff(const SimulationConfig& config, int stage);
+
+    void computeRHS(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state);
+    void solveIGR(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state);
     void solvePressure(const RectilinearMesh& mesh, SolutionState& state, double dt);
     void correctionStep(const RectilinearMesh& mesh, SolutionState& state, double dt);
     void computeDivergence(const RectilinearMesh& mesh, const SolutionState& state, std::vector<double>& divU);
-    void computeVelocityGradients(const RectilinearMesh& mesh, const SolutionState& state);
+    void computeVelocityGradients(const SimulationConfig& config, const RectilinearMesh& mesh, const SolutionState& state);
     void writeStarToState(const RectilinearMesh& mesh, SolutionState& state);
-    void ensureStorage(const RectilinearMesh& mesh);
 };
 
 } // namespace SemiImplicitFV

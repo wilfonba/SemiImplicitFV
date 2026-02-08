@@ -107,7 +107,7 @@ int main() {
     params.cfl = 0.6;
     params.reconOrder = ReconstructionOrder::UPWIND3;
 
-    ExplicitSolver solver(riemannSolver, eos, igrSolver, params);
+    ExplicitSolver solver(mesh, riemannSolver, eos, igrSolver, params);
     initializeRiemannProblem(mesh, state, *eos);
     state.smoothFields(mesh, 10);
 

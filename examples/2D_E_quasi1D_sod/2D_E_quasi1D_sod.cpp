@@ -98,7 +98,7 @@ int main() {
     //params.constDt = 1e-3;
     params.reconOrder = ReconstructionOrder::UPWIND5;
 
-    ExplicitSolver solver(riemannSolver, eos, igrSolver, params);
+    ExplicitSolver solver(mesh, riemannSolver, eos, igrSolver, params);
     initializeRiemannProblem(mesh, state, *eos, testDir);
     state.smoothFields(mesh, 10);
 

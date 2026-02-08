@@ -7,6 +7,7 @@
 namespace SemiImplicitFV {
 
 SemiImplicitSolver::SemiImplicitSolver(
+    const RectilinearMesh& mesh,
     std::shared_ptr<RiemannSolver> riemannSolver,
     std::shared_ptr<PressureSolver> pressureSolver,
     std::shared_ptr<EquationOfState> eos,
@@ -19,32 +20,24 @@ SemiImplicitSolver::SemiImplicitSolver(
     , igrSolver_(std::move(igrSolver))
     , params_(params)
     , lastPressureIters_(0)
-{}
-
-void SemiImplicitSolver::ensureStorage(const RectilinearMesh& mesh) {
+    , reconstructor_(params.reconOrder)
+{
     std::size_t n = mesh.totalCells();
-    if (rhoStar_.size() == n) return;
-
     int dim = mesh.dim();
 
-    rhoStar_.resize(n);
-    rhoUStar_.resize(n);
-    if (dim >= 2) {
-        rhoVStar_.resize(n);
-    } else {
-        rhoVStar_.clear();
-    }
-    if (dim >= 3) {
-        rhoWStar_.resize(n);
-    } else {
-        rhoWStar_.clear();
-    }
-    rhoEStar_.resize(n);
-    pAdvected_.resize(n);
-    rhoc2_.resize(n);
     pressureRhs_.resize(n);
     pressure_.resize(n);
     divUstar_.resize(n);
+
+    rhsRho_.resize(n);
+    rhsRhoU_.resize(n);
+    if (dim >= 2) rhsRhoV_.resize(n);
+    if (dim >= 3) rhsRhoW_.resize(n);
+    rhsRhoE_.resize(n);
+    rhsPadvected_.resize(n);
+
+    reconstructor_.allocate(mesh);
+
     if (igrSolver_) {
         gradU_.resize(n);
     }
@@ -56,18 +49,18 @@ void SemiImplicitSolver::writeStarToState(const RectilinearMesh& mesh, SolutionS
         for (int j = 0; j < mesh.ny(); ++j) {
             for (int i = 0; i < mesh.nx(); ++i) {
                 std::size_t idx = mesh.index(i, j, k);
-                state.rho[idx]  = rhoStar_[idx];
-                state.rhoU[idx] = rhoUStar_[idx];
-                if (dim >= 2) state.rhoV[idx] = rhoVStar_[idx];
-                if (dim >= 3) state.rhoW[idx] = rhoWStar_[idx];
-                state.rhoE[idx] = rhoEStar_[idx];
+                // density already updated in-place
+                state.rhoU[idx] = state.rhoUStar[idx];
+                if (dim >= 2) state.rhoV[idx] = state.rhoVStar[idx];
+                if (dim >= 3) state.rhoW[idx] = state.rhoWStar[idx];
+                state.rhoE[idx] = state.rhoEstar[idx];
 
                 ConservativeState U;
-                U.rho = rhoStar_[idx];
-                U.rhoU = {rhoUStar_[idx],
-                          (dim >= 2) ? rhoVStar_[idx] : 0.0,
-                          (dim >= 3) ? rhoWStar_[idx] : 0.0};
-                U.rhoE = rhoEStar_[idx];
+                U.rho = state.rho[idx];
+                U.rhoU = {state.rhoUStar[idx],
+                          (dim >= 2) ? state.rhoVStar[idx] : 0.0,
+                          (dim >= 3) ? state.rhoWStar[idx] : 0.0};
+                U.rhoE = state.rhoEstar[idx];
                 PrimitiveState W = eos_->toPrimitive(U);
                 state.velU[idx] = W.u[0];
                 if (dim >= 2) state.velV[idx] = W.u[1];
@@ -80,51 +73,83 @@ void SemiImplicitSolver::writeStarToState(const RectilinearMesh& mesh, SolutionS
     mesh.applyBoundaryConditions(state);
 }
 
-double SemiImplicitSolver::step(const RectilinearMesh& mesh, SolutionState& state, double targetDt) {
+double SemiImplicitSolver::step(const SimulationConfig& config,
+        const RectilinearMesh& mesh,
+        SolutionState& state,
+        double targetDt) {
     double dt = computeAdvectiveTimeStep(mesh, state);
     if (targetDt > 0) {
         dt = std::min(dt, targetDt);
     }
     dt = std::clamp(dt, params_.minDt, params_.maxDt);
 
-    ensureStorage(mesh);
+    for (int s = 1; s <= config.RKOrder; ++s) {
 
-    mesh.applyBoundaryConditions(state);
+        state.convertConservativeToPrimitiveVariables(mesh, eos_);
+        mesh.applyBoundaryConditions(state, VarSet::PRIM);
 
-    advectionStep(mesh, state, dt);
-    advectPressure(mesh, state, dt);
-    writeStarToState(mesh, state);
+        if (config.useIGR && igrSolver_) solveIGR(config, mesh, state);
 
-    if (params_.useIGR && igrSolver_) {
-        solveIGR(mesh, state);
-    }
+        computeRHS(config, mesh, state);
 
-    solvePressure(mesh, state, dt);
-    correctionStep(mesh, state, dt);
+        for (int k = 0; k < mesh.nz(); ++k) {
+            for (int j = 0; j < mesh.ny(); ++j) {
+                for (int i = 0; i < mesh.nx(); ++i) {
+                    std::size_t idx = mesh.index(i, j, k);
 
-    // Final: convert corrected conservatives to primitives
-    int dim = mesh.dim();
-    for (int k = 0; k < mesh.nz(); ++k) {
-        for (int j = 0; j < mesh.ny(); ++j) {
-            for (int i = 0; i < mesh.nx(); ++i) {
-                std::size_t idx = mesh.index(i, j, k);
-                ConservativeState U;
-                U.rho = state.rho[idx];
-                U.rhoU = {state.rhoU[idx],
-                          (dim >= 2) ? state.rhoV[idx] : 0.0,
-                          (dim >= 3) ? state.rhoW[idx] : 0.0};
-                U.rhoE = state.rhoE[idx];
-                PrimitiveState W = eos_->toPrimitive(U);
-                state.velU[idx] = W.u[0];
-                if (dim >= 2) state.velV[idx] = W.u[1];
-                if (dim >= 3) state.velW[idx] = W.u[2];
-                state.pres[idx] = W.p;
-                state.temp[idx] = W.T;
+                    // Save U^n before first stage modifies it
+                    if (s == 1 && config.RKOrder > 1) {
+                        state.saveConservativeCell(idx);
+                    }
+
+                    // Initialize star states from current conservative
+                    state.rhoUStar[idx] = state.rhoU[idx];
+                    if (config.dim >= 2) state.rhoVStar[idx] = state.rhoV[idx];
+                    if (config.dim >= 3) state.rhoWStar[idx] = state.rhoW[idx];
+                    state.rhoEstar[idx] = state.rhoE[idx];
+                    state.pAdvected[idx] = state.pres[idx];
+
+                    // Forward Euler update
+                    state.rho[idx]  += dt * rhsRho_[idx];
+                    state.rhoUStar[idx] += dt * rhsRhoU_[idx];
+                    if (config.dim >= 2) state.rhoVStar[idx] += dt * rhsRhoV_[idx];
+                    if (config.dim >= 3) state.rhoWStar[idx] += dt * rhsRhoW_[idx];
+                    state.rhoEstar[idx] += dt * rhsRhoE_[idx];
+                    state.pAdvected[idx] += dt * rhsPadvected_[idx];
+
+                    // Compute star velocities for divergence computation
+                    double rhoSafe = std::max(state.rho[idx], 1e-14);
+                    state.velU[idx] = state.rhoUStar[idx] / rhoSafe;
+                    if (config.dim >= 2) state.velV[idx] = state.rhoVStar[idx] / rhoSafe;
+                    if (config.dim >= 3) state.velW[idx] = state.rhoWStar[idx] / rhoSafe;
+
+                    // SSP-RK blending: U = alpha * U^n + (1-alpha) * U
+                    if (config.RKOrder > 1 && s >= 2) {
+                        double alpha = sspRKBlendCoeff(config, s);
+                        state.blendConservativeCell(idx, alpha);
+                    }
+                }
             }
         }
+
+        // Re-fill ghost cells (density + star velocity) before pressure solve
+        mesh.applyBoundaryConditions(state, VarSet::PRIM);
+
+        solvePressure(mesh, state, dt);
+        correctionStep(mesh, state, dt);
     }
 
     return dt;
+}
+
+double SemiImplicitSolver::sspRKBlendCoeff(const SimulationConfig& config, int stage) {
+    // SSP-RK2: U^(n+1) = 1/2 * U^n + 1/2 * [U^(1) + dt*L(U^(1))]
+    if (config.RKOrder == 2 && stage == 2) return 0.5;
+    // SSP-RK3: stage 2: U^(2) = 3/4 * U^n + 1/4 * [U^(1) + dt*L(U^(1))]
+    if (config.RKOrder == 3 && stage == 2) return 3.0 / 4.0;
+    // SSP-RK3: stage 3: U^(n+1) = 1/3 * U^n + 2/3 * [U^(2) + dt*L(U^(2))]
+    if (config.RKOrder == 3 && stage == 3) return 1.0 / 3.0;
+    return 0.0;
 }
 
 double SemiImplicitSolver::computeAdvectiveTimeStep(const RectilinearMesh& mesh, const SolutionState& state) const {
@@ -154,6 +179,172 @@ double SemiImplicitSolver::computeAdvectiveTimeStep(const RectilinearMesh& mesh,
     return params_.cfl * minDx / maxSpeed;
 }
 
+void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
+        const RectilinearMesh& mesh,
+        SolutionState& state) {
+    reconstructor_.reconstruct(config, mesh, state);
+
+    int dim = mesh.dim();
+
+    // Zero RHS arrays
+    std::fill(rhsRho_.begin(),  rhsRho_.end(),  0.0);
+    std::fill(rhsRhoU_.begin(), rhsRhoU_.end(), 0.0);
+    if (dim >= 2) std::fill(rhsRhoV_.begin(), rhsRhoV_.end(), 0.0);
+    if (dim >= 3) std::fill(rhsRhoW_.begin(), rhsRhoW_.end(), 0.0);
+    std::fill(rhsRhoE_.begin(), rhsRhoE_.end(), 0.0);
+
+    // --- X-direction fluxes ---
+    for (int k = 0; k < mesh.nz(); ++k) {
+        for (int j = 0; j < mesh.ny(); ++j) {
+            for (int i = 0; i <= mesh.nx(); ++i) {
+                std::size_t f = reconstructor_.xFaceIndex(i, j, k);
+                const PrimitiveState& left  = reconstructor_.xFaceLeft(f);
+                const PrimitiveState& right = reconstructor_.xFaceRight(f);
+
+                RiemannFlux flux = riemannSolver_->computeFlux(
+                    left, right, {1.0, 0.0, 0.0});
+
+                double area = mesh.faceAreaX(j, k);
+
+                if (i >= 1) {
+                    std::size_t idxL = mesh.index(i - 1, j, k);
+                    double coeff = area / mesh.cellVolume(i - 1, j, k);
+                    rhsRho_[idxL]  -= coeff * flux.massFlux;
+                    rhsRhoU_[idxL] -= coeff * flux.momentumFlux[0];
+                    if (dim >= 2) rhsRhoV_[idxL] -= coeff * flux.momentumFlux[1];
+                    if (dim >= 3) rhsRhoW_[idxL] -= coeff * flux.momentumFlux[2];
+                    rhsRhoE_[idxL] -= coeff * flux.energyFlux;
+                }
+
+                if (i < mesh.nx()) {
+                    std::size_t idxR = mesh.index(i, j, k);
+                    double coeff = area / mesh.cellVolume(i, j, k);
+                    rhsRho_[idxR]  += coeff * flux.massFlux;
+                    rhsRhoU_[idxR] += coeff * flux.momentumFlux[0];
+                    if (dim >= 2) rhsRhoV_[idxR] += coeff * flux.momentumFlux[1];
+                    if (dim >= 3) rhsRhoW_[idxR] += coeff * flux.momentumFlux[2];
+                    rhsRhoE_[idxR] += coeff * flux.energyFlux;
+                }
+            }
+        }
+    }
+
+    // --- Y-direction fluxes ---
+    if (dim >= 2) {
+        for (int k = 0; k < mesh.nz(); ++k) {
+            for (int j = 0; j <= mesh.ny(); ++j) {
+                for (int i = 0; i < mesh.nx(); ++i) {
+                    std::size_t f = reconstructor_.yFaceIndex(i, j, k);
+                    const PrimitiveState& left  = reconstructor_.yFaceLeft(f);
+                    const PrimitiveState& right = reconstructor_.yFaceRight(f);
+
+                    RiemannFlux flux = riemannSolver_->computeFlux(
+                        left, right, {0.0, 1.0, 0.0});
+
+                    double area = mesh.faceAreaY(i, k);
+
+                    if (j >= 1) {
+                        std::size_t idxL = mesh.index(i, j - 1, k);
+                        double coeff = area / mesh.cellVolume(i, j - 1, k);
+                        rhsRho_[idxL]  -= coeff * flux.massFlux;
+                        rhsRhoU_[idxL] -= coeff * flux.momentumFlux[0];
+                        rhsRhoV_[idxL] -= coeff * flux.momentumFlux[1];
+                        if (dim >= 3) rhsRhoW_[idxL] -= coeff * flux.momentumFlux[2];
+                        rhsRhoE_[idxL] -= coeff * flux.energyFlux;
+                    }
+
+                    if (j < mesh.ny()) {
+                        std::size_t idxR = mesh.index(i, j, k);
+                        double coeff = area / mesh.cellVolume(i, j, k);
+                        rhsRho_[idxR]  += coeff * flux.massFlux;
+                        rhsRhoU_[idxR] += coeff * flux.momentumFlux[0];
+                        rhsRhoV_[idxR] += coeff * flux.momentumFlux[1];
+                        if (dim >= 3) rhsRhoW_[idxR] += coeff * flux.momentumFlux[2];
+                        rhsRhoE_[idxR] += coeff * flux.energyFlux;
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Z-direction fluxes ---
+    if (dim >= 3) {
+        for (int k = 0; k <= mesh.nz(); ++k) {
+            for (int j = 0; j < mesh.ny(); ++j) {
+                for (int i = 0; i < mesh.nx(); ++i) {
+                    std::size_t f = reconstructor_.zFaceIndex(i, j, k);
+                    const PrimitiveState& left  = reconstructor_.zFaceLeft(f);
+                    const PrimitiveState& right = reconstructor_.zFaceRight(f);
+
+                    RiemannFlux flux = riemannSolver_->computeFlux(
+                        left, right, {0.0, 0.0, 1.0});
+
+                    double area = mesh.faceAreaZ(i, j);
+
+                    if (k >= 1) {
+                        std::size_t idxL = mesh.index(i, j, k - 1);
+                        double coeff = area / mesh.cellVolume(i, j, k - 1);
+                        rhsRho_[idxL]  -= coeff * flux.massFlux;
+                        rhsRhoU_[idxL] -= coeff * flux.momentumFlux[0];
+                        rhsRhoV_[idxL] -= coeff * flux.momentumFlux[1];
+                        rhsRhoW_[idxL] -= coeff * flux.momentumFlux[2];
+                        rhsRhoE_[idxL] -= coeff * flux.energyFlux;
+                    }
+
+                    if (k < mesh.nz()) {
+                        std::size_t idxR = mesh.index(i, j, k);
+                        double coeff = area / mesh.cellVolume(i, j, k);
+                        rhsRho_[idxR]  += coeff * flux.massFlux;
+                        rhsRhoU_[idxR] += coeff * flux.momentumFlux[0];
+                        rhsRhoV_[idxR] += coeff * flux.momentumFlux[1];
+                        rhsRhoW_[idxR] += coeff * flux.momentumFlux[2];
+                        rhsRhoE_[idxR] += coeff * flux.energyFlux;
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Pressure advection RHS: dp/dt = -u · ∇p (upwind) ---
+    for (int k = 0; k < mesh.nz(); ++k) {
+        for (int j = 0; j < mesh.ny(); ++j) {
+            for (int i = 0; i < mesh.nx(); ++i) {
+                std::size_t idx = mesh.index(i, j, k);
+                double p = state.pres[idx];
+                double advection = 0.0;
+
+                {
+                    double u = state.velU[idx];
+                    double pxm = state.pres[mesh.index(i - 1, j, k)];
+                    double pxp = state.pres[mesh.index(i + 1, j, k)];
+                    if (u > 0) advection += u * (p - pxm) / mesh.dx(i);
+                    else       advection += u * (pxp - p) / mesh.dx(i);
+                }
+
+                if (dim >= 2) {
+                    double v = state.velV[idx];
+                    double pym = state.pres[mesh.index(i, j - 1, k)];
+                    double pyp = state.pres[mesh.index(i, j + 1, k)];
+                    if (v > 0) advection += v * (p - pym) / mesh.dy(j);
+                    else       advection += v * (pyp - p) / mesh.dy(j);
+                }
+
+                if (dim >= 3) {
+                    double w = state.velW[idx];
+                    double pzm = state.pres[mesh.index(i, j, k - 1)];
+                    double pzp = state.pres[mesh.index(i, j, k + 1)];
+                    if (w > 0) advection += w * (p - pzm) / mesh.dz(k);
+                    else       advection += w * (pzp - p) / mesh.dz(k);
+                }
+
+                rhsPadvected_[idx] = -advection;
+            }
+        }
+    }
+}
+
+
+/*
 void SemiImplicitSolver::advectionStep(const RectilinearMesh& mesh, const SolutionState& state, double dt) {
     int dim = mesh.dim();
 
@@ -275,101 +466,15 @@ void SemiImplicitSolver::advectionStep(const RectilinearMesh& mesh, const Soluti
         }
     }
 }
-
-void SemiImplicitSolver::advectPressure(const RectilinearMesh& mesh, const SolutionState& state, double dt) {
-    for (int k = 0; k < mesh.nz(); ++k) {
-        for (int j = 0; j < mesh.ny(); ++j) {
-            for (int i = 0; i < mesh.nx(); ++i) {
-                std::size_t idx = mesh.index(i, j, k);
-                double p = state.pres[idx];
-                double advection = 0.0;
-
-                {
-                    double u = state.velU[idx];
-                    double pxm = state.pres[mesh.index(i - 1, j, k)];
-                    double pxp = state.pres[mesh.index(i + 1, j, k)];
-                    if (u > 0) {
-                        advection += u * (p - pxm) / mesh.dx(i);
-                    } else {
-                        advection += u * (pxp - p) / mesh.dx(i);
-                    }
-                }
-
-                if (mesh.dim() >= 2) {
-                    double v = state.velV[idx];
-                    double pym = state.pres[mesh.index(i, j - 1, k)];
-                    double pyp = state.pres[mesh.index(i, j + 1, k)];
-                    if (v > 0) {
-                        advection += v * (p - pym) / mesh.dy(j);
-                    } else {
-                        advection += v * (pyp - p) / mesh.dy(j);
-                    }
-                }
-
-                if (mesh.dim() >= 3) {
-                    double w = state.velW[idx];
-                    double pzm = state.pres[mesh.index(i, j, k - 1)];
-                    double pzp = state.pres[mesh.index(i, j, k + 1)];
-                    if (w > 0) {
-                        advection += w * (p - pzm) / mesh.dz(k);
-                    } else {
-                        advection += w * (pzp - p) / mesh.dz(k);
-                    }
-                }
-
-                pAdvected_[idx] = p - dt * advection;
-            }
-        }
-    }
-}
-
-void SemiImplicitSolver::solveIGR(const RectilinearMesh& mesh, SolutionState& state) {
+*/
+void SemiImplicitSolver::solveIGR(const SimulationConfig& config,
+        const RectilinearMesh& mesh,
+        SolutionState& state) {
     if (!igrSolver_) return;
 
-    computeVelocityGradients(mesh, state);
+    computeVelocityGradients(config, mesh, state);
 
-    int nNeighbors = 2 * mesh.dim();
-
-    for (int k = 0; k < mesh.nz(); ++k) {
-        for (int j = 0; j < mesh.ny(); ++j) {
-            for (int i = 0; i < mesh.nx(); ++i) {
-                std::size_t idx = mesh.index(i, j, k);
-                double dxi = mesh.dx(i);
-
-                double alpha = igrSolver_->computeAlpha(dxi);
-                double rhs = igrSolver_->computeIGRRhs(gradU_[idx], alpha);
-
-                double rhoCell = state.rho[idx];
-
-                std::array<double, 6> neighborSigmaRho = {0, 0, 0, 0, 0, 0};
-
-                std::size_t xm = mesh.index(i - 1, j, k);
-                std::size_t xp = mesh.index(i + 1, j, k);
-                neighborSigmaRho[0] = state.sigma[xm] / std::max(state.rho[xm], 1e-14);
-                neighborSigmaRho[1] = state.sigma[xp] / std::max(state.rho[xp], 1e-14);
-
-                if (mesh.dim() >= 2) {
-                    std::size_t ym = mesh.index(i, j - 1, k);
-                    std::size_t yp = mesh.index(i, j + 1, k);
-                    neighborSigmaRho[2] = state.sigma[ym] / std::max(state.rho[ym], 1e-14);
-                    neighborSigmaRho[3] = state.sigma[yp] / std::max(state.rho[yp], 1e-14);
-                }
-
-                if (mesh.dim() >= 3) {
-                    std::size_t zm = mesh.index(i, j, k - 1);
-                    std::size_t zp = mesh.index(i, j, k + 1);
-                    neighborSigmaRho[4] = state.sigma[zm] / std::max(state.rho[zm], 1e-14);
-                    neighborSigmaRho[5] = state.sigma[zp] / std::max(state.rho[zp], 1e-14);
-                }
-
-                state.sigma[idx] = igrSolver_->solveEntropicPressure(
-                    rhs, rhoCell, alpha, dxi,
-                    state.sigma[idx],
-                    neighborSigmaRho,
-                    nNeighbors);
-            }
-        }
-    }
+    igrSolver_->solveEntropicPressure(config, mesh, state, gradU_);
 }
 
 void SemiImplicitSolver::solvePressure(const RectilinearMesh& mesh, SolutionState& state, double dt) {
@@ -379,7 +484,7 @@ void SemiImplicitSolver::solvePressure(const RectilinearMesh& mesh, SolutionStat
                 std::size_t idx = mesh.index(i, j, k);
                 PrimitiveState W = state.getPrimitiveState(idx);
                 double c = eos_->soundSpeed(W);
-                rhoc2_[idx] = state.rho[idx] * c * c;
+                state.rhoc2[idx] = state.rho[idx] * c * c;
             }
         }
     }
@@ -390,7 +495,7 @@ void SemiImplicitSolver::solvePressure(const RectilinearMesh& mesh, SolutionStat
         for (int j = 0; j < mesh.ny(); ++j) {
             for (int i = 0; i < mesh.nx(); ++i) {
                 std::size_t idx = mesh.index(i, j, k);
-                pressureRhs_[idx] = pAdvected_[idx] - rhoc2_[idx] * dt * divUstar_[idx];
+                pressureRhs_[idx] = state.pAdvected[idx] - state.rhoc2[idx] * dt * divUstar_[idx];
             }
         }
     }
@@ -401,7 +506,7 @@ void SemiImplicitSolver::solvePressure(const RectilinearMesh& mesh, SolutionStat
                 pressure_[mesh.index(i, j, k)] = state.pres[mesh.index(i, j, k)];
 
     lastPressureIters_ = pressureSolver_->solve(
-        mesh, state.rho, rhoc2_, pressureRhs_, pressure_,
+        mesh, state.rho, state.rhoc2, pressureRhs_, pressure_,
         dt, params_.pressureTol, params_.maxPressureIters);
 
     mesh.fillScalarGhosts(pressure_);
@@ -428,7 +533,7 @@ void SemiImplicitSolver::correctionStep(const RectilinearMesh& mesh, SolutionSta
                                            (pressure_[idx] + state.sigma[idx]));
                     double pTotR = 0.5 * ((pressure_[idx] + state.sigma[idx]) +
                                            (pressure_[xp] + state.sigma[xp]));
-                    state.rhoU[idx] = rhoUStar_[idx] - dt * (pTotR - pTotL) / mesh.dx(i);
+                    state.rhoU[idx] = state.rhoUStar[idx] - dt * (pTotR - pTotL) / mesh.dx(i);
                 }
 
                 if (dim >= 2) {
@@ -438,7 +543,7 @@ void SemiImplicitSolver::correctionStep(const RectilinearMesh& mesh, SolutionSta
                                            (pressure_[idx] + state.sigma[idx]));
                     double pTotR = 0.5 * ((pressure_[idx] + state.sigma[idx]) +
                                            (pressure_[yp] + state.sigma[yp]));
-                    state.rhoV[idx] = rhoVStar_[idx] - dt * (pTotR - pTotL) / mesh.dy(j);
+                    state.rhoV[idx] = state.rhoVStar[idx] - dt * (pTotR - pTotL) / mesh.dy(j);
                 }
 
                 if (dim >= 3) {
@@ -448,7 +553,7 @@ void SemiImplicitSolver::correctionStep(const RectilinearMesh& mesh, SolutionSta
                                            (pressure_[idx] + state.sigma[idx]));
                     double pTotR = 0.5 * ((pressure_[idx] + state.sigma[idx]) +
                                            (pressure_[zp] + state.sigma[zp]));
-                    state.rhoW[idx] = rhoWStar_[idx] - dt * (pTotR - pTotL) / mesh.dz(k);
+                    state.rhoW[idx] = state.rhoWStar[idx] - dt * (pTotR - pTotL) / mesh.dz(k);
                 }
             }
         }
@@ -535,7 +640,7 @@ void SemiImplicitSolver::computeDivergence(
     }
 }
 
-void SemiImplicitSolver::computeVelocityGradients(const RectilinearMesh& mesh, const SolutionState& state) {
+void SemiImplicitSolver::computeVelocityGradients(const SimulationConfig& config, const RectilinearMesh& mesh, const SolutionState& state) {
     int dim = mesh.dim();
     for (int k = 0; k < mesh.nz(); ++k) {
         for (int j = 0; j < mesh.ny(); ++j) {
@@ -583,7 +688,7 @@ void SemiImplicitSolver::computeVelocityGradients(const RectilinearMesh& mesh, c
 
                 gradU_[idx] = IGRSolver::computeVelocityGradient(
                     u_xm, u_xp, u_ym, u_yp, u_zm, u_zp,
-                    mesh.dx(i), dyj, dzk);
+                    mesh.dx(i), dyj, dzk, config.dim);
             }
         }
     }

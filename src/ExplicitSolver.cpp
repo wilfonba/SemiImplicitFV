@@ -8,6 +8,7 @@
 namespace SemiImplicitFV {
 
 ExplicitSolver::ExplicitSolver(
+    const RectilinearMesh& mesh,
     std::shared_ptr<RiemannSolver> riemannSolver,
     std::shared_ptr<EquationOfState> eos,
     std::shared_ptr<IGRSolver> igrSolver,
@@ -18,18 +19,18 @@ ExplicitSolver::ExplicitSolver(
     , igrSolver_(std::move(igrSolver))
     , params_(params)
     , reconstructor_(params.reconOrder)
-{}
-
-void ExplicitSolver::ensureStorage(const RectilinearMesh& mesh) {
+{
     std::size_t n = mesh.totalCells();
-    if (rhsRho_.size() == n) return;
-
     int dim = mesh.dim();
+
     rhsRho_.resize(n);
     rhsRhoU_.resize(n);
-    if (dim >= 2) rhsRhoV_.resize(n); else rhsRhoV_.clear();
-    if (dim >= 3) rhsRhoW_.resize(n); else rhsRhoW_.clear();
+    if (dim >= 2) rhsRhoV_.resize(n);
+    if (dim >= 3) rhsRhoW_.resize(n);
     rhsRhoE_.resize(n);
+
+    reconstructor_.allocate(mesh);
+
     if (igrSolver_) {
         gradU_.resize(n);
     }
@@ -49,8 +50,6 @@ double ExplicitSolver::step(const SimulationConfig& config,
     if (targetDt > 0) {
         dt = std::min(dt, targetDt);
     }
-
-    ensureStorage(mesh);
 
     for (int s = 1; s <= config.RKOrder; ++s) {
 
@@ -323,3 +322,4 @@ double ExplicitSolver::computeAcousticTimeStep(const RectilinearMesh& mesh, Solu
 }
 
 } // namespace SemiImplicitFV
+

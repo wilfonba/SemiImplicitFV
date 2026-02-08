@@ -114,8 +114,7 @@ int main() {
     // Create IGR solver
     IGRParams igrParams;
     igrParams.alphaCoeff = 1.0;       // α = αCoeff * Δx²
-    igrParams.maxIterations = 5;
-    igrParams.tolerance = 1e-10;
+    igrParams.IGRIters = 5;
     auto igrSolver = std::make_shared<IGRSolver>(igrParams);
     std::cout << "Created IGR solver \n";
 
@@ -128,7 +127,7 @@ int main() {
     params.useIGR = true;
 
     // Create semi-implicit solver
-    SemiImplicitSolver solver(riemannSolver, pressureSolver, eos, igrSolver, params);
+    SemiImplicitSolver solver(mesh, riemannSolver, pressureSolver, eos, igrSolver, params);
     std::cout << "Created semi-implicit solver \n";
 
     // Initialize solution
@@ -163,7 +162,7 @@ int main() {
     int step = 0;
 
     while (time < endTime) {
-        double dt = solver.step(mesh, state, endTime - time);
+        double dt = solver.step(config, mesh, state, endTime - time);
         time += dt;
         step++;
 
