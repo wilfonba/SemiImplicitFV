@@ -13,7 +13,10 @@ namespace SemiImplicitFV {
 enum class ReconstructionOrder {
     WENO1,        // piecewise constant (copies cell values)
     WENO3,        // 3rd order WENO (r=2, needs 2 ghost cells)
-    WENO5         // 5th order WENO (r=3, needs 3 ghost cells)
+    WENO5,        // 5th order WENO (r=3, needs 3 ghost cells)
+    UPWIND1,      // piecewise constant (copies cell values)
+    UPWIND3,      // 3rd order upwind (WENO without shock capturing)
+    UPWIND5,      // 5th order upwind (WENO without shock capturing)
 };
 
 class Reconstructor {
@@ -74,8 +77,13 @@ private:
     static double weno3Right(const double* v);
     static double weno5Left(const double* v);
     static double weno5Right(const double* v);
+    static double upwind3Left(const double* v);
+    static double upwind3Right(const double* v);
+    static double upwind5Left(const double* v);
+    static double upwind5Right(const double* v);
 };
 
 } // namespace SemiImplicitFV
 
 #endif // RECONSTRUCTION_HPP
+

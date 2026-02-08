@@ -72,7 +72,7 @@ void initializeRiemannProblem(const RectilinearMesh& mesh, SolutionState& state,
 }
 
 int main() {
-    const int N = 500;
+    const int N = 256;
     const double length = 1.0;
     const double endTime = 0.8;
     const double outputInterval = 0.008;
@@ -106,7 +106,7 @@ int main() {
     ExplicitParams params;
     params.cfl = 0.6;
     params.useIGR = false;
-    params.reconOrder = ReconstructionOrder::WENO5;
+    params.reconOrder = ReconstructionOrder::UPWIND5;
 
     ExplicitSolver solver(riemannSolver, eos, igrSolver, params);
     initializeRiemannProblem(mesh, state, *eos);

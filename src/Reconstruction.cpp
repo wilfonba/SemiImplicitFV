@@ -37,6 +37,9 @@ int Reconstructor::requiredGhostCells() const {
         case ReconstructionOrder::WENO1:     return 1;
         case ReconstructionOrder::WENO3:     return 2;
         case ReconstructionOrder::WENO5:     return 3;
+        case ReconstructionOrder::UPWIND1:   return 1;
+        case ReconstructionOrder::UPWIND3:   return 2;
+        case ReconstructionOrder::UPWIND5:   return 3;
     }
     return 1;
 }
@@ -90,8 +93,6 @@ void Reconstructor::ensureStorage(const RectilinearMesh& mesh) {
     }
 }
 
-// ---- WENO3 kernels ----
-
 double Reconstructor::weno3Left(const double* v) {
     // v[0] = v_{i-1}, v[1] = v_i, v[2] = v_{i+1}
     double p0 = -0.5 * v[0] + 1.5 * v[1];
@@ -127,8 +128,6 @@ double Reconstructor::weno3Right(const double* v) {
 
     return (a0 * p0 + a1 * p1) / aSum;
 }
-
-// ---- WENO5 kernels (Jiang-Shu) ----
 
 double Reconstructor::weno5Left(const double* v) {
     // v[0]=v_{i-2}, v[1]=v_{i-1}, v[2]=v_i, v[3]=v_{i+1}, v[4]=v_{i+2}
@@ -181,6 +180,38 @@ double Reconstructor::weno5Right(const double* v) {
     return (a0 * p0 + a1 * p1 + a2 * p2) / aSum;
 }
 
+double Reconstructor::upwind3Left(const double* v) {
+    // v[0] = v_{i-1}, v[1] = v_i, v[2] = v_{i+1}
+    // Same sub-stencil polynomials as WENO3, with optimal linear weights
+    double p0 = -0.5 * v[0] + 1.5 * v[1];
+    double p1 =  0.5 * v[1] + 0.5 * v[2];
+    return (2.0/3.0) * p0 + (1.0/3.0) * p1;
+}
+
+double Reconstructor::upwind3Right(const double* v) {
+    // v[0] = v_i, v[1] = v_{i+1}, v[2] = v_{i+2}
+    double p0 =  0.5 * v[0] + 0.5 * v[1];
+    double p1 =  1.5 * v[1] - 0.5 * v[2];
+    return (2.0/3.0) * p0 + (1.0/3.0) * p1;
+}
+
+double Reconstructor::upwind5Left(const double* v) {
+    // v[0]=v_{i-2}, v[1]=v_{i-1}, v[2]=v_i, v[3]=v_{i+1}, v[4]=v_{i+2}
+    // Same sub-stencil polynomials as WENO5, with optimal linear weights
+    double p0 = (1.0/3.0)*v[0] - (7.0/6.0)*v[1] + (11.0/6.0)*v[2];
+    double p1 = -(1.0/6.0)*v[1] + (5.0/6.0)*v[2] + (1.0/3.0)*v[3];
+    double p2 = (1.0/3.0)*v[2] + (5.0/6.0)*v[3] - (1.0/6.0)*v[4];
+    return (1.0/10.0) * p0 + (6.0/10.0) * p1 + (3.0/10.0) * p2;
+}
+
+double Reconstructor::upwind5Right(const double* v) {
+    // v[0]=v_{i-2}, v[1]=v_{i-1}, v[2]=v_i, v[3]=v_{i+1}, v[4]=v_{i+2}
+    double p0 = (1.0/3.0)*v[4] - (7.0/6.0)*v[3] + (11.0/6.0)*v[2];
+    double p1 = -(1.0/6.0)*v[3] + (5.0/6.0)*v[2] + (1.0/3.0)*v[1];
+    double p2 = (1.0/3.0)*v[2] + (5.0/6.0)*v[1] - (1.0/6.0)*v[0];
+    return (1.0/10.0) * p0 + (6.0/10.0) * p1 + (3.0/10.0) * p2;
+}
+
 // ---- Direction-specific reconstruction sweeps ----
 
 void Reconstructor::reconstructX(const RectilinearMesh& mesh, const SolutionState& state) {
@@ -204,7 +235,7 @@ void Reconstructor::reconstructX(const RectilinearMesh& mesh, const SolutionStat
                 left = PrimitiveState{};
                 right = PrimitiveState{};
 
-                if (order_ == ReconstructionOrder::WENO1) {
+                if (order_ == ReconstructionOrder::WENO1 || order_ == ReconstructionOrder::UPWIND1) {
                     std::size_t idxL = mesh.index(i - 1, j, k);
                     std::size_t idxR = mesh.index(i, j, k);
                     left.rho   = rho[idxL];
@@ -224,7 +255,7 @@ void Reconstructor::reconstructX(const RectilinearMesh& mesh, const SolutionStat
                         right.u[2] = velW[idxR];
                     }
                 }
-                else if (order_ == ReconstructionOrder::WENO3) {
+                else if (order_ == ReconstructionOrder::WENO3 || order_ == ReconstructionOrder::UPWIND3) {
                     // 4 cells: i-2, i-1, i, i+1
                     std::size_t c[4];
                     c[0] = mesh.index(i - 2, j, k);
@@ -232,16 +263,18 @@ void Reconstructor::reconstructX(const RectilinearMesh& mesh, const SolutionStat
                     c[2] = mesh.index(i,     j, k);
                     c[3] = mesh.index(i + 1, j, k);
 
-                    reconstructScalar(rho,  c, 3, weno3Left, weno3Right, left.rho,  right.rho);
-                    reconstructScalar(velU, c, 3, weno3Left, weno3Right, left.u[0], right.u[0]);
-                    reconstructScalar(pres, c, 3, weno3Left, weno3Right, left.p,    right.p);
-                    reconstructScalar(sig,  c, 3, weno3Left, weno3Right, left.sigma, right.sigma);
+                    ReconFn lFn = (order_ == ReconstructionOrder::WENO3) ? weno3Left  : upwind3Left;
+                    ReconFn rFn = (order_ == ReconstructionOrder::WENO3) ? weno3Right : upwind3Right;
+                    reconstructScalar(rho,  c, 3, lFn, rFn, left.rho,  right.rho);
+                    reconstructScalar(velU, c, 3, lFn, rFn, left.u[0], right.u[0]);
+                    reconstructScalar(pres, c, 3, lFn, rFn, left.p,    right.p);
+                    reconstructScalar(sig,  c, 3, lFn, rFn, left.sigma, right.sigma);
                     if (dim_ >= 2)
-                        reconstructScalar(velV, c, 3, weno3Left, weno3Right, left.u[1], right.u[1]);
+                        reconstructScalar(velV, c, 3, lFn, rFn, left.u[1], right.u[1]);
                     if (dim_ >= 3)
-                        reconstructScalar(velW, c, 3, weno3Left, weno3Right, left.u[2], right.u[2]);
+                        reconstructScalar(velW, c, 3, lFn, rFn, left.u[2], right.u[2]);
                 }
-                else { // WENO5
+                else { // WENO5 or UPWIND5
                     // 6 cells: i-3, i-2, i-1, i, i+1, i+2
                     std::size_t c[6];
                     c[0] = mesh.index(i - 3, j, k);
@@ -251,14 +284,16 @@ void Reconstructor::reconstructX(const RectilinearMesh& mesh, const SolutionStat
                     c[4] = mesh.index(i + 1, j, k);
                     c[5] = mesh.index(i + 2, j, k);
 
-                    reconstructScalar(rho,  c, 5, weno5Left, weno5Right, left.rho,  right.rho);
-                    reconstructScalar(velU, c, 5, weno5Left, weno5Right, left.u[0], right.u[0]);
-                    reconstructScalar(pres, c, 5, weno5Left, weno5Right, left.p,    right.p);
-                    reconstructScalar(sig,  c, 5, weno5Left, weno5Right, left.sigma, right.sigma);
+                    ReconFn lFn = (order_ == ReconstructionOrder::WENO5) ? weno5Left  : upwind5Left;
+                    ReconFn rFn = (order_ == ReconstructionOrder::WENO5) ? weno5Right : upwind5Right;
+                    reconstructScalar(rho,  c, 5, lFn, rFn, left.rho,  right.rho);
+                    reconstructScalar(velU, c, 5, lFn, rFn, left.u[0], right.u[0]);
+                    reconstructScalar(pres, c, 5, lFn, rFn, left.p,    right.p);
+                    reconstructScalar(sig,  c, 5, lFn, rFn, left.sigma, right.sigma);
                     if (dim_ >= 2)
-                        reconstructScalar(velV, c, 5, weno5Left, weno5Right, left.u[1], right.u[1]);
+                        reconstructScalar(velV, c, 5, lFn, rFn, left.u[1], right.u[1]);
                     if (dim_ >= 3)
-                        reconstructScalar(velW, c, 5, weno5Left, weno5Right, left.u[2], right.u[2]);
+                        reconstructScalar(velW, c, 5, lFn, rFn, left.u[2], right.u[2]);
                 }
             }
         }
@@ -286,7 +321,7 @@ void Reconstructor::reconstructY(const RectilinearMesh& mesh, const SolutionStat
                 left = PrimitiveState{};
                 right = PrimitiveState{};
 
-                if (order_ == ReconstructionOrder::WENO1) {
+                if (order_ == ReconstructionOrder::WENO1 || order_ == ReconstructionOrder::UPWIND1) {
                     std::size_t idxL = mesh.index(i, j - 1, k);
                     std::size_t idxR = mesh.index(i, j, k);
                     left.rho   = rho[idxL];
@@ -304,22 +339,24 @@ void Reconstructor::reconstructY(const RectilinearMesh& mesh, const SolutionStat
                         right.u[2] = velW[idxR];
                     }
                 }
-                else if (order_ == ReconstructionOrder::WENO3) {
+                else if (order_ == ReconstructionOrder::WENO3 || order_ == ReconstructionOrder::UPWIND3) {
                     std::size_t c[4];
                     c[0] = mesh.index(i, j - 2, k);
                     c[1] = mesh.index(i, j - 1, k);
                     c[2] = mesh.index(i, j,     k);
                     c[3] = mesh.index(i, j + 1, k);
 
-                    reconstructScalar(rho,  c, 3, weno3Left, weno3Right, left.rho,  right.rho);
-                    reconstructScalar(velU, c, 3, weno3Left, weno3Right, left.u[0], right.u[0]);
-                    reconstructScalar(velV, c, 3, weno3Left, weno3Right, left.u[1], right.u[1]);
-                    reconstructScalar(pres, c, 3, weno3Left, weno3Right, left.p,    right.p);
-                    reconstructScalar(sig,  c, 3, weno3Left, weno3Right, left.sigma, right.sigma);
+                    ReconFn lFn = (order_ == ReconstructionOrder::WENO3) ? weno3Left  : upwind3Left;
+                    ReconFn rFn = (order_ == ReconstructionOrder::WENO3) ? weno3Right : upwind3Right;
+                    reconstructScalar(rho,  c, 3, lFn, rFn, left.rho,  right.rho);
+                    reconstructScalar(velU, c, 3, lFn, rFn, left.u[0], right.u[0]);
+                    reconstructScalar(velV, c, 3, lFn, rFn, left.u[1], right.u[1]);
+                    reconstructScalar(pres, c, 3, lFn, rFn, left.p,    right.p);
+                    reconstructScalar(sig,  c, 3, lFn, rFn, left.sigma, right.sigma);
                     if (dim_ >= 3)
-                        reconstructScalar(velW, c, 3, weno3Left, weno3Right, left.u[2], right.u[2]);
+                        reconstructScalar(velW, c, 3, lFn, rFn, left.u[2], right.u[2]);
                 }
-                else { // WENO5
+                else { // WENO5 or UPWIND5
                     std::size_t c[6];
                     c[0] = mesh.index(i, j - 3, k);
                     c[1] = mesh.index(i, j - 2, k);
@@ -328,13 +365,15 @@ void Reconstructor::reconstructY(const RectilinearMesh& mesh, const SolutionStat
                     c[4] = mesh.index(i, j + 1, k);
                     c[5] = mesh.index(i, j + 2, k);
 
-                    reconstructScalar(rho,  c, 5, weno5Left, weno5Right, left.rho,  right.rho);
-                    reconstructScalar(velU, c, 5, weno5Left, weno5Right, left.u[0], right.u[0]);
-                    reconstructScalar(velV, c, 5, weno5Left, weno5Right, left.u[1], right.u[1]);
-                    reconstructScalar(pres, c, 5, weno5Left, weno5Right, left.p,    right.p);
-                    reconstructScalar(sig,  c, 5, weno5Left, weno5Right, left.sigma, right.sigma);
+                    ReconFn lFn = (order_ == ReconstructionOrder::WENO5) ? weno5Left  : upwind5Left;
+                    ReconFn rFn = (order_ == ReconstructionOrder::WENO5) ? weno5Right : upwind5Right;
+                    reconstructScalar(rho,  c, 5, lFn, rFn, left.rho,  right.rho);
+                    reconstructScalar(velU, c, 5, lFn, rFn, left.u[0], right.u[0]);
+                    reconstructScalar(velV, c, 5, lFn, rFn, left.u[1], right.u[1]);
+                    reconstructScalar(pres, c, 5, lFn, rFn, left.p,    right.p);
+                    reconstructScalar(sig,  c, 5, lFn, rFn, left.sigma, right.sigma);
                     if (dim_ >= 3)
-                        reconstructScalar(velW, c, 5, weno5Left, weno5Right, left.u[2], right.u[2]);
+                        reconstructScalar(velW, c, 5, lFn, rFn, left.u[2], right.u[2]);
                 }
             }
         }
@@ -362,7 +401,7 @@ void Reconstructor::reconstructZ(const RectilinearMesh& mesh, const SolutionStat
                 left = PrimitiveState{};
                 right = PrimitiveState{};
 
-                if (order_ == ReconstructionOrder::WENO1) {
+                if (order_ == ReconstructionOrder::WENO1 || order_ == ReconstructionOrder::UPWIND1) {
                     std::size_t idxL = mesh.index(i, j, k - 1);
                     std::size_t idxR = mesh.index(i, j, k);
                     left.rho   = rho[idxL];
@@ -378,21 +417,23 @@ void Reconstructor::reconstructZ(const RectilinearMesh& mesh, const SolutionStat
                     right.p     = pres[idxR];
                     right.sigma = sig[idxR];
                 }
-                else if (order_ == ReconstructionOrder::WENO3) {
+                else if (order_ == ReconstructionOrder::WENO3 || order_ == ReconstructionOrder::UPWIND3) {
                     std::size_t c[4];
                     c[0] = mesh.index(i, j, k - 2);
                     c[1] = mesh.index(i, j, k - 1);
                     c[2] = mesh.index(i, j, k);
                     c[3] = mesh.index(i, j, k + 1);
 
-                    reconstructScalar(rho,  c, 3, weno3Left, weno3Right, left.rho,  right.rho);
-                    reconstructScalar(velU, c, 3, weno3Left, weno3Right, left.u[0], right.u[0]);
-                    reconstructScalar(velV, c, 3, weno3Left, weno3Right, left.u[1], right.u[1]);
-                    reconstructScalar(velW, c, 3, weno3Left, weno3Right, left.u[2], right.u[2]);
-                    reconstructScalar(pres, c, 3, weno3Left, weno3Right, left.p,    right.p);
-                    reconstructScalar(sig,  c, 3, weno3Left, weno3Right, left.sigma, right.sigma);
+                    ReconFn lFn = (order_ == ReconstructionOrder::WENO3) ? weno3Left  : upwind3Left;
+                    ReconFn rFn = (order_ == ReconstructionOrder::WENO3) ? weno3Right : upwind3Right;
+                    reconstructScalar(rho,  c, 3, lFn, rFn, left.rho,  right.rho);
+                    reconstructScalar(velU, c, 3, lFn, rFn, left.u[0], right.u[0]);
+                    reconstructScalar(velV, c, 3, lFn, rFn, left.u[1], right.u[1]);
+                    reconstructScalar(velW, c, 3, lFn, rFn, left.u[2], right.u[2]);
+                    reconstructScalar(pres, c, 3, lFn, rFn, left.p,    right.p);
+                    reconstructScalar(sig,  c, 3, lFn, rFn, left.sigma, right.sigma);
                 }
-                else { // WENO5
+                else { // WENO5 or UPWIND5
                     std::size_t c[6];
                     c[0] = mesh.index(i, j, k - 3);
                     c[1] = mesh.index(i, j, k - 2);
@@ -401,12 +442,14 @@ void Reconstructor::reconstructZ(const RectilinearMesh& mesh, const SolutionStat
                     c[4] = mesh.index(i, j, k + 1);
                     c[5] = mesh.index(i, j, k + 2);
 
-                    reconstructScalar(rho,  c, 5, weno5Left, weno5Right, left.rho,  right.rho);
-                    reconstructScalar(velU, c, 5, weno5Left, weno5Right, left.u[0], right.u[0]);
-                    reconstructScalar(velV, c, 5, weno5Left, weno5Right, left.u[1], right.u[1]);
-                    reconstructScalar(velW, c, 5, weno5Left, weno5Right, left.u[2], right.u[2]);
-                    reconstructScalar(pres, c, 5, weno5Left, weno5Right, left.p,    right.p);
-                    reconstructScalar(sig,  c, 5, weno5Left, weno5Right, left.sigma, right.sigma);
+                    ReconFn lFn = (order_ == ReconstructionOrder::WENO5) ? weno5Left  : upwind5Left;
+                    ReconFn rFn = (order_ == ReconstructionOrder::WENO5) ? weno5Right : upwind5Right;
+                    reconstructScalar(rho,  c, 5, lFn, rFn, left.rho,  right.rho);
+                    reconstructScalar(velU, c, 5, lFn, rFn, left.u[0], right.u[0]);
+                    reconstructScalar(velV, c, 5, lFn, rFn, left.u[1], right.u[1]);
+                    reconstructScalar(velW, c, 5, lFn, rFn, left.u[2], right.u[2]);
+                    reconstructScalar(pres, c, 5, lFn, rFn, left.p,    right.p);
+                    reconstructScalar(sig,  c, 5, lFn, rFn, left.sigma, right.sigma);
                 }
             }
         }
