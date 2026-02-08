@@ -133,4 +133,7 @@ Thumbs.db
 
 .claude
 
+# Data files
 *.dat
+*.pvd
+*.vtr

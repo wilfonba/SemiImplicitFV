@@ -90,6 +90,11 @@ public:
         return 0.5 * (zNodesExt_[k + ngz_] + zNodesExt_[k + ngz_ + 1]);
     }
 
+    /// Node coordinate accessors (i in [0, nx], j in [0, ny], k in [0, nz]).
+    double nodeX(int i) const { return xNodesExt_[i + ngx_]; }
+    double nodeY(int j) const { return yNodesExt_[j + ngy_]; }
+    double nodeZ(int k) const { return zNodesExt_[k + ngz_]; }
+
     /// Face area normal to x-axis (between cells (i,j,k) and (i+1,j,k)).
     double faceAreaX(int j, int k) const { return dy(j) * dz(k); }
     /// Face area normal to y-axis (between cells (i,j,k) and (i,j+1,k)).
