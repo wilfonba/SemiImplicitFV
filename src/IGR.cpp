@@ -1,4 +1,7 @@
 #include "IGR.hpp"
+#ifdef ENABLE_MPI
+#include "HaloExchange.hpp"
+#endif
 #include <cmath>
 #include <algorithm>
 #include <iostream>
@@ -94,6 +97,66 @@ void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
         mesh.fillScalarGhosts(state.sigma);
     }
 }
+
+#ifdef ENABLE_MPI
+
+void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
+        const RectilinearMesh& mesh,
+        SolutionState& state,
+        std::vector<GradientTensor> gradU,
+        HaloExchange& halo) {
+    int maxIters = config.step == 0 ? params_.IGRWarmStartIters : params_.IGRIters;
+    double alpha = params_.alphaCoeff * mesh.dx(0) * mesh.dx(0);
+
+    for (int iter = 0; iter < maxIters; ++iter) {
+        for (int k = 0; k < mesh.nz(); ++k) {
+            for (int j = 0; j < mesh.ny(); ++j) {
+                for (int i = 0; i < mesh.nx(); ++i) {
+                    std::size_t idx = mesh.index(i, j, k);
+
+                    double rhs = computeIGRRhs(config, gradU[idx], alpha);
+
+                    double diag = 1.0 / state.rho[idx];
+                    double offdiag = 0.0;
+
+                    std::size_t ixl = mesh.index(i - 1, j, k);
+                    std::size_t ixr = mesh.index(i + 1, j, k);
+                    double rho_i = state.rho[idx];
+                    double rho_fxl = 0.5 * (rho_i + state.rho[ixl]);
+                    double rho_fxr = 0.5 * (rho_i + state.rho[ixr]);
+                    double dx2 = 1.0 / (mesh.dx(i) * mesh.dx(i));
+                    diag += alpha * dx2 * (1.0 / rho_fxl + 1.0 / rho_fxr);
+                    offdiag += alpha * dx2 * (state.sigma[ixl] / rho_fxl + state.sigma[ixr] / rho_fxr);
+
+                    if (config.dim >= 2) {
+                        std::size_t iyl = mesh.index(i, j - 1, k);
+                        std::size_t iyr = mesh.index(i, j + 1, k);
+                        double rho_fyl = 0.5 * (rho_i + state.rho[iyl]);
+                        double rho_fyr = 0.5 * (rho_i + state.rho[iyr]);
+                        double dy2 = 1.0 / (mesh.dy(j) * mesh.dy(j));
+                        diag += alpha * dy2 * (1.0 / rho_fyl + 1.0 / rho_fyr);
+                        offdiag += alpha * dy2 * (state.sigma[iyl] / rho_fyl + state.sigma[iyr] / rho_fyr);
+                    }
+
+                    if (config.dim >= 3) {
+                        std::size_t izl = mesh.index(i, j, k - 1);
+                        std::size_t izr = mesh.index(i, j, k + 1);
+                        double rho_fzl = 0.5 * (rho_i + state.rho[izl]);
+                        double rho_fzr = 0.5 * (rho_i + state.rho[izr]);
+                        double dz2 = 1.0 / (mesh.dz(k) * mesh.dz(k));
+                        diag += alpha * dz2 * (1.0 / rho_fzl + 1.0 / rho_fzr);
+                        offdiag += alpha * dz2 * (state.sigma[izl] / rho_fzl + state.sigma[izr] / rho_fzr);
+                    }
+
+                    state.sigma[idx] = (rhs + offdiag) / diag;
+                }
+            }
+        }
+        mesh.fillScalarGhosts(state.sigma, halo);
+    }
+}
+
+#endif // ENABLE_MPI
 
 GradientTensor IGRSolver::computeVelocityGradient(
     const std::array<double, 3>& u_xm,

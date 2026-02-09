@@ -6,18 +6,21 @@
 #include "HLLCSolver.hpp"
 #include "SemiImplicitSolver.hpp"
 #include "ExplicitSolver.hpp"
-#include "VTKWriter.hpp"
 #include "GaussSeidelPressureSolver.hpp"
 #include "JacobiPressureSolver.hpp"
 #include "IGR.hpp"
 #include "IdealGasEOS.hpp"
 #include "SimulationConfig.hpp"
+#include "Runtime.hpp"
+#include "VTKSession.hpp"
+
+#include "RKTimeStepping.hpp"
 
 #include <iostream>
-#include <fstream>
 #include <memory>
 #include <cmath>
-#include <chrono>
+#include <vector>
+#include <string>
 
 using namespace SemiImplicitFV;
 
@@ -56,7 +59,9 @@ void initializeProblem(const RectilinearMesh& mesh, SolutionState& state,
     }
 }
 
-int main() {
+int main(int argc, char** argv) {
+    Runtime rt(argc, argv);
+
     // ---- Setup ----
     const int    numCells = 1000;
     const double length   = 1.0;
@@ -70,7 +75,7 @@ int main() {
     config.useIGR = true;
     config.semiImplicit = true;
     config.reconOrder = ReconstructionOrder::UPWIND1;
-    config.semiImplicitParams.cfl = 0.8;
+    config.semiImplicitParams.cfl = 0.6;
     config.semiImplicitParams.maxDt = 1e-2;
     config.semiImplicitParams.pressureTol = 1e-9;
     config.semiImplicitParams.maxPressureIters = 200;
@@ -87,16 +92,16 @@ int main() {
     double c0   = eos->soundSpeed(ref);
     double mach = u0 / c0;
 
-    std::cout << "  Cells:    " << numCells << "\n";
-    std::cout << "  u0:       " << u0    << " m/s\n";
-    std::cout << "  c0:       " << c0    << " m/s\n";
-    std::cout << "  Mach:     " << mach  << "\n";
-    std::cout << "  End time: " << endTime << " s  (one domain traversal)\n\n";
+    rt.print("  Cells:    ", numCells, "\n");
+    rt.print("  u0:       ", u0, " m/s\n");
+    rt.print("  c0:       ", c0, " m/s\n");
+    rt.print("  Mach:     ", mach, "\n");
+    rt.print("  End time: ", endTime, " s  (one domain traversal)\n\n");
 
-    // ---- Mesh (periodic) ----
-    RectilinearMesh mesh = RectilinearMesh::createUniform(config, numCells, 0.0, length);
-    mesh.setBoundaryCondition(RectilinearMesh::XLow,  BoundaryCondition::Periodic);
-    mesh.setBoundaryCondition(RectilinearMesh::XHigh, BoundaryCondition::Periodic);
+    // ---- Mesh setup ----
+    RectilinearMesh mesh = rt.createUniformMesh(config, numCells, 0.0, length, {1, 0, 0});
+    rt.setBoundaryCondition(mesh, RectilinearMesh::XLow,  BoundaryCondition::Periodic);
+    rt.setBoundaryCondition(mesh, RectilinearMesh::XHigh, BoundaryCondition::Periodic);
 
     // Allocate solution state
     SolutionState state;
@@ -107,57 +112,17 @@ int main() {
     auto pressureSolver = std::make_shared<GaussSeidelPressureSolver>();
 
     SemiImplicitSolver solver(mesh, riemannSolver, pressureSolver, eos, igrSolver, config);
+    rt.attachSolver(solver, mesh);
 
     initializeProblem(mesh, state, *eos, xCenter, length);
 
-    // Initialize VTK time-series file
-    VTKWriter::writePVD("VTK/1D_advection.pvd", "w");
-    VTKWriter::writeVTR("VTK/1D_advection_0.vtr", mesh, state);
-    VTKWriter::writePVD("VTK/1D_advection.pvd", "a", 0.0, "1D_advection_0.vtr");
-    int fileNum = 1;
-    const double outputInterval = endTime / 100.0;
-    const int printInterval = 1;
+    VTKSession vtk(rt, "1D_advection", mesh);
 
-
-    // ---- Time integration ----
-    double time = 0.0;
-    double stepTimeTotal = 0.0;
-
-    while (time < endTime) {
-
-        auto t0 = std::chrono::high_resolution_clock::now();
-        double dt = solver.step(config, mesh, state, endTime - time);
-        auto t1 = std::chrono::high_resolution_clock::now();
-        stepTimeTotal += std::chrono::duration<double>(t1 - t0).count();
-
-        time += dt;
-        config.step++;
-
-        if (std::abs(time - fileNum * outputInterval) <= dt) {
-            // Write VTK output
-            std::string vtrFile = "1D_advection_" + std::to_string(fileNum) + ".vtr";
-            VTKWriter::writeVTR("VTK/" + vtrFile, mesh, state);
-            VTKWriter::writePVD("VTK/1D_advection.pvd", "a", time, vtrFile);
-            fileNum++;
-        }
-
-        if (config.step % printInterval == 0 || config.step == 1) {
-            double maxSigma = 0.0;
-            for (int i = 0; i < mesh.nx(); ++i) {
-                std::size_t idx = mesh.index(i, 0, 0);
-                maxSigma = std::max(maxSigma, std::abs(state.sigma[idx]));
-            }
-
-            std::cout << "  Step " << config.step << ": t = " << time
-                      << ", dt = " << dt
-                      << ", max|sigma| = " << maxSigma << "\n";
-        }
-
-    }
-
-    std::cout << "\nSimulation complete after " << config.step << " steps.\n";
-    std::cout << "Total time in solver.step(): " << stepTimeTotal << " s\n";
-    VTKWriter::writePVD("VTK/1D_advection.pvd", "close");
+    auto stepFn = [&](double targetDt) {
+        return solver.step(config, mesh, state, targetDt);
+    };
+    runTimeLoop(rt, config, mesh, state, vtk, stepFn,
+                {.endTime = endTime, .outputInterval = endTime / 100.0, .printInterval = 1});
 
     return 0;
 }

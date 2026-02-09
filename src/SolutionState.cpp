@@ -270,4 +270,66 @@ void SolutionState::smoothFields(const RectilinearMesh& mesh, int nIterations) {
     smoothField(temp);
 }
 
+#ifdef ENABLE_MPI
+#include "HaloExchange.hpp"
+
+void SolutionState::smoothFields(const RectilinearMesh& mesh, int nIterations,
+                                  HaloExchange& halo) {
+    int dim = dim_;
+    double nu = 1.0 / (4.0 * dim);
+
+    auto smoothField = [&](std::vector<double>& field) {
+        for (int iter = 0; iter < nIterations; ++iter) {
+            mesh.fillScalarGhosts(field, halo);
+            for (int k = 0; k < mesh.nz(); ++k) {
+                for (int j = 0; j < mesh.ny(); ++j) {
+                    for (int i = 0; i < mesh.nx(); ++i) {
+                        std::size_t idx = mesh.index(i, j, k);
+                        double lap = 0.0;
+
+                        std::size_t xm = mesh.index(i - 1, j, k);
+                        std::size_t xp = mesh.index(i + 1, j, k);
+                        lap += field[xm] + 2.0 * field[idx] + field[xp];
+
+                        if (dim >= 2) {
+                            std::size_t ym = mesh.index(i, j - 1, k);
+                            std::size_t yp = mesh.index(i, j + 1, k);
+                            lap += field[ym] + 2.0 * field[idx] + field[yp];
+                        }
+                        if (dim >= 3) {
+                            std::size_t zm = mesh.index(i, j, k - 1);
+                            std::size_t zp = mesh.index(i, j, k + 1);
+                            lap += field[zm] + 2.0 * field[idx] + field[zp];
+                        }
+
+                        aux[idx] = nu * lap;
+                    }
+                }
+            }
+            for (int k = 0; k < mesh.nz(); ++k) {
+                for (int j = 0; j < mesh.ny(); ++j) {
+                    for (int i = 0; i < mesh.nx(); ++i) {
+                        std::size_t idx = mesh.index(i, j, k);
+                        field[idx] = aux[idx];
+                    }
+                }
+            }
+        }
+    };
+
+    smoothField(rho);
+    smoothField(rhoU);
+    if (dim >= 2) smoothField(rhoV);
+    if (dim >= 3) smoothField(rhoW);
+    smoothField(rhoE);
+
+    smoothField(velU);
+    if (dim >= 2) smoothField(velV);
+    if (dim >= 3) smoothField(velW);
+    smoothField(pres);
+    smoothField(temp);
+}
+
+#endif // ENABLE_MPI
+
 } // namespace SemiImplicitFV

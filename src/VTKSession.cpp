@@ -1,0 +1,70 @@
+#include "VTKSession.hpp"
+#include "RectilinearMesh.hpp"
+#include "SolutionState.hpp"
+
+#ifdef ENABLE_MPI
+#include <mpi.h>
+#endif
+
+#include <vector>
+
+namespace SemiImplicitFV {
+
+VTKSession::VTKSession(Runtime& rt, const std::string& baseName,
+                       const RectilinearMesh& mesh, const std::string& dir)
+    : rt_(rt), mesh_(mesh), baseName_(baseName), dir_(dir)
+{
+#ifdef ENABLE_MPI
+    localExtent_ = rt_.mpiContext().localExtent();
+#endif
+
+    if (rt_.isRoot()) {
+        VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "w");
+    }
+}
+
+void VTKSession::write(const SolutionState& state, double time) {
+#ifdef ENABLE_MPI
+    int rank = rt_.rank();
+    int nprocs = rt_.size();
+
+    std::string vtrFile = baseName_ + "_" + std::to_string(fileNum_)
+                        + "_r" + std::to_string(rank) + ".vtr";
+    VTKWriter::writeVTR(dir_ + "/" + vtrFile, mesh_, state, localExtent_, rank);
+
+    // Gather all extents on rank 0
+    std::vector<int> allExtBuf(nprocs * 6);
+    MPI_Gather(localExtent_.data(), 6, MPI_INT,
+               allExtBuf.data(), 6, MPI_INT, 0, rt_.mpiContext().comm());
+
+    if (rt_.isRoot()) {
+        std::vector<std::array<int,6>> allExtents(nprocs);
+        std::vector<std::string> allFiles(nprocs);
+        for (int r = 0; r < nprocs; ++r) {
+            for (int d = 0; d < 6; ++d)
+                allExtents[r][d] = allExtBuf[r * 6 + d];
+            allFiles[r] = baseName_ + "_" + std::to_string(fileNum_)
+                        + "_r" + std::to_string(r) + ".vtr";
+        }
+        std::string pvtrFile = baseName_ + "_" + std::to_string(fileNum_) + ".pvtr";
+        VTKWriter::writePVTR(dir_ + "/" + pvtrFile,
+                             rt_.globalNx(), rt_.globalNy(), rt_.globalNz(),
+                             allExtents, allFiles);
+        VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "a", time, pvtrFile);
+    }
+#else
+    std::string vtrFile = baseName_ + "_" + std::to_string(fileNum_) + ".vtr";
+    VTKWriter::writeVTR(dir_ + "/" + vtrFile, mesh_, state);
+    VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "a", time, vtrFile);
+#endif
+
+    fileNum_++;
+}
+
+void VTKSession::finalize() {
+    if (rt_.isRoot()) {
+        VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "close");
+    }
+}
+
+} // namespace SemiImplicitFV

@@ -21,6 +21,20 @@ public:
         int maxIter
     ) override;
 
+#ifdef ENABLE_MPI
+    int solve(
+        const RectilinearMesh& mesh,
+        const std::vector<double>& rho,
+        const std::vector<double>& rhoc2,
+        const std::vector<double>& rhs,
+        std::vector<double>& pressure,
+        double dt,
+        double tolerance,
+        int maxIter,
+        HaloExchange& halo
+    ) override;
+#endif
+
     std::string name() const override { return "Jacobi"; }
 };
 

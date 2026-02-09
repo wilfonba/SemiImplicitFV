@@ -9,6 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(BUILD_EXAMPLES "Build example programs" ON)
 option(BUILD_TESTS "Build unit tests" OFF)
 option(ENABLE_OPENMP "Enable OpenMP parallelization" OFF)
+option(ENABLE_MPI "Enable MPI parallelization" OFF)
 
 # Compiler flags
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -24,6 +25,11 @@ endif()
 # OpenMP
 if(ENABLE_OPENMP)
     find_package(OpenMP REQUIRED)
+endif()
+
+# MPI
+if(ENABLE_MPI)
+    find_package(MPI REQUIRED)
 endif()
 
 # Library sources
@@ -44,6 +50,10 @@ set(LIB_SOURCES
     src/StiffenedGasEOS.cpp
     src/IdealGasEOS.cpp
     src/VTKWriter.cpp
+    src/MPIContext.cpp
+    src/HaloExchange.cpp
+    src/Runtime.cpp
+    src/VTKSession.cpp
 )
 
 # Create library
@@ -55,6 +65,11 @@ target_include_directories(SemiImplicitFV PUBLIC
 
 if(ENABLE_OPENMP)
     target_link_libraries(SemiImplicitFV PUBLIC OpenMP::OpenMP_CXX)
+endif()
+
+if(ENABLE_MPI)
+    target_link_libraries(SemiImplicitFV PUBLIC MPI::MPI_CXX)
+    target_compile_definitions(SemiImplicitFV PUBLIC ENABLE_MPI)
 endif()
 
 # Examples — auto-discover every examples/<case>/*.cpp

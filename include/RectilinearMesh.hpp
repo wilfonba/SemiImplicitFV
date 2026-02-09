@@ -7,6 +7,10 @@
 #include <array>
 #include <cstddef>
 
+#ifdef ENABLE_MPI
+namespace SemiImplicitFV { class HaloExchange; }
+#endif
+
 namespace SemiImplicitFV {
 
 enum class BoundaryCondition {
@@ -123,6 +127,15 @@ public:
     /// Fill ghost cells for a single scalar field.
     void fillScalarGhosts(std::vector<double>& field) const;
 
+#ifdef ENABLE_MPI
+    /// MPI-aware ghost fill: halo exchange + physical BCs on boundary faces only.
+    void applyBoundaryConditions(SolutionState& state,
+            VarSet varSet, HaloExchange& halo) const;
+
+    /// MPI-aware scalar ghost fill.
+    void fillScalarGhosts(std::vector<double>& field, HaloExchange& halo) const;
+#endif
+
 private:
     int dim_;
     int nx_, ny_, nz_;
@@ -143,9 +156,13 @@ private:
         const std::vector<double>& physNodes, int nCells, int ng);
 
     // Ghost-fill helpers for each direction.
-    void fillGhostX(SolutionState& state, VarSet varSet = VarSet::PRIM) const;
-    void fillGhostY(SolutionState& state, VarSet varSet = VarSet::PRIM) const;
-    void fillGhostZ(SolutionState& state, VarSet varSet = VarSet::PRIM) const;
+    // skipLow/skipHigh: when true, skip filling that face (MPI neighbor fills it).
+    void fillGhostX(SolutionState& state, VarSet varSet = VarSet::PRIM,
+                     bool skipLow = false, bool skipHigh = false) const;
+    void fillGhostY(SolutionState& state, VarSet varSet = VarSet::PRIM,
+                     bool skipLow = false, bool skipHigh = false) const;
+    void fillGhostZ(SolutionState& state, VarSet varSet = VarSet::PRIM,
+                     bool skipLow = false, bool skipHigh = false) const;
 };
 
 } // namespace SemiImplicitFV

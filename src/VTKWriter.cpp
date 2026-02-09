@@ -20,21 +20,25 @@ static void ensureParentDir(const std::string& filepath) {
 void VTKWriter::writeVTR(const std::string& filename,
                          const RectilinearMesh& mesh,
                          const SolutionState& state,
-                         const std::array<int,6>& pieceExtent)
+                         const std::array<int,6>& pieceExtent,
+                         int rank)
 {
-    // Determine extent: use full grid if pieceExtent is all zeros (serial mode)
-    int i0 = 0, i1 = mesh.nx();
-    int j0 = 0, j1 = mesh.ny();
-    int k0 = 0, k1 = mesh.nz();
+    // Local cell counts (always used for data access)
+    int nx = mesh.nx(), ny = mesh.ny(), nz = mesh.nz();
 
+    // Extent for XML header: use pieceExtent (global indices) if provided,
+    // otherwise default to local 0-based extent.
     bool hasExtent = false;
     for (int d = 0; d < 6; ++d) {
         if (pieceExtent[d] != 0) { hasExtent = true; break; }
     }
+    int ei0 = 0, ei1 = nx;
+    int ej0 = 0, ej1 = ny;
+    int ek0 = 0, ek1 = nz;
     if (hasExtent) {
-        i0 = pieceExtent[0]; i1 = pieceExtent[1];
-        j0 = pieceExtent[2]; j1 = pieceExtent[3];
-        k0 = pieceExtent[4]; k1 = pieceExtent[5];
+        ei0 = pieceExtent[0]; ei1 = pieceExtent[1];
+        ej0 = pieceExtent[2]; ej1 = pieceExtent[3];
+        ek0 = pieceExtent[4]; ek1 = pieceExtent[5];
     }
 
     ensureParentDir(filename);
@@ -48,21 +52,21 @@ void VTKWriter::writeVTR(const std::string& filename,
     file << "<?xml version=\"1.0\"?>\n";
     file << "<VTKFile type=\"RectilinearGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n";
     file << "  <RectilinearGrid WholeExtent=\""
-         << i0 << " " << i1 << " "
-         << j0 << " " << j1 << " "
-         << k0 << " " << k1 << "\">\n";
+         << ei0 << " " << ei1 << " "
+         << ej0 << " " << ej1 << " "
+         << ek0 << " " << ek1 << "\">\n";
     file << "    <Piece Extent=\""
-         << i0 << " " << i1 << " "
-         << j0 << " " << j1 << " "
-         << k0 << " " << k1 << "\">\n";
+         << ei0 << " " << ei1 << " "
+         << ej0 << " " << ej1 << " "
+         << ek0 << " " << ek1 << "\">\n";
 
-    // Coordinates
+    // Coordinates (always local 0-based access into mesh)
     file << "      <Coordinates>\n";
 
     // X coordinates
     file << "        <DataArray type=\"Float64\" Name=\"X\" format=\"ascii\">\n";
     file << "         ";
-    for (int i = i0; i <= i1; ++i) {
+    for (int i = 0; i <= nx; ++i) {
         file << " " << mesh.nodeX(i);
     }
     file << "\n        </DataArray>\n";
@@ -70,11 +74,11 @@ void VTKWriter::writeVTR(const std::string& filename,
     // Y coordinates
     file << "        <DataArray type=\"Float64\" Name=\"Y\" format=\"ascii\">\n";
     file << "         ";
-    if (mesh.ny() == 1) {
+    if (ny == 1) {
         // 1D case: write a small y width
         file << " 0.0 " << mesh.dx(0);
     } else {
-        for (int j = j0; j <= j1; ++j) {
+        for (int j = 0; j <= ny; ++j) {
             file << " " << mesh.nodeY(j);
         }
     }
@@ -83,11 +87,11 @@ void VTKWriter::writeVTR(const std::string& filename,
     // Z coordinates
     file << "        <DataArray type=\"Float64\" Name=\"Z\" format=\"ascii\">\n";
     file << "         ";
-    if (mesh.nz() == 1) {
+    if (nz == 1) {
         // 2D or 1D case: write a small z depth
         file << " 0.0 " << std::min(mesh.dx(0), std::min(mesh.dy(0), 1.0));
     } else {
-        for (int k = k0; k <= k1; ++k) {
+        for (int k = 0; k <= nz; ++k) {
             file << " " << mesh.nodeZ(k);
         }
     }
@@ -95,17 +99,17 @@ void VTKWriter::writeVTR(const std::string& filename,
 
     file << "      </Coordinates>\n";
 
-    // Cell data
+    // Cell data (always local 0-based access)
     file << "      <CellData>\n";
 
     // Helper lambda: write a scalar field
     auto writeScalar = [&](const std::string& name, const std::vector<double>& field) {
         file << "        <DataArray type=\"Float64\" Name=\"" << name
              << "\" format=\"ascii\">\n";
-        for (int k = k0; k < k1; ++k) {
-            for (int j = j0; j < j1; ++j) {
+        for (int k = 0; k < nz; ++k) {
+            for (int j = 0; j < ny; ++j) {
                 file << "         ";
-                for (int i = i0; i < i1; ++i) {
+                for (int i = 0; i < nx; ++i) {
                     std::size_t idx = mesh.index(i, j, k);
                     file << " " << field[idx];
                 }
@@ -123,10 +127,10 @@ void VTKWriter::writeVTR(const std::string& filename,
                            const std::vector<double>& fz) {
         file << "        <DataArray type=\"Float64\" Name=\"" << name
              << "\" NumberOfComponents=\"3\" format=\"ascii\">\n";
-        for (int k = k0; k < k1; ++k) {
-            for (int j = j0; j < j1; ++j) {
+        for (int k = 0; k < nz; ++k) {
+            for (int j = 0; j < ny; ++j) {
                 file << "         ";
-                for (int i = i0; i < i1; ++i) {
+                for (int i = 0; i < nx; ++i) {
                     std::size_t idx = mesh.index(i, j, k);
                     file << " " << fx[idx]
                          << " " << (dim >= 2 ? fy[idx] : 0.0)
@@ -149,6 +153,21 @@ void VTKWriter::writeVTR(const std::string& filename,
     writeVector("Velocity", state.velU, state.velV, state.velW);
     writeVector("Momentum", state.rhoU, state.rhoV, state.rhoW);
 
+    // MPI rank field (only when rank >= 0)
+    if (rank >= 0) {
+        file << "        <DataArray type=\"Int32\" Name=\"Rank\" format=\"ascii\">\n";
+        for (int k = 0; k < nz; ++k) {
+            for (int j = 0; j < ny; ++j) {
+                file << "         ";
+                for (int i = 0; i < nx; ++i) {
+                    file << " " << rank;
+                }
+                file << "\n";
+            }
+        }
+        file << "        </DataArray>\n";
+    }
+
     file << "      </CellData>\n";
     file << "    </Piece>\n";
     file << "  </RectilinearGrid>\n";
@@ -158,8 +177,7 @@ void VTKWriter::writeVTR(const std::string& filename,
 }
 
 void VTKWriter::writePVTR(const std::string& filename,
-                          const RectilinearMesh& mesh,
-                          const SolutionState& /*state*/,
+                          int globalNx, int globalNy, int globalNz,
                           const std::vector<std::array<int,6>>& pieceExtents,
                           const std::vector<std::string>& pieceFiles)
 {
@@ -171,9 +189,9 @@ void VTKWriter::writePVTR(const std::string& filename,
 
     file << "<?xml version=\"1.0\"?>\n";
     file << "<VTKFile type=\"PRectilinearGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n";
-    file << "  <PRectilinearGrid WholeExtent=\"0 " << mesh.nx()
-         << " 0 " << mesh.ny()
-         << " 0 " << mesh.nz() << "\" GhostLevel=\"0\">\n";
+    file << "  <PRectilinearGrid WholeExtent=\"0 " << globalNx
+         << " 0 " << globalNy
+         << " 0 " << globalNz << "\" GhostLevel=\"0\">\n";
 
     // Declare coordinate arrays
     file << "    <PCoordinates>\n";
@@ -191,6 +209,7 @@ void VTKWriter::writePVTR(const std::string& filename,
     file << "      <PDataArray type=\"Float64\" Name=\"TotalEnergy\"/>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"Velocity\" NumberOfComponents=\"3\"/>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"Momentum\" NumberOfComponents=\"3\"/>\n";
+    file << "      <PDataArray type=\"Int32\" Name=\"Rank\"/>\n";
     file << "    </PCellData>\n";
 
     // Reference each piece file with its extent

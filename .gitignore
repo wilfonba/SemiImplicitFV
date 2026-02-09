@@ -137,3 +137,5 @@ Thumbs.db
 *.dat
 *.pvd
 *.vtr
+*.pvtr
+VTK/*

@@ -7,28 +7,31 @@
 #include "IGR.hpp"
 #include "IdealGasEOS.hpp"
 #include "SimulationConfig.hpp"
-#include "VTKWriter.hpp"
+#include "Runtime.hpp"
+#include "VTKSession.hpp"
+
+#include "RKTimeStepping.hpp"
 
 #include <iostream>
-#include <fstream>
 #include <memory>
 #include <cmath>
+#include <vector>
+#include <string>
 
 using namespace SemiImplicitFV;
 
 // Initialize Sod shock tube conditions (sharp IC smoothed with heat equation)
 void initializeSodProblem(const RectilinearMesh& mesh, SolutionState& state,
                           const IdealGasEOS& eos, int smoothIters = 10) {
+    (void)smoothIters;
     double xMid = 0.5;
 
-    // Left state: high pressure
     PrimitiveState left;
     left.rho = 1.0;
     left.u = {0.0, 0.0, 0.0};
     left.p = 1.0;
     left.sigma = 0.0;
 
-    // Right state: low pressure
     PrimitiveState right;
     right.rho = 0.125;
     right.u = {0.0, 0.0, 0.0};
@@ -44,12 +47,11 @@ void initializeSodProblem(const RectilinearMesh& mesh, SolutionState& state,
         state.setPrimitiveState(idx, Wt);
         state.setConservativeState(idx, eos.toConservative(W));
     }
-
-    // Smooth the sharp IC with heat equation iterations
-    state.smoothFields(mesh, smoothIters);
 }
 
-int main() {
+int main(int argc, char** argv) {
+    Runtime rt(argc, argv);
+
     const int numCells = 100;
     const double length = 1.0;
     [[maybe_unused]] const double constDt = 1e-4;
@@ -66,11 +68,14 @@ int main() {
     config.igrParams.IGRIters = 5;
     config.validate();
 
-    RectilinearMesh mesh = RectilinearMesh::createUniform(
-        config, numCells, 0.0, length);
-    mesh.setBoundaryCondition(RectilinearMesh::XLow,  BoundaryCondition::Outflow);
-    mesh.setBoundaryCondition(RectilinearMesh::XHigh, BoundaryCondition::Outflow);
-    std::cout << "Created mesh with " << mesh.nx() << " cells.\n";
+    // ---- Mesh setup ----
+    RectilinearMesh mesh = rt.createUniformMesh(config, numCells, 0.0, length);
+    rt.setBoundaryCondition(mesh, RectilinearMesh::XLow,  BoundaryCondition::Outflow);
+    rt.setBoundaryCondition(mesh, RectilinearMesh::XHigh, BoundaryCondition::Outflow);
+
+    rt.print("Created mesh with ", numCells, " total cells");
+    if (rt.size() > 1) rt.print(" on ", rt.size(), " ranks");
+    rt.print(".\n");
 
     SolutionState state;
     state.allocate(mesh.totalCells(), config);
@@ -80,49 +85,18 @@ int main() {
     auto igrSolver = std::make_shared<IGRSolver>(config.igrParams);
 
     ExplicitSolver solver(mesh, riemannSolver, eos, igrSolver, config);
-    initializeSodProblem(mesh, state, *eos);
+    rt.attachSolver(solver, mesh);
 
-    // Initialize VTK time-series file
-    VTKWriter::writePVD("VTK/1D_sod.pvd", "w");
-    VTKWriter::writeVTR("VTK/1D_sod_0.vtr", mesh, state);
-    VTKWriter::writePVD("VTK/1D_sod.pvd", "a", 0.0, "1D_sod_0.vtr");
-    int fileNum = 1;
-    const double outputInterval = 0.002;
-    const int printInterval = 1;
+    initializeSodProblem(mesh, state, *eos, 0);
+    rt.smoothFields(state, mesh, 10);
 
-    std::cout << "Running simulation to t = " << endTime << "...\n";
+    VTKSession vtk(rt, "1D_sod", mesh);
 
-    double time = 0.0;
-
-    while (time < endTime) {
-        double dt = solver.step(config, mesh, state, endTime - time);
-        time += dt;
-        config.step++;
-
-        if (std::abs(time - fileNum * outputInterval) <= dt) {
-            // Write VTK output
-            std::string vtrFile = "1D_sod_" + std::to_string(fileNum) + ".vtr";
-            VTKWriter::writeVTR("VTK/" + vtrFile, mesh, state);
-            VTKWriter::writePVD("VTK/1D_sod.pvd", "a", time, vtrFile);
-            fileNum++;
-        }
-
-        if (config.step % printInterval == 0 || config.step == 1) {
-            double maxSigma = 0.0;
-            for (int i = 0; i < mesh.nx(); ++i) {
-                std::size_t idx = mesh.index(i, 0, 0);
-                maxSigma = std::max(maxSigma, std::abs(state.sigma[idx]));
-            }
-
-            std::cout << "  Step " << config.step << ": t = " << time
-                      << ", dt = " << dt
-                      << ", max|sigma| = " << maxSigma << "\n";
-        }
-
-    }
-
-    std::cout << "\nSimulation complete after " << config.step << " steps.\n";
-    VTKWriter::writePVD("VTK/1D_sod.pvd", "close");
+    auto stepFn = [&](double targetDt) {
+        return solver.step(config, mesh, state, targetDt);
+    };
+    runTimeLoop(rt, config, mesh, state, vtk, stepFn,
+                {.endTime = endTime, .outputInterval = 0.002, .printInterval = 1});
 
     return 0;
 }

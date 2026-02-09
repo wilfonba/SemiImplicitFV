@@ -7,16 +7,20 @@
 #include "IGR.hpp"
 #include "IdealGasEOS.hpp"
 #include "SimulationConfig.hpp"
-#include "VTKWriter.hpp"
+#include "Runtime.hpp"
+#include "VTKSession.hpp"
+
+#include "RKTimeStepping.hpp"
 
 #include <iostream>
-#include <fstream>
 #include <memory>
 #include <cmath>
+#include <vector>
+#include <string>
 
 using namespace SemiImplicitFV;
 
-// Four constant states separated by discontinuities at (x,y) = (0.75, 0.75)
+// Four constant states separated by discontinuities at (x,y) = (0.8, 0.8)
 void initializeRiemannProblem(const RectilinearMesh& mesh, SolutionState& state, const IdealGasEOS& eos) {
     double xMid = 0.8;
     double yMid = 0.8;
@@ -71,7 +75,9 @@ void initializeRiemannProblem(const RectilinearMesh& mesh, SolutionState& state,
     }
 }
 
-int main() {
+int main(int argc, char** argv) {
+    Runtime rt(argc, argv);
+
     const int N = 500;
     const double length = 1.0;
     const double endTime = 0.8;
@@ -82,73 +88,46 @@ int main() {
     config.dim = 2;
     config.nGhost = 4;
     config.RKOrder = 3;
-    config.useIGR = true;
-    config.reconOrder = ReconstructionOrder::UPWIND5;
+    config.useIGR = false;
+    config.wenoEps = 1e-16;
+    config.reconOrder = ReconstructionOrder::WENO5;
     config.explicitParams.cfl = 0.6;
     config.igrParams.alphaCoeff = 2.0;
     config.igrParams.IGRIters = 5;
     config.validate();
 
-    RectilinearMesh mesh = RectilinearMesh::createUniform(
-        config, N, 0.0, length, N, 0.0, length);
-    mesh.setBoundaryCondition(RectilinearMesh::XLow,  BoundaryCondition::Outflow);
-    mesh.setBoundaryCondition(RectilinearMesh::XHigh, BoundaryCondition::Outflow);
-    mesh.setBoundaryCondition(RectilinearMesh::YLow,  BoundaryCondition::Outflow);
-    mesh.setBoundaryCondition(RectilinearMesh::YHigh, BoundaryCondition::Outflow);
-    std::cout << "Created " << mesh.nx() << "x" << mesh.ny() << " mesh.\n";
+    // ---- Mesh setup ----
+    RectilinearMesh mesh = rt.createUniformMesh(config, N, 0.0, length, N, 0.0, length);
+    rt.setBoundaryCondition(mesh, RectilinearMesh::XLow,  BoundaryCondition::Outflow);
+    rt.setBoundaryCondition(mesh, RectilinearMesh::XHigh, BoundaryCondition::Outflow);
+    rt.setBoundaryCondition(mesh, RectilinearMesh::YLow,  BoundaryCondition::Outflow);
+    rt.setBoundaryCondition(mesh, RectilinearMesh::YHigh, BoundaryCondition::Outflow);
+
+    rt.print("Created ", N, "x", N, " mesh");
+    if (rt.size() > 1) rt.print(" on ", rt.size(), " ranks");
+    rt.print(".\n");
 
     SolutionState state;
     state.allocate(mesh.totalCells(), config);
 
     auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0, config);
-    auto riemannSolver = std::make_shared<LFSolver>(eos, config);
+    auto riemannSolver = std::make_shared<HLLCSolver>(eos, config);
     auto igrSolver = std::make_shared<IGRSolver>(config.igrParams);
 
     ExplicitSolver solver(mesh, riemannSolver, eos, igrSolver, config);
+
+    rt.attachSolver(solver, mesh);
+
     initializeRiemannProblem(mesh, state, *eos);
-    state.smoothFields(mesh, 3);
+    rt.smoothFields(state, mesh, 3);
 
-    // Initialize VTK time-series file
-    VTKWriter::writePVD("VTK/riemann2d.pvd", "w");
-    VTKWriter::writeVTR("VTK/riemann2d_0.vtr", mesh, state);
-    VTKWriter::writePVD("VTK/riemann2d.pvd", "a", 0.0, "riemann2d_0.vtr");
-    int fileNum = 1;
+    VTKSession vtk(rt, "riemann2d", mesh);
 
-    std::cout << "Running simulation to t = " << endTime << "...\n\n";
-
-    double time = 0.0;
-
-    while (time < endTime) {
-        double dt = solver.step(config, mesh, state, endTime - time);
-        time += dt;
-        config.step++;
-
-        if (std::abs(time - fileNum * outputInterval) <= dt) {
-            // Write VTK output
-            std::string vtrFile = "riemann2d_" + std::to_string(fileNum) + ".vtr";
-            VTKWriter::writeVTR("VTK/" + vtrFile, mesh, state);
-            VTKWriter::writePVD("VTK/riemann2d.pvd", "a", time, vtrFile);
-            fileNum++;
-        }
-
-        if (config.step % printInterval == 0 || config.step == 1) {
-            double maxSigma = 0.0;
-            for (int j = 0; j < mesh.ny(); ++j) {
-                for (int i = 0; i < mesh.nx(); ++i) {
-                    std::size_t idx = mesh.index(i, j, 0);
-                    maxSigma = std::max(maxSigma, std::abs(state.sigma[idx]));
-                }
-            }
-
-            std::cout << "  Step " << config.step << ": t = " << time
-                      << ", dt = " << dt
-                      << ", max|sigma| = " << maxSigma << "\n";
-        }
-    }
-
-    std::cout << "\nSimulation complete after " << config.step << " steps.\n";
-
-    VTKWriter::writePVD("VTK/riemann2d.pvd", "close");
+    auto stepFn = [&](double targetDt) {
+        return solver.step(config, mesh, state, targetDt);
+    };
+    runTimeLoop(rt, config, mesh, state, vtk, stepFn,
+                {.endTime = endTime, .outputInterval = outputInterval, .printInterval = printInterval});
 
     return 0;
 }
