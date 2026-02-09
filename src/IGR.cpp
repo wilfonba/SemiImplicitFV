@@ -13,14 +13,21 @@ double IGRSolver::computeAlpha(double dx) const {
     return params_.alphaCoeff * dx * dx;
 }
 
-double IGRSolver::computeIGRRhs(const GradientTensor& gradU, double alpha) const {
+double IGRSolver::computeIGRRhs(const SimulationConfig& config, const GradientTensor& gradU, double alpha) const {
     // Compute: α[tr(∇u)² + tr²(∇u)]
-    // tr(∇u)² = sum of squares of all components of ∇u
-    // tr²(∇u) = (trace of ∇u)² = (divergence of u)²
 
-    double trSq = traceSquared(gradU);  // tr((∇u)²) = sum of A_ij²
-    double tr = trace(gradU);           // tr(∇u) = div(u)
-    double trSquared = tr * tr;         // tr²(∇u)
+    double trSq{0.0};
+    for (int i = 0; i < config.dim; ++i) {
+        for (int j = 0; j < config.dim; ++j) {
+            trSq += gradU[i][j] * gradU[j][i];
+        }
+    }
+
+    double trSquared{0.0};
+    for (int i = 0; i < config.dim; ++i) {
+        trSquared += gradU[i][i];  // Add diagonal components to get trace
+    }
+    trSquared *= trSquared;  // Square the trace to get (tr(∇u))²
 
     return alpha * (trSq + trSquared);
 }
@@ -39,7 +46,8 @@ void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
             for (int j = 0; j < mesh.ny(); ++j) {
                 for (int i = 0; i < mesh.nx(); ++i) {
                     std::size_t idx = mesh.index(i, j, k);
-                    double rhs = computeIGRRhs(gradU[idx], alpha);
+
+                    double rhs = computeIGRRhs(config, gradU[idx], alpha);
 
                     // Diagonal coefficient: 1/ρ_i + α·Σ(1/ρ_neighbor)/dx²
                     double diag = 1.0 / state.rho[idx];
@@ -47,35 +55,36 @@ void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
                     // Off-diagonal sum: α·Σ(σ_neighbor/ρ_neighbor)/dx²
                     double offdiag = 0.0;
 
-                    // X-direction
+                    // X-direction (face-averaged densities)
                     std::size_t ixl = mesh.index(i - 1, j, k);
                     std::size_t ixr = mesh.index(i + 1, j, k);
-                    double rho_xl = state.rho[ixl];
-                    double rho_xr = state.rho[ixr];
+                    double rho_i = state.rho[idx];
+                    double rho_fxl = 0.5 * (rho_i + state.rho[ixl]);
+                    double rho_fxr = 0.5 * (rho_i + state.rho[ixr]);
                     double dx2 = 1.0 / (mesh.dx(i) * mesh.dx(i));
-                    diag += alpha * dx2 * (1.0 / rho_xl + 1.0 / rho_xr);
-                    offdiag += alpha * dx2 * (state.sigma[ixl] / rho_xl + state.sigma[ixr] / rho_xr);
+                    diag += alpha * dx2 * (1.0 / rho_fxl + 1.0 / rho_fxr);
+                    offdiag += alpha * dx2 * (state.sigma[ixl] / rho_fxl + state.sigma[ixr] / rho_fxr);
 
-                    // Y-direction
+                    // Y-direction (face-averaged densities)
                     if (config.dim >= 2) {
                         std::size_t iyl = mesh.index(i, j - 1, k);
                         std::size_t iyr = mesh.index(i, j + 1, k);
-                        double rho_yl = state.rho[iyl];
-                        double rho_yr = state.rho[iyr];
+                        double rho_fyl = 0.5 * (rho_i + state.rho[iyl]);
+                        double rho_fyr = 0.5 * (rho_i + state.rho[iyr]);
                         double dy2 = 1.0 / (mesh.dy(j) * mesh.dy(j));
-                        diag += alpha * dy2 * (1.0 / rho_yl + 1.0 / rho_yr);
-                        offdiag += alpha * dy2 * (state.sigma[iyl] / rho_yl + state.sigma[iyr] / rho_yr);
+                        diag += alpha * dy2 * (1.0 / rho_fyl + 1.0 / rho_fyr);
+                        offdiag += alpha * dy2 * (state.sigma[iyl] / rho_fyl + state.sigma[iyr] / rho_fyr);
                     }
 
-                    // Z-direction
+                    // Z-direction (face-averaged densities)
                     if (config.dim >= 3) {
                         std::size_t izl = mesh.index(i, j, k - 1);
                         std::size_t izr = mesh.index(i, j, k + 1);
-                        double rho_zl = state.rho[izl];
-                        double rho_zr = state.rho[izr];
+                        double rho_fzl = 0.5 * (rho_i + state.rho[izl]);
+                        double rho_fzr = 0.5 * (rho_i + state.rho[izr]);
                         double dz2 = 1.0 / (mesh.dz(k) * mesh.dz(k));
-                        diag += alpha * dz2 * (1.0 / rho_zl + 1.0 / rho_zr);
-                        offdiag += alpha * dz2 * (state.sigma[izl] / rho_zl + state.sigma[izr] / rho_zr);
+                        diag += alpha * dz2 * (1.0 / rho_fzl + 1.0 / rho_fzr);
+                        offdiag += alpha * dz2 * (state.sigma[izl] / rho_fzl + state.sigma[izr] / rho_fzr);
                     }
 
                     state.sigma[idx] = (rhs + offdiag) / diag;
@@ -96,7 +105,7 @@ GradientTensor IGRSolver::computeVelocityGradient(
     double dx, double dy, double dz,
     int dim
 ) {
-    GradientTensor grad;
+    GradientTensor grad{};
 
     // grad[i][j] = du_i / dx_j
     // Using central differences
@@ -126,28 +135,6 @@ GradientTensor IGRSolver::computeVelocityGradient(
     }
 
     return grad;
-}
-
-double IGRSolver::trace(const GradientTensor& A) {
-    // tr(A) = A[0][0] + A[1][1] + A[2][2] = div(u)
-    return A[0][0] + A[1][1] + A[2][2];
-}
-
-double IGRSolver::traceSquared(const GradientTensor& A) {
-    // tr(A²) = sum of A_ij * A_ji
-    // For the velocity gradient, this equals sum of all A_ij²
-    // when we interpret it as tr((∇u)·(∇u)^T)
-    //
-    // Actually from the paper: tr(∇u)² means the Frobenius norm squared
-    // = sum over all i,j of (du_i/dx_j)²
-
-    double sum = 0.0;
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            sum += A[i][j] * A[i][j];
-        }
-    }
-    return sum;
 }
 
 } // namespace SemiImplicitFV

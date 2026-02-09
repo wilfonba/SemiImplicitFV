@@ -1,6 +1,7 @@
 #include "ExplicitSolver.hpp"
 #include "RKTimeStepping.hpp"
 #include "SimulationConfig.hpp"
+#include <array>
 #include <cmath>
 #include <algorithm>
 #include <limits>
@@ -52,7 +53,20 @@ double ExplicitSolver::step(const SimulationConfig& config,
         dt = std::min(dt, targetDt);
     }
 
-    for (int s = 1; s <= config.RKOrder; ++s) {
+    // TVD RK coefficients: U = (c1*U_current + c2*U_saved + c3*dt*RHS) / c4
+    std::array<std::array<double, 4>, 3> rk_coef;
+    if (config.RKOrder == 1) {
+        rk_coef[0] = {1.0, 0.0, 1.0, 1.0};
+    } else if (config.RKOrder == 2) {
+        rk_coef[0] = {1.0, 0.0, 1.0, 1.0};
+        rk_coef[1] = {1.0, 1.0, 1.0, 2.0};
+    } else {
+        rk_coef[0] = {1.0, 0.0, 1.0, 1.0};
+        rk_coef[1] = {1.0, 3.0, 1.0, 4.0};
+        rk_coef[2] = {2.0, 1.0, 2.0, 3.0};
+    }
+
+    for (int s = 0; s < config.RKOrder; ++s) {
 
         state.convertConservativeToPrimitiveVariables(mesh, eos_);
         mesh.applyBoundaryConditions(state, VarSet::PRIM);
@@ -61,28 +75,27 @@ double ExplicitSolver::step(const SimulationConfig& config,
 
         computeRHS(config, mesh, state);
 
+        double c1 = rk_coef[s][0];
+        double c2 = rk_coef[s][1];
+        double c3 = rk_coef[s][2];
+        double c4 = rk_coef[s][3];
+
         for (int k = 0; k < mesh.nz(); ++k) {
             for (int j = 0; j < mesh.ny(); ++j) {
                 for (int i = 0; i < mesh.nx(); ++i) {
                     std::size_t idx = mesh.index(i, j, k);
 
-                    // Save U^n before first stage modifies it
-                    if (s == 1 && config.RKOrder > 1) {
+                    if (s == 0 && config.RKOrder > 1) {
                         state.saveConservativeCell(idx);
                     }
 
-                    // Forward Euler update
-                    state.rho[idx]  += dt * rhsRho_[idx];
-                    state.rhoU[idx] += dt * rhsRhoU_[idx];
-                    if (config.dim >= 2) state.rhoV[idx] += dt * rhsRhoV_[idx];
-                    if (config.dim >= 3) state.rhoW[idx] += dt * rhsRhoW_[idx];
-                    state.rhoE[idx] += dt * rhsRhoE_[idx];
-
-                    // SSP-RK blending: U = alpha * U^n + (1-alpha) * U
-                    if (config.RKOrder > 1 && s >= 2) {
-                        double alpha = SemiImplicitFV::sspRKBlendCoeff(config, s);
-                        state.blendConservativeCell(idx, alpha);
-                    }
+                    state.rho[idx]  = (c1 * state.rho[idx]  + c2 * state.rho0[idx]  + c3 * dt * rhsRho_[idx])  / c4;
+                    state.rhoU[idx] = (c1 * state.rhoU[idx] + c2 * state.rhoU0[idx] + c3 * dt * rhsRhoU_[idx]) / c4;
+                    if (config.dim >= 2)
+                        state.rhoV[idx] = (c1 * state.rhoV[idx] + c2 * state.rhoV0[idx] + c3 * dt * rhsRhoV_[idx]) / c4;
+                    if (config.dim >= 3)
+                        state.rhoW[idx] = (c1 * state.rhoW[idx] + c2 * state.rhoW0[idx] + c3 * dt * rhsRhoW_[idx]) / c4;
+                    state.rhoE[idx] = (c1 * state.rhoE[idx] + c2 * state.rhoE0[idx] + c3 * dt * rhsRhoE_[idx]) / c4;
                 }
             }
         }

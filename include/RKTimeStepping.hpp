@@ -8,10 +8,6 @@
 
 namespace SemiImplicitFV {
 
-// SSP Runge-Kutta blend coefficient for multi-stage time stepping.
-// Returns alpha for: U = alpha * U^n + (1 - alpha) * U^(s)
-double sspRKBlendCoeff(const SimulationConfig& config, int stage);
-
 // Advective time step: CFL based on material velocity only (no sound speed).
 // Used by the semi-implicit solver where pressure is handled implicitly.
 double computeAdvectiveTimeStep(const RectilinearMesh& mesh,

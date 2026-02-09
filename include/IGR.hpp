@@ -30,7 +30,7 @@ public:
 
     // Compute the RHS of the elliptic equation from velocity gradients
     // RHS = α[tr(∇u)² + tr²(∇u)]
-    double computeIGRRhs(const GradientTensor& gradU, double alpha) const;
+    double computeIGRRhs(const SimulationConfig& config, const GradientTensor& gradU, double alpha) const;
 
     // Solve for entropic pressure Σ at a single cell
     // Uses Jacobi/Gauss-Seidel iteration with warm start
@@ -52,12 +52,6 @@ public:
         double dx, double dy, double dz,
         int dim
     );
-
-    // Compute trace of a tensor
-    static double trace(const GradientTensor& A);
-
-    // Compute tr(A²) = sum of squares of all components
-    static double traceSquared(const GradientTensor& A);
 
 private:
     IGRParams params_;

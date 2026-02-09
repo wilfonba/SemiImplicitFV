@@ -107,11 +107,8 @@ public:
     /// Save conservative variables for a single cell to backup storage.
     void saveConservativeCell(std::size_t idx);
 
-    /// Blend conservative variables: primary = alpha * backup + (1 - alpha) * primary
-    void blendConservativeCell(std::size_t idx, double alpha);
-
     /// Smooth all conservative and primitive fields using explicit heat equation
-    /// iterations (forward Euler with diffusion number 1/2d).
+    /// iterations (forward Euler with diffusion number 1/(2*dim)).
     /// Call after setting the sharp IC and before the time loop.
     void smoothFields(const RectilinearMesh& mesh, int nIterations);
 

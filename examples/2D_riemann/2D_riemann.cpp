@@ -18,8 +18,8 @@ using namespace SemiImplicitFV;
 
 // Four constant states separated by discontinuities at (x,y) = (0.75, 0.75)
 void initializeRiemannProblem(const RectilinearMesh& mesh, SolutionState& state, const IdealGasEOS& eos) {
-    double xMid = 0.75;
-    double yMid = 0.75;
+    double xMid = 0.8;
+    double yMid = 0.8;
 
     // Quadrant 1: upper-right (x > 0.5, y > 0.5)
     PrimitiveState q1;
@@ -72,11 +72,11 @@ void initializeRiemannProblem(const RectilinearMesh& mesh, SolutionState& state,
 }
 
 int main() {
-    const int N = 250;
+    const int N = 200;
     const double length = 1.0;
     const double endTime = 0.8;
     const double outputInterval = 0.008;
-    const int printInterval = 20;
+    const int printInterval = 1;
 
     SimulationConfig config;
     config.dim = 2;
@@ -117,12 +117,11 @@ int main() {
     std::cout << "Running simulation to t = " << endTime << "...\n\n";
 
     double time = 0.0;
-    int step = 0;
 
     while (time < endTime) {
         double dt = solver.step(config, mesh, state, endTime - time);
         time += dt;
-        step++;
+        config.step++;
 
         if (std::abs(time - fileNum * outputInterval) <= dt) {
             // Write VTK output
@@ -132,7 +131,7 @@ int main() {
             fileNum++;
         }
 
-        if (step % printInterval == 0 || step == 1) {
+        if (config.step % printInterval == 0 || config.step == 1) {
             double maxSigma = 0.0;
             for (int j = 0; j < mesh.ny(); ++j) {
                 for (int i = 0; i < mesh.nx(); ++i) {
@@ -141,13 +140,13 @@ int main() {
                 }
             }
 
-            std::cout << "  Step " << step << ": t = " << time
+            std::cout << "  Step " << config.step << ": t = " << time
                       << ", dt = " << dt
                       << ", max|sigma| = " << maxSigma << "\n";
         }
     }
 
-    std::cout << "\nSimulation complete after " << step << " steps.\n";
+    std::cout << "\nSimulation complete after " << config.step << " steps.\n";
 
     VTKWriter::writePVD("VTK/riemann2d.pvd", "close");
 

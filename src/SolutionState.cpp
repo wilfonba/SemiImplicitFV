@@ -208,20 +208,12 @@ void SolutionState::saveConservativeCell(std::size_t idx) {
     rhoE0[idx] = rhoE[idx];
 }
 
-void SolutionState::blendConservativeCell(std::size_t idx, double alpha) {
-    rho[idx]  = alpha * rho0[idx]  + (1.0 - alpha) * rho[idx];
-    rhoU[idx] = alpha * rhoU0[idx] + (1.0 - alpha) * rhoU[idx];
-    if (dim_ >= 2) rhoV[idx] = alpha * rhoV0[idx] + (1.0 - alpha) * rhoV[idx];
-    if (dim_ >= 3) rhoW[idx] = alpha * rhoW0[idx] + (1.0 - alpha) * rhoW[idx];
-    rhoE[idx] = alpha * rhoE0[idx] + (1.0 - alpha) * rhoE[idx];
-}
-
 void SolutionState::smoothFields(const RectilinearMesh& mesh, int nIterations) {
     // Smooth a single scalar field using explicit heat equation iterations.
     // Uses diffusion number nu = 1/(2*dim) for stability.
     // Ghost cells are filled with outflow (zero-gradient) via fillScalarGhosts.
     int dim = dim_;
-    double nu = 1.0 / (2.0 * dim);
+    double nu = 1.0 / (4.0 * dim);
 
     auto smoothField = [&](std::vector<double>& field) {
         for (int iter = 0; iter < nIterations; ++iter) {
@@ -234,20 +226,20 @@ void SolutionState::smoothFields(const RectilinearMesh& mesh, int nIterations) {
 
                         std::size_t xm = mesh.index(i - 1, j, k);
                         std::size_t xp = mesh.index(i + 1, j, k);
-                        lap += field[xm] - 2.0 * field[idx] + field[xp];
+                        lap += field[xm] + 2.0 * field[idx] + field[xp];
 
                         if (dim >= 2) {
                             std::size_t ym = mesh.index(i, j - 1, k);
                             std::size_t yp = mesh.index(i, j + 1, k);
-                            lap += field[ym] - 2.0 * field[idx] + field[yp];
+                            lap += field[ym] + 2.0 * field[idx] + field[yp];
                         }
                         if (dim >= 3) {
                             std::size_t zm = mesh.index(i, j, k - 1);
                             std::size_t zp = mesh.index(i, j, k + 1);
-                            lap += field[zm] - 2.0 * field[idx] + field[zp];
+                            lap += field[zm] + 2.0 * field[idx] + field[zp];
                         }
 
-                        aux[idx] = field[idx] + nu * lap;
+                        aux[idx] = nu * lap;
                     }
                 }
             }

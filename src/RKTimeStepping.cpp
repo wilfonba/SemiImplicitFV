@@ -5,16 +5,6 @@
 
 namespace SemiImplicitFV {
 
-double sspRKBlendCoeff(const SimulationConfig& config, int stage) {
-    // SSP-RK2: U^(n+1) = 1/2 * U^n + 1/2 * [U^(1) + dt*L(U^(1))]
-    if (config.RKOrder == 2 && stage == 2) return 0.5;
-    // SSP-RK3: stage 2: U^(2) = 3/4 * U^n + 1/4 * [U^(1) + dt*L(U^(1))]
-    if (config.RKOrder == 3 && stage == 2) return 3.0 / 4.0;
-    // SSP-RK3: stage 3: U^(n+1) = 1/3 * U^n + 2/3 * [U^(2) + dt*L(U^(2))]
-    if (config.RKOrder == 3 && stage == 3) return 1.0 / 3.0;
-    return 0.0;
-}
-
 double computeAdvectiveTimeStep(const RectilinearMesh& mesh,
                                 const SolutionState& state,
                                 double cfl, double maxDt) {

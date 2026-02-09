@@ -68,7 +68,7 @@ double LFSolver::maxWaveSpeed(
     if (includePressure_) {
         double cL = eos_->soundSpeed(left);
         double cR = eos_->soundSpeed(right);
-        return std::max(uLS + cL, uRS + cR);
+        return std::max(uLS, uRS) + std::max(cL, cR);
     }
 
     return std::max(uLS, uRS);
