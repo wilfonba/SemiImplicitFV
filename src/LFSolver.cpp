@@ -58,8 +58,8 @@ double LFSolver::maxWaveSpeed(
     double uRS{0.0};
 
     for (int i = 0; i < dim_; ++i) {
-        uLS += left.u[i] * left.u[i] * normal[i];
-        uRS += right.u[i] * right.u[i] * normal[i];
+        uLS += left.u[i] * left.u[i];
+        uRS += right.u[i] * right.u[i];
     }
 
     uLS = std::sqrt(uLS);

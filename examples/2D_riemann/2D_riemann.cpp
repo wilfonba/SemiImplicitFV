@@ -72,7 +72,7 @@ void initializeRiemannProblem(const RectilinearMesh& mesh, SolutionState& state,
 }
 
 int main() {
-    const int N = 200;
+    const int N = 500;
     const double length = 1.0;
     const double endTime = 0.8;
     const double outputInterval = 0.008;

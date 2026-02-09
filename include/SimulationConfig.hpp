@@ -18,7 +18,7 @@ enum class ReconstructionOrder {
 struct ExplicitParams {
     double cfl = 0.8;
     double constDt = -1.0;       // if > 0, overrides CFL-based time step
-    double maxDt = 1e-4;
+    double maxDt = 1e-2;
     double minDt = 1e-12;
 };
 
