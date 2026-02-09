@@ -12,6 +12,7 @@ RiemannFlux LFSolver::computeFlux(
 ) const {
     RiemannFlux flux;
     const int dim_ = config_.dim;
+    const bool includePressure_ = !config_.semiImplicit;
 
     double uL = normalVelocity(left, normal, dim_);
     double uR = normalVelocity(right, normal, dim_);
@@ -52,6 +53,7 @@ double LFSolver::maxWaveSpeed(
     [[maybe_unused]] const std::array<double, 3>& normal
 ) const {
     const int dim_ = config_.dim;
+    const bool includePressure_ = !config_.semiImplicit;
     double uLS{0.0};
     double uRS{0.0};
 

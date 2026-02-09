@@ -29,85 +29,56 @@ void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
         const RectilinearMesh& mesh,
         SolutionState& state,
         std::vector<GradientTensor> gradU) {
-    // Solve: rhs = Σ/ρ - α∇·(∇Σ/ρ)
-    // Jacobi iteration with warm start
+    // Solve: σ/ρ - α∇·((1/ρ)∇σ) = rhs
+    // Gauss-Seidel iteration with warm start
     int maxIters = config.step == 0 ? params_.IGRWarmStartIters : params_.IGRIters;
-    double alpha = params_.alphaCoeff * mesh.dx(0) * mesh.dx(0); // Assuming uniform grid for simplicity
-    std::size_t idx; // for indexing current, left, right cells
-    std::size_t idxl, idxr;
-    std::size_t idyl, idyr;
-    std::size_t idzl, idzr;
-    double rho_lx, rho_rx, rho_ly, rho_ry, rho_lz, rho_rz;
-    double dx2, dy2, dz2;
-    double fd_coeff;
+    double alpha = params_.alphaCoeff * mesh.dx(0) * mesh.dx(0);
 
     for (int iter = 0; iter < maxIters; ++iter) {
         for (int k = 0; k < mesh.nz(); ++k) {
             for (int j = 0; j < mesh.ny(); ++j) {
                 for (int i = 0; i < mesh.nx(); ++i) {
+                    std::size_t idx = mesh.index(i, j, k);
+                    double rhs = computeIGRRhs(gradU[idx], alpha);
 
-                    idx = mesh.index(i,j,k);
-                    idxl = mesh.index(i - 1, j, k);
-                    idxr = mesh.index(i + 1, j, k);
+                    // Diagonal coefficient: 1/ρ_i + α·Σ(1/ρ_neighbor)/dx²
+                    double diag = 1.0 / state.rho[idx];
 
-                    rho_lx = state.rho[idxl];
-                    rho_rx = state.rho[idxr];
-                    dx2 = 1.0 / (mesh.dx(i) * mesh.dx(i));
-                    fd_coeff = state.rho[idx];
-                    fd_coeff += 1.0 / fd_coeff + alpha *
-                        (dx2 * (1.0 / rho_lx + 1.0 / rho_rx));
+                    // Off-diagonal sum: α·Σ(σ_neighbor/ρ_neighbor)/dx²
+                    double offdiag = 0.0;
 
+                    // X-direction
+                    std::size_t ixl = mesh.index(i - 1, j, k);
+                    std::size_t ixr = mesh.index(i + 1, j, k);
+                    double rho_xl = state.rho[ixl];
+                    double rho_xr = state.rho[ixr];
+                    double dx2 = 1.0 / (mesh.dx(i) * mesh.dx(i));
+                    diag += alpha * dx2 * (1.0 / rho_xl + 1.0 / rho_xr);
+                    offdiag += alpha * dx2 * (state.sigma[ixl] / rho_xl + state.sigma[ixr] / rho_xr);
+
+                    // Y-direction
                     if (config.dim >= 2) {
-                        idxl = mesh.index(i, j - 1, k);
-                        idxr = mesh.index(i, j + 1, k);
-                        rho_ly = state.rho[idxl];
-                        rho_ry = state.rho[idxr];
-                        dy2 = 1.0 / (mesh.dy(j) * mesh.dy(j));
-                        fd_coeff += alpha * dy2 * (1.0 / rho_ly + 1.0 / rho_ry);
-
-                        if (config.dim >= 3) {
-                            idxl = mesh.index(i, j, k - 1);
-                            idxr = mesh.index(i, j, k + 1);
-                            rho_lz = state.rho[idxl];
-                            rho_rz = state.rho[idxr];
-                            dz2 = 1.0 / (mesh.dz(k) * mesh.dz(k));
-                            fd_coeff += alpha * dz2 * (1.0 / rho_lz + 1.0 / rho_rz);
-                        }
+                        std::size_t iyl = mesh.index(i, j - 1, k);
+                        std::size_t iyr = mesh.index(i, j + 1, k);
+                        double rho_yl = state.rho[iyl];
+                        double rho_yr = state.rho[iyr];
+                        double dy2 = 1.0 / (mesh.dy(j) * mesh.dy(j));
+                        diag += alpha * dy2 * (1.0 / rho_yl + 1.0 / rho_yr);
+                        offdiag += alpha * dy2 * (state.sigma[iyl] / rho_yl + state.sigma[iyr] / rho_yr);
                     }
 
-                    if (config.dim == 1) {
-                        idxl = mesh.index(i - 1, j, k);
-                        idxr = mesh.index(i + 1, j, k);
-
-                        state.sigma[idx] = (alpha / fd_coeff) *
-                            (dx2 * (state.sigma[idxl] / rho_lx + state.sigma[idxr] / rho_rx) +
-                            computeIGRRhs(gradU[idx], alpha) / fd_coeff);
+                    // Z-direction
+                    if (config.dim >= 3) {
+                        std::size_t izl = mesh.index(i, j, k - 1);
+                        std::size_t izr = mesh.index(i, j, k + 1);
+                        double rho_zl = state.rho[izl];
+                        double rho_zr = state.rho[izr];
+                        double dz2 = 1.0 / (mesh.dz(k) * mesh.dz(k));
+                        diag += alpha * dz2 * (1.0 / rho_zl + 1.0 / rho_zr);
+                        offdiag += alpha * dz2 * (state.sigma[izl] / rho_zl + state.sigma[izr] / rho_zr);
                     }
-                    else if (config.dim == 2) {
-                        idyl = mesh.index(i, j + 1, k);
-                        idyr = mesh.index(i, j - 1, k);
-                        idxl = mesh.index(i - 1, j, k);
-                        idxr = mesh.index(i + 1, j, k);
 
-                        state.sigma[idx] = (alpha / fd_coeff) *
-                            (dx2 * (state.sigma[idxl] / rho_lx + state.sigma[idxr] / rho_rx) +
-                             dy2 * (state.sigma[idyl] / rho_ly + state.sigma[idyr] / rho_ry) +
-                             computeIGRRhs(gradU[idx], alpha) / fd_coeff);
-                    }
-                    else if (config.dim == 3) {
-                        idzl = mesh.index(i, j, k + 1);
-                        idzr = mesh.index(i, j, k - 1);
-                        idyl = mesh.index(i, j + 1, k);
-                        idyr = mesh.index(i, j - 1, k);
-                        idxl = mesh.index(i - 1, j, k);
-                        idxr = mesh.index(i + 1, j, k);
-
-                        state.sigma[idx] = (alpha / fd_coeff) *
-                            (dx2 * (state.sigma[idxl] / rho_lx + state.sigma[idxr] / rho_rx) +
-                             dy2 * (state.sigma[idyl] / rho_ly + state.sigma[idyr] / rho_ry) +
-                             dz2 * (state.sigma[idzl] / rho_lz + state.sigma[idzr] / rho_rz) +
-                             computeIGRRhs(gradU[idx], alpha) / fd_coeff);
-                    }
+                    state.sigma[idx] = (rhs + offdiag) / diag;
                 }
             }
         }

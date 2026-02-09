@@ -5,9 +5,7 @@
 namespace SemiImplicitFV {
 
 namespace {
-    constexpr double WENO_EPS = 1.0e-6;
-
-    using ReconFn = double(*)(const double*);
+    using ReconFn = double(*)(const double*, double);
 
     inline void reconstructScalar(
         const double* field,
@@ -15,6 +13,7 @@ namespace {
         int stencilSize,
         ReconFn leftFn,
         ReconFn rightFn,
+        double eps,
         double& outLeft,
         double& outRight)
     {
@@ -23,13 +22,13 @@ namespace {
             vL[s] = field[cells[s]];
             vR[s] = field[cells[s + 1]];
         }
-        outLeft  = leftFn(vL);
-        outRight = rightFn(vR);
+        outLeft  = leftFn(vL, eps);
+        outRight = rightFn(vR, eps);
     }
 } // anonymous namespace
 
-Reconstructor::Reconstructor(ReconstructionOrder order)
-    : order_(order)
+Reconstructor::Reconstructor(ReconstructionOrder order, double wenoEps)
+    : order_(order), wenoEps_(wenoEps)
 {}
 
 void Reconstructor::allocate(const RectilinearMesh& mesh) {
@@ -79,7 +78,7 @@ std::size_t Reconstructor::zFaceIndex(int i, int j, int k) const {
     return static_cast<std::size_t>(i + nx_ * (j + ny_ * k));
 }
 
-double Reconstructor::weno3Left(const double* v) {
+double Reconstructor::weno3Left(const double* v, double eps) {
     // v[0] = v_{i-1}, v[1] = v_i, v[2] = v_{i+1}
     double p0 = -0.5 * v[0] + 1.5 * v[1];
     double p1 =  0.5 * v[1] + 0.5 * v[2];
@@ -87,17 +86,17 @@ double Reconstructor::weno3Left(const double* v) {
     double b0 = (v[1] - v[0]) * (v[1] - v[0]);
     double b1 = (v[2] - v[1]) * (v[2] - v[1]);
 
-    constexpr double d0 = 2.0 / 3.0;
-    constexpr double d1 = 1.0 / 3.0;
+    constexpr double d0 = 1.0 / 3.0;
+    constexpr double d1 = 2.0 / 3.0;
 
-    double a0 = d0 / ((WENO_EPS + b0) * (WENO_EPS + b0));
-    double a1 = d1 / ((WENO_EPS + b1) * (WENO_EPS + b1));
+    double a0 = d0 / ((eps + b0) * (eps + b0));
+    double a1 = d1 / ((eps + b1) * (eps + b1));
     double aSum = a0 + a1;
 
     return (a0 * p0 + a1 * p1) / aSum;
 }
 
-double Reconstructor::weno3Right(const double* v) {
+double Reconstructor::weno3Right(const double* v, double eps) {
     // v[0] = v_i, v[1] = v_{i+1}, v[2] = v_{i+2}
     double p0 =  0.5 * v[0] + 0.5 * v[1];
     double p1 =  1.5 * v[1] - 0.5 * v[2];
@@ -108,14 +107,14 @@ double Reconstructor::weno3Right(const double* v) {
     constexpr double d0 = 2.0 / 3.0;
     constexpr double d1 = 1.0 / 3.0;
 
-    double a0 = d0 / ((WENO_EPS + b0) * (WENO_EPS + b0));
-    double a1 = d1 / ((WENO_EPS + b1) * (WENO_EPS + b1));
+    double a0 = d0 / ((eps + b0) * (eps + b0));
+    double a1 = d1 / ((eps + b1) * (eps + b1));
     double aSum = a0 + a1;
 
     return (a0 * p0 + a1 * p1) / aSum;
 }
 
-double Reconstructor::weno5Left(const double* v) {
+double Reconstructor::weno5Left(const double* v, double eps) {
     // v[0]=v_{i-2}, v[1]=v_{i-1}, v[2]=v_i, v[3]=v_{i+1}, v[4]=v_{i+2}
     double p0 = (1.0/3.0)*v[0] - (7.0/6.0)*v[1] + (11.0/6.0)*v[2];
     double p1 = -(1.0/6.0)*v[1] + (5.0/6.0)*v[2] + (1.0/3.0)*v[3];
@@ -132,15 +131,15 @@ double Reconstructor::weno5Left(const double* v) {
     constexpr double d1 = 6.0 / 10.0;
     constexpr double d2 = 3.0 / 10.0;
 
-    double a0 = d0 / ((WENO_EPS + b0) * (WENO_EPS + b0));
-    double a1 = d1 / ((WENO_EPS + b1) * (WENO_EPS + b1));
-    double a2 = d2 / ((WENO_EPS + b2) * (WENO_EPS + b2));
+    double a0 = d0 / ((eps + b0) * (eps + b0));
+    double a1 = d1 / ((eps + b1) * (eps + b1));
+    double a2 = d2 / ((eps + b2) * (eps + b2));
     double aSum = a0 + a1 + a2;
 
     return (a0 * p0 + a1 * p1 + a2 * p2) / aSum;
 }
 
-double Reconstructor::weno5Right(const double* v) {
+double Reconstructor::weno5Right(const double* v, double eps) {
     // v[0]=v_{i-2}, v[1]=v_{i-1}, v[2]=v_i, v[3]=v_{i+1}, v[4]=v_{i+2}
     // Mirror: reverse the stencil for right-biased reconstruction
     double p0 = (1.0/3.0)*v[4] - (7.0/6.0)*v[3] + (11.0/6.0)*v[2];
@@ -158,30 +157,30 @@ double Reconstructor::weno5Right(const double* v) {
     constexpr double d1 = 6.0 / 10.0;
     constexpr double d2 = 3.0 / 10.0;
 
-    double a0 = d0 / ((WENO_EPS + b0) * (WENO_EPS + b0));
-    double a1 = d1 / ((WENO_EPS + b1) * (WENO_EPS + b1));
-    double a2 = d2 / ((WENO_EPS + b2) * (WENO_EPS + b2));
+    double a0 = d0 / ((eps + b0) * (eps + b0));
+    double a1 = d1 / ((eps + b1) * (eps + b1));
+    double a2 = d2 / ((eps + b2) * (eps + b2));
     double aSum = a0 + a1 + a2;
 
     return (a0 * p0 + a1 * p1 + a2 * p2) / aSum;
 }
 
-double Reconstructor::upwind3Left(const double* v) {
+double Reconstructor::upwind3Left(const double* v, [[maybe_unused]] double eps) {
     // v[0] = v_{i-1}, v[1] = v_i, v[2] = v_{i+1}
     // Same sub-stencil polynomials as WENO3, with optimal linear weights
     double p0 = -0.5 * v[0] + 1.5 * v[1];
     double p1 =  0.5 * v[1] + 0.5 * v[2];
-    return (2.0/3.0) * p0 + (1.0/3.0) * p1;
+    return (1.0/3.0) * p0 + (2.0/3.0) * p1;
 }
 
-double Reconstructor::upwind3Right(const double* v) {
+double Reconstructor::upwind3Right(const double* v, [[maybe_unused]] double eps) {
     // v[0] = v_i, v[1] = v_{i+1}, v[2] = v_{i+2}
     double p0 =  0.5 * v[0] + 0.5 * v[1];
     double p1 =  1.5 * v[1] - 0.5 * v[2];
     return (2.0/3.0) * p0 + (1.0/3.0) * p1;
 }
 
-double Reconstructor::upwind5Left(const double* v) {
+double Reconstructor::upwind5Left(const double* v, [[maybe_unused]] double eps) {
     // v[0]=v_{i-2}, v[1]=v_{i-1}, v[2]=v_i, v[3]=v_{i+1}, v[4]=v_{i+2}
     // Same sub-stencil polynomials as WENO5, with optimal linear weights
     double p0 = (1.0/3.0)*v[0] - (7.0/6.0)*v[1] + (11.0/6.0)*v[2];
@@ -190,7 +189,7 @@ double Reconstructor::upwind5Left(const double* v) {
     return (1.0/10.0) * p0 + (6.0/10.0) * p1 + (3.0/10.0) * p2;
 }
 
-double Reconstructor::upwind5Right(const double* v) {
+double Reconstructor::upwind5Right(const double* v, [[maybe_unused]] double eps) {
     // v[0]=v_{i-2}, v[1]=v_{i-1}, v[2]=v_i, v[3]=v_{i+1}, v[4]=v_{i+2}
     double p0 = (1.0/3.0)*v[4] - (7.0/6.0)*v[3] + (11.0/6.0)*v[2];
     double p1 = -(1.0/6.0)*v[3] + (5.0/6.0)*v[2] + (1.0/3.0)*v[1];
@@ -251,14 +250,14 @@ void Reconstructor::reconstructX(const RectilinearMesh& mesh, const SolutionStat
 
                     ReconFn lFn = (order_ == ReconstructionOrder::WENO3) ? weno3Left  : upwind3Left;
                     ReconFn rFn = (order_ == ReconstructionOrder::WENO3) ? weno3Right : upwind3Right;
-                    reconstructScalar(rho,  c, 3, lFn, rFn, left.rho,  right.rho);
-                    reconstructScalar(velU, c, 3, lFn, rFn, left.u[0], right.u[0]);
-                    reconstructScalar(pres, c, 3, lFn, rFn, left.p,    right.p);
-                    reconstructScalar(sig,  c, 3, lFn, rFn, left.sigma, right.sigma);
+                    reconstructScalar(rho,  c, 3, lFn, rFn, wenoEps_, left.rho,  right.rho);
+                    reconstructScalar(velU, c, 3, lFn, rFn, wenoEps_, left.u[0], right.u[0]);
+                    reconstructScalar(pres, c, 3, lFn, rFn, wenoEps_, left.p,    right.p);
+                    reconstructScalar(sig,  c, 3, lFn, rFn, wenoEps_, left.sigma, right.sigma);
                     if (dim_ >= 2)
-                        reconstructScalar(velV, c, 3, lFn, rFn, left.u[1], right.u[1]);
+                        reconstructScalar(velV, c, 3, lFn, rFn, wenoEps_, left.u[1], right.u[1]);
                     if (dim_ >= 3)
-                        reconstructScalar(velW, c, 3, lFn, rFn, left.u[2], right.u[2]);
+                        reconstructScalar(velW, c, 3, lFn, rFn, wenoEps_, left.u[2], right.u[2]);
                 }
                 else { // WENO5 or UPWIND5
                     // 6 cells: i-3, i-2, i-1, i, i+1, i+2
@@ -272,14 +271,14 @@ void Reconstructor::reconstructX(const RectilinearMesh& mesh, const SolutionStat
 
                     ReconFn lFn = (order_ == ReconstructionOrder::WENO5) ? weno5Left  : upwind5Left;
                     ReconFn rFn = (order_ == ReconstructionOrder::WENO5) ? weno5Right : upwind5Right;
-                    reconstructScalar(rho,  c, 5, lFn, rFn, left.rho,  right.rho);
-                    reconstructScalar(velU, c, 5, lFn, rFn, left.u[0], right.u[0]);
-                    reconstructScalar(pres, c, 5, lFn, rFn, left.p,    right.p);
-                    reconstructScalar(sig,  c, 5, lFn, rFn, left.sigma, right.sigma);
+                    reconstructScalar(rho,  c, 5, lFn, rFn, wenoEps_, left.rho,  right.rho);
+                    reconstructScalar(velU, c, 5, lFn, rFn, wenoEps_, left.u[0], right.u[0]);
+                    reconstructScalar(pres, c, 5, lFn, rFn, wenoEps_, left.p,    right.p);
+                    reconstructScalar(sig,  c, 5, lFn, rFn, wenoEps_, left.sigma, right.sigma);
                     if (dim_ >= 2)
-                        reconstructScalar(velV, c, 5, lFn, rFn, left.u[1], right.u[1]);
+                        reconstructScalar(velV, c, 5, lFn, rFn, wenoEps_, left.u[1], right.u[1]);
                     if (dim_ >= 3)
-                        reconstructScalar(velW, c, 5, lFn, rFn, left.u[2], right.u[2]);
+                        reconstructScalar(velW, c, 5, lFn, rFn, wenoEps_, left.u[2], right.u[2]);
                 }
             }
         }
@@ -334,13 +333,13 @@ void Reconstructor::reconstructY(const RectilinearMesh& mesh, const SolutionStat
 
                     ReconFn lFn = (order_ == ReconstructionOrder::WENO3) ? weno3Left  : upwind3Left;
                     ReconFn rFn = (order_ == ReconstructionOrder::WENO3) ? weno3Right : upwind3Right;
-                    reconstructScalar(rho,  c, 3, lFn, rFn, left.rho,  right.rho);
-                    reconstructScalar(velU, c, 3, lFn, rFn, left.u[0], right.u[0]);
-                    reconstructScalar(velV, c, 3, lFn, rFn, left.u[1], right.u[1]);
-                    reconstructScalar(pres, c, 3, lFn, rFn, left.p,    right.p);
-                    reconstructScalar(sig,  c, 3, lFn, rFn, left.sigma, right.sigma);
+                    reconstructScalar(rho,  c, 3, lFn, rFn, wenoEps_, left.rho,  right.rho);
+                    reconstructScalar(velU, c, 3, lFn, rFn, wenoEps_, left.u[0], right.u[0]);
+                    reconstructScalar(velV, c, 3, lFn, rFn, wenoEps_, left.u[1], right.u[1]);
+                    reconstructScalar(pres, c, 3, lFn, rFn, wenoEps_, left.p,    right.p);
+                    reconstructScalar(sig,  c, 3, lFn, rFn, wenoEps_, left.sigma, right.sigma);
                     if (dim_ >= 3)
-                        reconstructScalar(velW, c, 3, lFn, rFn, left.u[2], right.u[2]);
+                        reconstructScalar(velW, c, 3, lFn, rFn, wenoEps_, left.u[2], right.u[2]);
                 }
                 else { // WENO5 or UPWIND5
                     std::size_t c[6];
@@ -353,13 +352,13 @@ void Reconstructor::reconstructY(const RectilinearMesh& mesh, const SolutionStat
 
                     ReconFn lFn = (order_ == ReconstructionOrder::WENO5) ? weno5Left  : upwind5Left;
                     ReconFn rFn = (order_ == ReconstructionOrder::WENO5) ? weno5Right : upwind5Right;
-                    reconstructScalar(rho,  c, 5, lFn, rFn, left.rho,  right.rho);
-                    reconstructScalar(velU, c, 5, lFn, rFn, left.u[0], right.u[0]);
-                    reconstructScalar(velV, c, 5, lFn, rFn, left.u[1], right.u[1]);
-                    reconstructScalar(pres, c, 5, lFn, rFn, left.p,    right.p);
-                    reconstructScalar(sig,  c, 5, lFn, rFn, left.sigma, right.sigma);
+                    reconstructScalar(rho,  c, 5, lFn, rFn, wenoEps_, left.rho,  right.rho);
+                    reconstructScalar(velU, c, 5, lFn, rFn, wenoEps_, left.u[0], right.u[0]);
+                    reconstructScalar(velV, c, 5, lFn, rFn, wenoEps_, left.u[1], right.u[1]);
+                    reconstructScalar(pres, c, 5, lFn, rFn, wenoEps_, left.p,    right.p);
+                    reconstructScalar(sig,  c, 5, lFn, rFn, wenoEps_, left.sigma, right.sigma);
                     if (dim_ >= 3)
-                        reconstructScalar(velW, c, 5, lFn, rFn, left.u[2], right.u[2]);
+                        reconstructScalar(velW, c, 5, lFn, rFn, wenoEps_, left.u[2], right.u[2]);
                 }
             }
         }
@@ -412,12 +411,12 @@ void Reconstructor::reconstructZ(const RectilinearMesh& mesh, const SolutionStat
 
                     ReconFn lFn = (order_ == ReconstructionOrder::WENO3) ? weno3Left  : upwind3Left;
                     ReconFn rFn = (order_ == ReconstructionOrder::WENO3) ? weno3Right : upwind3Right;
-                    reconstructScalar(rho,  c, 3, lFn, rFn, left.rho,  right.rho);
-                    reconstructScalar(velU, c, 3, lFn, rFn, left.u[0], right.u[0]);
-                    reconstructScalar(velV, c, 3, lFn, rFn, left.u[1], right.u[1]);
-                    reconstructScalar(velW, c, 3, lFn, rFn, left.u[2], right.u[2]);
-                    reconstructScalar(pres, c, 3, lFn, rFn, left.p,    right.p);
-                    reconstructScalar(sig,  c, 3, lFn, rFn, left.sigma, right.sigma);
+                    reconstructScalar(rho,  c, 3, lFn, rFn, wenoEps_, left.rho,  right.rho);
+                    reconstructScalar(velU, c, 3, lFn, rFn, wenoEps_, left.u[0], right.u[0]);
+                    reconstructScalar(velV, c, 3, lFn, rFn, wenoEps_, left.u[1], right.u[1]);
+                    reconstructScalar(velW, c, 3, lFn, rFn, wenoEps_, left.u[2], right.u[2]);
+                    reconstructScalar(pres, c, 3, lFn, rFn, wenoEps_, left.p,    right.p);
+                    reconstructScalar(sig,  c, 3, lFn, rFn, wenoEps_, left.sigma, right.sigma);
                 }
                 else { // WENO5 or UPWIND5
                     std::size_t c[6];
@@ -430,12 +429,12 @@ void Reconstructor::reconstructZ(const RectilinearMesh& mesh, const SolutionStat
 
                     ReconFn lFn = (order_ == ReconstructionOrder::WENO5) ? weno5Left  : upwind5Left;
                     ReconFn rFn = (order_ == ReconstructionOrder::WENO5) ? weno5Right : upwind5Right;
-                    reconstructScalar(rho,  c, 5, lFn, rFn, left.rho,  right.rho);
-                    reconstructScalar(velU, c, 5, lFn, rFn, left.u[0], right.u[0]);
-                    reconstructScalar(velV, c, 5, lFn, rFn, left.u[1], right.u[1]);
-                    reconstructScalar(velW, c, 5, lFn, rFn, left.u[2], right.u[2]);
-                    reconstructScalar(pres, c, 5, lFn, rFn, left.p,    right.p);
-                    reconstructScalar(sig,  c, 5, lFn, rFn, left.sigma, right.sigma);
+                    reconstructScalar(rho,  c, 5, lFn, rFn, wenoEps_, left.rho,  right.rho);
+                    reconstructScalar(velU, c, 5, lFn, rFn, wenoEps_, left.u[0], right.u[0]);
+                    reconstructScalar(velV, c, 5, lFn, rFn, wenoEps_, left.u[1], right.u[1]);
+                    reconstructScalar(velW, c, 5, lFn, rFn, wenoEps_, left.u[2], right.u[2]);
+                    reconstructScalar(pres, c, 5, lFn, rFn, wenoEps_, left.p,    right.p);
+                    reconstructScalar(sig,  c, 5, lFn, rFn, wenoEps_, left.sigma, right.sigma);
                 }
             }
         }

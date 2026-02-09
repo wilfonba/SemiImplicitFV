@@ -15,6 +15,9 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-Wall -Wextra -Wpedantic)
     if(CMAKE_BUILD_TYPE STREQUAL "Release")
         add_compile_options(-O3 -march=native)
+    elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        add_compile_options(-g -fsanitize=address -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=address)
     endif()
 endif()
 
@@ -34,6 +37,7 @@ set(LIB_SOURCES
     src/IGR.cpp
     src/SemiImplicitSolver.cpp
     src/ExplicitSolver.cpp
+    src/RKTimeStepping.cpp
     src/PressureLaplacian.cpp
     src/GaussSeidelPressureSolver.cpp
     src/JacobiPressureSolver.cpp

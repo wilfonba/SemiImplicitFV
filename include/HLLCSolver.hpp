@@ -5,13 +5,11 @@
 
 namespace SemiImplicitFV {
 
-// When includePressure is false, all eigenvalues are u so this reduces to a simpler form
 class HLLCSolver : public RiemannSolver {
 public:
     explicit HLLCSolver(std::shared_ptr<EquationOfState> eos,
-                        bool includePressure = false,
                         const SimulationConfig& config = {})
-        : RiemannSolver(std::move(eos), includePressure, config) {}
+        : RiemannSolver(std::move(eos), config) {}
 
     RiemannFlux computeFlux(
         const PrimitiveState& left,
@@ -25,9 +23,7 @@ public:
         const std::array<double, 3>& normal
     ) const override;
 
-    std::string name() const override {
-        return includePressure_ ? "HLLC" : "HLLCAdvective";
-    }
+    std::string name() const override { return "HLLC"; }
 };
 
 } // namespace SemiImplicitFV

@@ -15,29 +15,6 @@
 
 namespace SemiImplicitFV {
 
-// Parameters for the semi-implicit solver
-struct SemiImplicitParams {
-    double cfl;               // CFL number (based on material velocity)
-    double maxDt;             // Maximum time step
-    double minDt;             // Minimum time step
-    int maxPressureIters;     // Max iterations for pressure solve
-    int RKOrder;              // Runge-Kutta order for advection step (1, 2, or 3)
-    double pressureTol;       // Pressure solve tolerance
-    bool useIGR;              // Enable IGR regularization
-
-    ReconstructionOrder reconOrder = ReconstructionOrder::WENO1;
-
-    SemiImplicitParams()
-        : cfl(0.8)            // Can use larger CFL since no acoustic restriction
-        , maxDt(1e-2)
-        , minDt(1e-12)
-        , maxPressureIters(100)
-        , RKOrder(1)
-        , pressureTol(1e-8)
-        , useIGR(true)
-    {}
-};
-
 // Semi-implicit time stepper for compressible flow (Kwatra et al.)
 // Combined with Information Geometric Regularization (IGR)
 class SemiImplicitSolver {
@@ -47,20 +24,14 @@ public:
         std::shared_ptr<RiemannSolver> riemannSolver,
         std::shared_ptr<PressureSolver> pressureSolver,
         std::shared_ptr<EquationOfState> eos,
-        std::shared_ptr<IGRSolver> igrSolver = nullptr,
-        const SemiImplicitParams& params = SemiImplicitParams()
+        std::shared_ptr<IGRSolver> igrSolver,
+        const SimulationConfig& config
     );
 
     ~SemiImplicitSolver() = default;
 
-    void setParameters(const SemiImplicitParams& params) { params_ = params; }
-    const SemiImplicitParams& parameters() const { return params_; }
-
     // Perform one time step
     double step(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state, double targetDt = -1.0);
-
-    // Compute stable time step (CFL based on material velocity only)
-    double computeAdvectiveTimeStep(const RectilinearMesh& mesh, const SolutionState& state) const;
 
     // Access components
     RiemannSolver& riemannSolver() { return *riemannSolver_; }
@@ -92,8 +63,6 @@ private:
     std::vector<double> rhsRhoW_;
     std::vector<double> rhsRhoE_;
     std::vector<double> rhsPadvected_;
-
-    double sspRKBlendCoeff(const SimulationConfig& config, int stage);
 
     void computeRHS(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state);
     void solveIGR(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state);

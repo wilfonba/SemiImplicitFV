@@ -1,4 +1,5 @@
 #include "ExplicitSolver.hpp"
+#include "RKTimeStepping.hpp"
 #include "SimulationConfig.hpp"
 #include <cmath>
 #include <algorithm>
@@ -12,13 +13,13 @@ ExplicitSolver::ExplicitSolver(
     std::shared_ptr<RiemannSolver> riemannSolver,
     std::shared_ptr<EquationOfState> eos,
     std::shared_ptr<IGRSolver> igrSolver,
-    const ExplicitParams& params
+    const SimulationConfig& config
 )
     : riemannSolver_(std::move(riemannSolver))
     , eos_(std::move(eos))
     , igrSolver_(std::move(igrSolver))
-    , params_(params)
-    , reconstructor_(params.reconOrder)
+    , params_(config.explicitParams)
+    , reconstructor_(config.reconOrder, config.wenoEps)
 {
     std::size_t n = mesh.totalCells();
     int dim = mesh.dim();
@@ -44,7 +45,7 @@ double ExplicitSolver::step(const SimulationConfig& config,
     if (params_.constDt > 0) {
         dt = params_.constDt;
     } else {
-        dt = computeAcousticTimeStep(mesh, state);
+        dt = SemiImplicitFV::computeAcousticTimeStep(mesh, state, *eos_, params_.cfl, params_.maxDt);
     }
 
     if (targetDt > 0) {
@@ -79,7 +80,7 @@ double ExplicitSolver::step(const SimulationConfig& config,
 
                     // SSP-RK blending: U = alpha * U^n + (1-alpha) * U
                     if (config.RKOrder > 1 && s >= 2) {
-                        double alpha = sspRKBlendCoeff(config, s);
+                        double alpha = SemiImplicitFV::sspRKBlendCoeff(config, s);
                         state.blendConservativeCell(idx, alpha);
                     }
                 }
@@ -88,16 +89,6 @@ double ExplicitSolver::step(const SimulationConfig& config,
     }
 
     return dt;
-}
-
-double ExplicitSolver::sspRKBlendCoeff(const SimulationConfig& config, int stage) const {
-    // SSP-RK2: U^(n+1) = 1/2 * U^n + 1/2 * [U^(1) + dt*L(U^(1))]
-    if (config.RKOrder == 2 && stage == 2) return 0.5;
-    // SSP-RK3: stage 2: U^(2) = 3/4 * U^n + 1/4 * [U^(1) + dt*L(U^(1))]
-    if (config.RKOrder == 3 && stage == 2) return 3.0 / 4.0;
-    // SSP-RK3: stage 3: U^(n+1) = 1/3 * U^n + 2/3 * [U^(2) + dt*L(U^(2))]
-    if (config.RKOrder == 3 && stage == 3) return 1.0 / 3.0;
-    return 0.0;
 }
 
 void ExplicitSolver::solveIGR(const SimulationConfig& config,
@@ -290,35 +281,6 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
             }
         }
     }
-}
-
-double ExplicitSolver::computeAcousticTimeStep(const RectilinearMesh& mesh, SolutionState& state) const {
-    double maxSpeed = 0.0;
-    double minDx = std::numeric_limits<double>::max();
-
-    for (int k = 0; k < mesh.nz(); ++k) {
-        for (int j = 0; j < mesh.ny(); ++j) {
-            for (int i = 0; i < mesh.nx(); ++i) {
-                double dxMin = mesh.dx(i);
-                if (mesh.dim() >= 2) dxMin = std::min(dxMin, mesh.dy(j));
-                if (mesh.dim() >= 3) dxMin = std::min(dxMin, mesh.dz(k));
-                minDx = std::min(minDx, dxMin);
-
-                std::size_t idx = mesh.index(i, j, k);
-                double speed2 = state.velU[idx] * state.velU[idx];
-                if (mesh.dim() >= 2) speed2 += state.velV[idx] * state.velV[idx];
-                if (mesh.dim() >= 3) speed2 += state.velW[idx] * state.velW[idx];
-                double u = std::sqrt(speed2);
-                double c = eos_->soundSpeed(state.getPrimitiveState(idx));
-                u += c;
-
-                maxSpeed = std::max(maxSpeed, u);
-            }
-        }
-    }
-
-    if (maxSpeed < 1e-14) return params_.maxDt;
-    return params_.cfl * minDx / maxSpeed;
 }
 
 } // namespace SemiImplicitFV

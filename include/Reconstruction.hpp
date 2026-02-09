@@ -10,18 +10,12 @@
 
 namespace SemiImplicitFV {
 
-enum class ReconstructionOrder {
-    WENO1,        // piecewise constant (copies cell values)
-    WENO3,        // 3rd order WENO (r=2, needs 2 ghost cells)
-    WENO5,        // 5th order WENO (r=3, needs 3 ghost cells)
-    UPWIND1,      // piecewise constant (copies cell values)
-    UPWIND3,      // 3rd order upwind (WENO without shock capturing)
-    UPWIND5,      // 5th order upwind (WENO without shock capturing)
-};
+// ReconstructionOrder enum is defined in SimulationConfig.hpp
 
 class Reconstructor {
 public:
-    explicit Reconstructor(ReconstructionOrder order = ReconstructionOrder::WENO1);
+    explicit Reconstructor(ReconstructionOrder order = ReconstructionOrder::WENO1,
+                           double wenoEps = 1e-6);
 
     /// Allocate face arrays for the given mesh dimensions.
     void allocate(const RectilinearMesh& mesh);
@@ -63,6 +57,7 @@ public:
 
 private:
     ReconstructionOrder order_;
+    double wenoEps_;
     int dim_ = 0;
     int nx_ = 0, ny_ = 0, nz_ = 0;
     std::size_t numXFaces_ = 0, numYFaces_ = 0, numZFaces_ = 0;
@@ -75,14 +70,14 @@ private:
     void reconstructY(const RectilinearMesh& mesh, const SolutionState& state);
     void reconstructZ(const RectilinearMesh& mesh, const SolutionState& state);
 
-    static double weno3Left(const double* v);
-    static double weno3Right(const double* v);
-    static double weno5Left(const double* v);
-    static double weno5Right(const double* v);
-    static double upwind3Left(const double* v);
-    static double upwind3Right(const double* v);
-    static double upwind5Left(const double* v);
-    static double upwind5Right(const double* v);
+    static double weno3Left(const double* v, double eps);
+    static double weno3Right(const double* v, double eps);
+    static double weno5Left(const double* v, double eps);
+    static double weno5Right(const double* v, double eps);
+    static double upwind3Left(const double* v, double eps);
+    static double upwind3Right(const double* v, double eps);
+    static double upwind5Left(const double* v, double eps);
+    static double upwind5Right(const double* v, double eps);
 };
 
 } // namespace SemiImplicitFV

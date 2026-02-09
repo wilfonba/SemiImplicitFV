@@ -60,6 +60,11 @@ int main() {
     config.nGhost = 4;
     config.RKOrder = 3;
     config.useIGR = true;
+    config.reconOrder = ReconstructionOrder::UPWIND3;
+    config.explicitParams.cfl = 0.1;
+    config.igrParams.alphaCoeff = 10.0;
+    config.igrParams.IGRIters = 5;
+    config.validate();
 
     RectilinearMesh mesh = RectilinearMesh::createUniform(
         config, numCells, 0.0, length);
@@ -71,20 +76,10 @@ int main() {
     state.allocate(mesh.totalCells(), config);
 
     auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0, config);
-    auto riemannSolver = std::make_shared<LFSolver>(eos, true, config);
+    auto riemannSolver = std::make_shared<LFSolver>(eos, config);
+    auto igrSolver = std::make_shared<IGRSolver>(config.igrParams);
 
-    IGRParams igrParams;
-    igrParams.alphaCoeff = 10.0;       // α = αCoeff * Δx²
-    igrParams.IGRIters = 5;
-    auto igrSolver = std::make_shared<IGRSolver>(igrParams);
-    std::cout << "Created IGR solver \n";
-
-    ExplicitParams params;
-    params.cfl = 0.1;
-    //params.constDt = constDt;
-    params.reconOrder = ReconstructionOrder::UPWIND3;
-
-    ExplicitSolver solver(mesh, riemannSolver, eos, igrSolver, params);
+    ExplicitSolver solver(mesh, riemannSolver, eos, igrSolver, config);
     initializeSodProblem(mesh, state, *eos);
 
     // Initialize VTK time-series file

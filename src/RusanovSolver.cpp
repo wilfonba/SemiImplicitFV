@@ -11,6 +11,7 @@ RiemannFlux RusanovSolver::computeFlux(
 ) const {
     RiemannFlux flux;
     const int dim_ = config_.dim;
+    const bool includePressure_ = !config_.semiImplicit;
 
     double uL = normalVelocity(left, normal, dim_);
     double uR = normalVelocity(right, normal, dim_);
@@ -68,6 +69,7 @@ double RusanovSolver::maxWaveSpeed(
     const std::array<double, 3>& normal
 ) const {
     const int dim_ = config_.dim;
+    const bool includePressure_ = !config_.semiImplicit;
     double uL = std::abs(normalVelocity(left, normal, dim_));
     double uR = std::abs(normalVelocity(right, normal, dim_));
 

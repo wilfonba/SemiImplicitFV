@@ -8,9 +8,8 @@ namespace SemiImplicitFV {
 class LFSolver : public RiemannSolver {
 public:
     explicit LFSolver(std::shared_ptr<EquationOfState> eos,
-                          bool includePressure = false,
                           const SimulationConfig& config = {})
-        : RiemannSolver(std::move(eos), includePressure, config) {}
+        : RiemannSolver(std::move(eos), config) {}
 
     RiemannFlux computeFlux(
         const PrimitiveState& left,
@@ -24,9 +23,7 @@ public:
         const std::array<double, 3>& normal
     ) const override;
 
-    std::string name() const override {
-        return includePressure_ ? "LF" : "LFAdvective";
-    }
+    std::string name() const override { return "Lax-Friedrichs"; }
 };
 
 } // namespace SemiImplicitFV

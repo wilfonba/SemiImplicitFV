@@ -3,6 +3,7 @@
 
 #include "RectilinearMesh.hpp"
 #include "SolutionState.hpp"
+#include "SimulationConfig.hpp"
 #include <array>
 #include <string>
 
@@ -11,18 +12,7 @@ namespace SemiImplicitFV {
 // Velocity gradient tensor (3x3)
 using GradientTensor = std::array<std::array<double, 3>, 3>;
 
-// Parameters for Information Geometric Regularization
-struct IGRParams {
-    double alphaCoeff;        // Coefficient for alpha = alphaCoeff * dx^2
-    int IGRIters;             // Max iterations for elliptic solve
-    int IGRWarmStartIters;    // Iterations for warm start (initial guess)
-
-    IGRParams()
-        : alphaCoeff(1.0)
-        , IGRIters(5)
-        , IGRWarmStartIters(50)
-    {}
-};
+// IGRParams is defined in SimulationConfig.hpp
 
 // Information Geometric Regularization solver
 // Computes entropic pressure Σ from the elliptic equation:

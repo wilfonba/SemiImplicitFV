@@ -3,10 +3,12 @@
 #include "State.hpp"
 #include "RusanovSolver.hpp"
 #include "LFSolver.hpp"
+#include "HLLCSolver.hpp"
 #include "SemiImplicitSolver.hpp"
 #include "ExplicitSolver.hpp"
 #include "VTKWriter.hpp"
 #include "GaussSeidelPressureSolver.hpp"
+#include "JacobiPressureSolver.hpp"
 #include "IGR.hpp"
 #include "IdealGasEOS.hpp"
 #include "SimulationConfig.hpp"
@@ -15,13 +17,14 @@
 #include <fstream>
 #include <memory>
 #include <cmath>
+#include <chrono>
 
 using namespace SemiImplicitFV;
 
 // ---- Problem parameters ----
 static constexpr double rho0    = 1.225;      // Background density  [kg/m³]
 static constexpr double p0      = 101325.0;   // Background pressure [Pa]
-static constexpr double u0      = 1.0;       // Advection velocity  [m/s]  (Mach ≈ 0.15)
+static constexpr double u0      = 10.0;       // Advection velocity  [m/s]  (Mach ≈ 0.15)
 static constexpr double amp     = 0.01;       // Perturbation amplitude (1 %)
 static constexpr double xCenter = 0.5;        // Initial pulse centre
 static constexpr double sigma   = 0.05;       // Pulse width
@@ -53,19 +56,6 @@ void initializeProblem(const RectilinearMesh& mesh, SolutionState& state,
     }
 }
 
-void writeSolution(const RectilinearMesh& mesh, const SolutionState& state,
-                   const std::string& filename) {
-    std::ofstream file(filename);
-    file << "# x rho u p\n";
-    for (int i = 0; i < mesh.nx(); ++i) {
-        std::size_t idx = mesh.index(i, 0, 0);
-        file << mesh.cellCentroidX(i) << " "
-             << state.rho[idx] << " "
-             << state.velU[idx] << " "
-             << state.pres[idx] << "\n";
-    }
-}
-
 int main() {
     // ---- Setup ----
     const int    numCells = 1000;
@@ -75,10 +65,18 @@ int main() {
     // Simulation config
     SimulationConfig config;
     config.dim = 1;
-    config.nGhost = 2;
+    config.nGhost = 3;
     config.RKOrder = 1;
     config.useIGR = true;
     config.semiImplicit = true;
+    config.reconOrder = ReconstructionOrder::UPWIND1;
+    config.semiImplicitParams.cfl = 0.8;
+    config.semiImplicitParams.maxDt = 1e-2;
+    config.semiImplicitParams.pressureTol = 1e-9;
+    config.semiImplicitParams.maxPressureIters = 200;
+    config.igrParams.alphaCoeff = 10.0;
+    config.igrParams.IGRIters = 5;
+    config.validate();
 
     auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0, config);
 
@@ -104,23 +102,11 @@ int main() {
     SolutionState state;
     state.allocate(mesh.totalCells(), config);
 
-    IGRParams igrParams;
-    igrParams.alphaCoeff = 10.0;
-    igrParams.IGRIters = 5;
-    auto igrSolver = std::make_shared<IGRSolver>(igrParams);
-    auto riemannSolver  = std::make_shared<LFSolver>(eos, false, config);
+    auto igrSolver = std::make_shared<IGRSolver>(config.igrParams);
+    auto riemannSolver  = std::make_shared<LFSolver>(eos, config);
     auto pressureSolver = std::make_shared<GaussSeidelPressureSolver>();
 
-    SemiImplicitParams params;
-    params.cfl              = 0.8;
-    params.maxDt            = 1e-2;
-    params.maxPressureIters = 200;
-    SemiImplicitSolver solver(mesh, riemannSolver, pressureSolver, eos, igrSolver, params);
-
-    //ExplicitParams params;
-    //params.cfl = 0.5;
-    //params.reconOrder = ReconstructionOrder::UPWIND3;
-    //ExplicitSolver solver(mesh, riemannSolver, eos, igrSolver, params);
+    SemiImplicitSolver solver(mesh, riemannSolver, pressureSolver, eos, igrSolver, config);
 
     initializeProblem(mesh, state, *eos, xCenter, length);
 
@@ -135,9 +121,15 @@ int main() {
 
     // ---- Time integration ----
     double time = 0.0;
+    double stepTimeTotal = 0.0;
 
     while (time < endTime) {
+
+        auto t0 = std::chrono::high_resolution_clock::now();
         double dt = solver.step(config, mesh, state, endTime - time);
+        auto t1 = std::chrono::high_resolution_clock::now();
+        stepTimeTotal += std::chrono::duration<double>(t1 - t0).count();
+
         time += dt;
         config.step++;
 
@@ -164,6 +156,7 @@ int main() {
     }
 
     std::cout << "\nSimulation complete after " << config.step << " steps.\n";
+    std::cout << "Total time in solver.step(): " << stepTimeTotal << " s\n";
     VTKWriter::writePVD("VTK/1D_advection.pvd", "close");
 
     return 0;

@@ -14,32 +14,14 @@
 
 namespace SemiImplicitFV {
 
-struct ExplicitParams{
-    double cfl;               // CFL number (based on material velocity)
-    double constDt;           // Constant time step (if > 0, overrides CFL-based time step)
-    double maxDt;             // Maximum time step
-    double minDt;             // Minimum time step
-    bool useIGR;              // Enable IGR
-
-    ReconstructionOrder reconOrder = ReconstructionOrder::WENO1;
-
-    ExplicitParams()
-        : cfl(0.8)
-        , constDt(-1.0)
-        , maxDt(1e-4)
-        , minDt(1e-12)
-        , useIGR(true)
-    {}
-};
-
 class ExplicitSolver {
 public:
     ExplicitSolver(
         const RectilinearMesh& mesh,
         std::shared_ptr<RiemannSolver> riemannSolver,
         std::shared_ptr<EquationOfState> eos,
-        std::shared_ptr<IGRSolver> igrSolver = nullptr,
-        const ExplicitParams& params = ExplicitParams()
+        std::shared_ptr<IGRSolver> igrSolver,
+        const SimulationConfig& config
     );
 
     ~ExplicitSolver() = default;
@@ -48,8 +30,6 @@ public:
                 const RectilinearMesh& mesh,
                 SolutionState& state,
                 double targetDt = -1.0);
-
-    double computeAcousticTimeStep(const RectilinearMesh& mesh, SolutionState& state) const;
 
     RiemannSolver& riemannSolver() { return *riemannSolver_; }
     const EquationOfState& eos() const { return *eos_; }
@@ -73,10 +53,6 @@ private:
 
     void computeRHS(const SimulationConfig& config,
             const RectilinearMesh& mesh, SolutionState& state);
-
-    /// Returns the SSP-RK blending coefficient alpha for a given stage.
-    /// U = alpha * U^n + (1 - alpha) * U_current
-    double sspRKBlendCoeff(const SimulationConfig& config, int stage) const;
 
     void solveIGR(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state);
     void computeVelocityGradients(const SimulationConfig& config, const RectilinearMesh& mesh, const SolutionState& state);

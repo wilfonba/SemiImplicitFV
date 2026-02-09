@@ -1,5 +1,6 @@
 #include "GaussSeidelPressureSolver.hpp"
 #include "PressureLaplacian.hpp"
+#include <iostream>
 #include <cmath>
 #include <algorithm>
 
@@ -16,10 +17,11 @@ int GaussSeidelPressureSolver::solve(
     int maxIter
 ) {
     double dt2 = dt * dt;
+    double maxResidual = 0.0;
 
     for (int iter = 0; iter < maxIter; ++iter) {
         mesh.fillScalarGhosts(pressure);
-        double maxResidual = 0.0;
+        maxResidual = 0.0;
 
         for (int k = 0; k < mesh.nz(); ++k) {
             for (int j = 0; j < mesh.ny(); ++j) {
@@ -44,7 +46,7 @@ int GaussSeidelPressureSolver::solve(
             return iter + 1;
         }
     }
-
+    std::cout << maxResidual << std::endl;
     return maxIter;
 }
 

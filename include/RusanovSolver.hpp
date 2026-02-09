@@ -8,9 +8,8 @@ namespace SemiImplicitFV {
 class RusanovSolver : public RiemannSolver {
 public:
     explicit RusanovSolver(std::shared_ptr<EquationOfState> eos,
-                           bool includePressure = false,
                            const SimulationConfig& config = {})
-        : RiemannSolver(std::move(eos), includePressure, config) {}
+        : RiemannSolver(std::move(eos), config) {}
 
     RiemannFlux computeFlux(
         const PrimitiveState& left,
@@ -24,9 +23,7 @@ public:
         const std::array<double, 3>& normal
     ) const override;
 
-    std::string name() const override {
-        return includePressure_ ? "Rusanov" : "RusanovAdvective";
-    }
+    std::string name() const override { return "Rusanov"; }
 };
 
 } // namespace SemiImplicitFV
