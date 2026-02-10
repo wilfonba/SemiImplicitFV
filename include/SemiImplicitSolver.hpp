@@ -12,10 +12,7 @@
 #include "SimulationConfig.hpp"
 #include <memory>
 #include <vector>
-
-#ifdef ENABLE_MPI
 #include "HaloExchange.hpp"
-#endif
 
 namespace SemiImplicitFV {
 
@@ -37,9 +34,7 @@ public:
     // Perform one time step
     double step(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state, double targetDt = -1.0);
 
-#ifdef ENABLE_MPI
     void setHaloExchange(HaloExchange* halo) { halo_ = halo; }
-#endif
 
     // Access components
     RiemannSolver& riemannSolver() { return *riemannSolver_; }
@@ -59,9 +54,7 @@ private:
     int lastPressureIters_;
     Reconstructor reconstructor_;
 
-#ifdef ENABLE_MPI
     HaloExchange* halo_ = nullptr;
-#endif
 
     std::vector<double> pressureRhs_;
     std::vector<double> pressure_;

@@ -31,9 +31,7 @@ private:
     std::string dir_;
     int fileNum_ = 0;
 
-#ifdef ENABLE_MPI
     std::array<int,6> localExtent_ = {};
-#endif
 };
 
 } // namespace SemiImplicitFV

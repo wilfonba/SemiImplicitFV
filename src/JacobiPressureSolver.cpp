@@ -1,8 +1,6 @@
 #include "JacobiPressureSolver.hpp"
 #include "PressureLaplacian.hpp"
-#ifdef ENABLE_MPI
 #include "HaloExchange.hpp"
-#endif
 #include <cmath>
 #include <algorithm>
 
@@ -56,8 +54,6 @@ int JacobiPressureSolver::solve(
     return maxIter;
 }
 
-#ifdef ENABLE_MPI
-
 int JacobiPressureSolver::solve(
     const RectilinearMesh& mesh,
     const std::vector<double>& rho,
@@ -110,7 +106,5 @@ int JacobiPressureSolver::solve(
 
     return maxIter;
 }
-
-#endif // ENABLE_MPI
 
 } // namespace SemiImplicitFV

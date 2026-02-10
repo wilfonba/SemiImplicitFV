@@ -113,11 +113,9 @@ public:
     /// Call after setting the sharp IC and before the time loop.
     void smoothFields(const RectilinearMesh& mesh, int nIterations);
 
-#ifdef ENABLE_MPI
     /// MPI-aware version that exchanges halos each iteration.
     void smoothFields(const RectilinearMesh& mesh, int nIterations,
                       class HaloExchange& halo);
-#endif
 
 private:
     int dim_ = 3;

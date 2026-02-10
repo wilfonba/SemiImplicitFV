@@ -7,10 +7,7 @@
 #include "EquationOfState.hpp"
 
 #include <functional>
-
-#ifdef ENABLE_MPI
 #include <mpi.h>
-#endif
 
 namespace SemiImplicitFV {
 
@@ -30,7 +27,6 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
                                const EquationOfState& eos,
                                double cfl, double maxDt);
 
-#ifdef ENABLE_MPI
 // MPI-aware advective time step with global reduction.
 double computeAdvectiveTimeStep(const RectilinearMesh& mesh,
                                 const SolutionState& state,
@@ -43,7 +39,6 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
                                const EquationOfState& eos,
                                double cfl, double maxDt,
                                MPI_Comm comm);
-#endif
 
 // ---- Time loop ----
 

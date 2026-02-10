@@ -11,10 +11,7 @@
 #include "EquationOfState.hpp"
 #include <memory>
 #include <vector>
-
-#ifdef ENABLE_MPI
 #include "HaloExchange.hpp"
-#endif
 
 namespace SemiImplicitFV {
 
@@ -35,9 +32,7 @@ public:
                 SolutionState& state,
                 double targetDt = -1.0);
 
-#ifdef ENABLE_MPI
     void setHaloExchange(HaloExchange* halo) { halo_ = halo; }
-#endif
 
     RiemannSolver& riemannSolver() { return *riemannSolver_; }
     const EquationOfState& eos() const { return *eos_; }
@@ -50,9 +45,7 @@ private:
     ExplicitParams params_;
     Reconstructor reconstructor_;
 
-#ifdef ENABLE_MPI
     HaloExchange* halo_ = nullptr;
-#endif
 
     // RHS storage (flux divergence per conservative variable)
     std::vector<double> rhsRho_;

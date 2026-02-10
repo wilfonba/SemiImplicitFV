@@ -1,8 +1,6 @@
 #ifndef HALO_EXCHANGE_HPP
 #define HALO_EXCHANGE_HPP
 
-#ifdef ENABLE_MPI
-
 #include "MPIContext.hpp"
 #include "SolutionState.hpp"
 #include "RectilinearMesh.hpp"
@@ -66,5 +64,4 @@ private:
 
 } // namespace SemiImplicitFV
 
-#endif // ENABLE_MPI
 #endif // HALO_EXCHANGE_HPP

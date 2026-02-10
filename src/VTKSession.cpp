@@ -2,9 +2,7 @@
 #include "RectilinearMesh.hpp"
 #include "SolutionState.hpp"
 
-#ifdef ENABLE_MPI
 #include <mpi.h>
-#endif
 
 #include <vector>
 
@@ -14,9 +12,7 @@ VTKSession::VTKSession(Runtime& rt, const std::string& baseName,
                        const RectilinearMesh& mesh, const std::string& dir)
     : rt_(rt), mesh_(mesh), baseName_(baseName), dir_(dir)
 {
-#ifdef ENABLE_MPI
     localExtent_ = rt_.mpiContext().localExtent();
-#endif
 
     if (rt_.isRoot()) {
         VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "w");
@@ -24,7 +20,6 @@ VTKSession::VTKSession(Runtime& rt, const std::string& baseName,
 }
 
 void VTKSession::write(const SolutionState& state, double time) {
-#ifdef ENABLE_MPI
     int rank = rt_.rank();
     int nprocs = rt_.size();
 
@@ -52,11 +47,6 @@ void VTKSession::write(const SolutionState& state, double time) {
                              allExtents, allFiles);
         VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "a", time, pvtrFile);
     }
-#else
-    std::string vtrFile = baseName_ + "_" + std::to_string(fileNum_) + ".vtr";
-    VTKWriter::writeVTR(dir_ + "/" + vtrFile, mesh_, state);
-    VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "a", time, vtrFile);
-#endif
 
     fileNum_++;
 }

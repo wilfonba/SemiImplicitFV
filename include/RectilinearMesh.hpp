@@ -7,9 +7,7 @@
 #include <array>
 #include <cstddef>
 
-#ifdef ENABLE_MPI
 namespace SemiImplicitFV { class HaloExchange; }
-#endif
 
 namespace SemiImplicitFV {
 
@@ -127,14 +125,12 @@ public:
     /// Fill ghost cells for a single scalar field.
     void fillScalarGhosts(std::vector<double>& field) const;
 
-#ifdef ENABLE_MPI
     /// MPI-aware ghost fill: halo exchange + physical BCs on boundary faces only.
     void applyBoundaryConditions(SolutionState& state,
             VarSet varSet, HaloExchange& halo) const;
 
     /// MPI-aware scalar ghost fill.
     void fillScalarGhosts(std::vector<double>& field, HaloExchange& halo) const;
-#endif
 
 private:
     int dim_;

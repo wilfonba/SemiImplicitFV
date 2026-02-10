@@ -46,15 +46,8 @@ double ExplicitSolver::step(const SimulationConfig& config,
     if (params_.constDt > 0) {
         dt = params_.constDt;
     } else {
-#ifdef ENABLE_MPI
-        if (halo_) {
-            dt = SemiImplicitFV::computeAcousticTimeStep(
-                mesh, state, *eos_, params_.cfl, params_.maxDt, halo_->mpi().comm());
-        } else
-#endif
-        {
-            dt = SemiImplicitFV::computeAcousticTimeStep(mesh, state, *eos_, params_.cfl, params_.maxDt);
-        }
+        dt = SemiImplicitFV::computeAcousticTimeStep(
+            mesh, state, *eos_, params_.cfl, params_.maxDt, halo_->mpi().comm());
     }
 
     if (targetDt > 0) {
@@ -77,14 +70,7 @@ double ExplicitSolver::step(const SimulationConfig& config,
     for (int s = 0; s < config.RKOrder; ++s) {
 
         state.convertConservativeToPrimitiveVariables(mesh, eos_);
-#ifdef ENABLE_MPI
-        if (halo_) {
-            mesh.applyBoundaryConditions(state, VarSet::PRIM, *halo_);
-        } else
-#endif
-        {
-            mesh.applyBoundaryConditions(state, VarSet::PRIM);
-        }
+        mesh.applyBoundaryConditions(state, VarSet::PRIM, *halo_);
 
         if (config.useIGR && igrSolver_) solveIGR(config, mesh, state);
 
@@ -136,14 +122,7 @@ void ExplicitSolver::solveIGR(const SimulationConfig& config,
 
     computeVelocityGradients(config, mesh, state);
 
-#ifdef ENABLE_MPI
-    if (halo_) {
-        igrSolver_->solveEntropicPressure(config, mesh, state, gradU_, *halo_);
-    } else
-#endif
-    {
-        igrSolver_->solveEntropicPressure(config, mesh, state, gradU_);
-    }
+    igrSolver_->solveEntropicPressure(config, mesh, state, gradU_, *halo_);
 }
 
 void ExplicitSolver::computeVelocityGradients(const SimulationConfig& config, const RectilinearMesh& mesh, const SolutionState& state) {

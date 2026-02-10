@@ -6,9 +6,7 @@
 #include <string>
 #include <vector>
 
-#ifdef ENABLE_MPI
 namespace SemiImplicitFV { class HaloExchange; }
-#endif
 
 namespace SemiImplicitFV {
 
@@ -27,7 +25,6 @@ public:
         int maxIter
     ) = 0;
 
-#ifdef ENABLE_MPI
     virtual int solve(
         const RectilinearMesh& mesh,
         const std::vector<double>& rho,
@@ -39,7 +36,6 @@ public:
         int maxIter,
         HaloExchange& halo
     ) = 0;
-#endif
 
     virtual std::string name() const = 0;
 };

@@ -8,11 +8,8 @@
 #include <iostream>
 #include <sstream>
 #include <memory>
-
-#ifdef ENABLE_MPI
 #include "MPIContext.hpp"
 #include "HaloExchange.hpp"
-#endif
 
 namespace SemiImplicitFV {
 
@@ -83,20 +80,16 @@ public:
     int globalNy() const { return globalNy_; }
     int globalNz() const { return globalNz_; }
 
-#ifdef ENABLE_MPI
     const MPIContext& mpiContext() const { return *mpiCtx_; }
     HaloExchange* haloExchange() { return halo_.get(); }
-#endif
 
 private:
     int rank_ = 0;
     int size_ = 1;
     int globalNx_ = 0, globalNy_ = 0, globalNz_ = 0;
 
-#ifdef ENABLE_MPI
     std::unique_ptr<MPIContext> mpiCtx_;
     std::unique_ptr<HaloExchange> halo_;
-#endif
 };
 
 } // namespace SemiImplicitFV

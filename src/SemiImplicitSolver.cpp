@@ -72,30 +72,15 @@ void SemiImplicitSolver::writeStarToState(const RectilinearMesh& mesh, SolutionS
             }
         }
     }
-#ifdef ENABLE_MPI
-    if (halo_) {
-        mesh.applyBoundaryConditions(state, VarSet::PRIM, *halo_);
-    } else
-#endif
-    {
-        mesh.applyBoundaryConditions(state);
-    }
+    mesh.applyBoundaryConditions(state, VarSet::PRIM, *halo_);
 }
 
 double SemiImplicitSolver::step(const SimulationConfig& config,
         const RectilinearMesh& mesh,
         SolutionState& state,
         double targetDt) {
-    double dt;
-#ifdef ENABLE_MPI
-    if (halo_) {
-        dt = SemiImplicitFV::computeAdvectiveTimeStep(
-            mesh, state, params_.cfl, params_.maxDt, halo_->mpi().comm());
-    } else
-#endif
-    {
-        dt = SemiImplicitFV::computeAdvectiveTimeStep(mesh, state, params_.cfl, params_.maxDt);
-    }
+    double dt = SemiImplicitFV::computeAdvectiveTimeStep(
+        mesh, state, params_.cfl, params_.maxDt, halo_->mpi().comm());
     if (targetDt > 0) {
         dt = std::min(dt, targetDt);
     }
@@ -117,14 +102,7 @@ double SemiImplicitSolver::step(const SimulationConfig& config,
     for (int s = 0; s < config.RKOrder; ++s) {
 
         state.convertConservativeToPrimitiveVariables(mesh, eos_);
-#ifdef ENABLE_MPI
-        if (halo_) {
-            mesh.applyBoundaryConditions(state, VarSet::PRIM, *halo_);
-        } else
-#endif
-        {
-            mesh.applyBoundaryConditions(state, VarSet::PRIM);
-        }
+        mesh.applyBoundaryConditions(state, VarSet::PRIM, *halo_);
 
         if (config.useIGR && igrSolver_) solveIGR(config, mesh, state);
 
@@ -174,14 +152,7 @@ double SemiImplicitSolver::step(const SimulationConfig& config,
         }
 
         // Re-fill ghost cells (density + star velocity) before pressure solve
-#ifdef ENABLE_MPI
-        if (halo_) {
-            mesh.applyBoundaryConditions(state, VarSet::PRIM, *halo_);
-        } else
-#endif
-        {
-            mesh.applyBoundaryConditions(state, VarSet::PRIM);
-        }
+        mesh.applyBoundaryConditions(state, VarSet::PRIM, *halo_);
 
         solvePressure(mesh, state, dt);
         correctionStep(mesh, state, dt);
@@ -361,14 +332,7 @@ void SemiImplicitSolver::solveIGR(const SimulationConfig& config,
 
     computeVelocityGradients(config, mesh, state);
 
-#ifdef ENABLE_MPI
-    if (halo_) {
-        igrSolver_->solveEntropicPressure(config, mesh, state, gradU_, *halo_);
-    } else
-#endif
-    {
-        igrSolver_->solveEntropicPressure(config, mesh, state, gradU_);
-    }
+    igrSolver_->solveEntropicPressure(config, mesh, state, gradU_, *halo_);
 }
 
 void SemiImplicitSolver::solvePressure(const RectilinearMesh& mesh, SolutionState& state, double dt) {
@@ -399,29 +363,12 @@ void SemiImplicitSolver::solvePressure(const RectilinearMesh& mesh, SolutionStat
             for (int i = 0; i < mesh.nx(); ++i)
                 pressure_[mesh.index(i, j, k)] = state.pres[mesh.index(i, j, k)];
 
-#ifdef ENABLE_MPI
-    if (halo_) {
-        lastPressureIters_ = pressureSolver_->solve(
-            mesh, state.rho, state.rhoc2, pressureRhs_, pressure_,
-            dt, params_.pressureTol, params_.maxPressureIters, *halo_);
-    } else
-#endif
-    {
-        lastPressureIters_ = pressureSolver_->solve(
-            mesh, state.rho, state.rhoc2, pressureRhs_, pressure_,
-            dt, params_.pressureTol, params_.maxPressureIters);
-    }
+    lastPressureIters_ = pressureSolver_->solve(
+        mesh, state.rho, state.rhoc2, pressureRhs_, pressure_,
+        dt, params_.pressureTol, params_.maxPressureIters, *halo_);
 
-#ifdef ENABLE_MPI
-    if (halo_) {
-        mesh.fillScalarGhosts(pressure_, *halo_);
-        mesh.fillScalarGhosts(state.sigma, *halo_);
-    } else
-#endif
-    {
-        mesh.fillScalarGhosts(pressure_);
-        mesh.fillScalarGhosts(state.sigma);
-    }
+    mesh.fillScalarGhosts(pressure_, *halo_);
+    mesh.fillScalarGhosts(state.sigma, *halo_);
 
     for (int k = 0; k < mesh.nz(); ++k)
         for (int j = 0; j < mesh.ny(); ++j)
@@ -487,14 +434,7 @@ void SemiImplicitSolver::correctionStep(const RectilinearMesh& mesh, SolutionSta
             }
         }
     }
-#ifdef ENABLE_MPI
-    if (halo_) {
-        mesh.applyBoundaryConditions(state, VarSet::PRIM, *halo_);
-    } else
-#endif
-    {
-        mesh.applyBoundaryConditions(state);
-    }
+    mesh.applyBoundaryConditions(state, VarSet::PRIM, *halo_);
 
     // Reconstruct total energy from solved pressure and corrected velocity.
     // This avoids the unstable div(p*u) finite difference which can produce

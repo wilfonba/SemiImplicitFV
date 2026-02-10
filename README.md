@@ -9,7 +9,7 @@ A finite volume solver for the compressible Euler equations on rectilinear meshe
 - **Riemann solvers** — Lax-Friedrichs, Rusanov, and HLLC
 - **Equations of state** — Ideal gas and stiffened gas
 - **Information Geometric Regularization (IGR)** — Entropic pressure via elliptic solve for improved stability
-- **1D / 2D / 3D** on rectilinear (non-uniform) meshes with ghost cells
+- **1D / 2D / 3D** on rectilinear (uniform) meshes with ghost cells
 - **Boundary conditions** — Periodic, Reflective, Outflow, Slip Wall, No-Slip Wall
 - **MPI parallelism** — Cartesian domain decomposition with non-blocking halo exchange
 - **VTK output** — `.vtr` (serial), `.pvtr` (parallel), and `.pvd` (time series) for ParaView
@@ -41,10 +41,8 @@ Output VTK files are written to a `VTK/` directory inside the example folder. Op
 
 - CMake 3.14+
 - C++17 compiler
-- MPI (optional, for distributed parallelism)
+- MPI implementation (e.g., Open MPI, MPICH)
 - OpenMP (optional)
-
-No external libraries are required beyond the compiler and optionally MPI.
 
 ### CMake Options
 
@@ -52,18 +50,15 @@ No external libraries are required beyond the compiler and optionally MPI.
 |---|---|---|
 | `BUILD_EXAMPLES` | `ON` | Build example programs in `examples/` |
 | `BUILD_TESTS` | `OFF` | Build tests |
-| `ENABLE_MPI` | `OFF` | Enable MPI support |
 | `ENABLE_OPENMP` | `OFF` | Enable OpenMP support |
+
+MPI is always required and linked automatically.
 
 ```bash
 mkdir build && cd build
 
 # Release build (default)
 cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j
-
-# With MPI
-cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_MPI=ON
 make -j
 
 # Debug build (enables AddressSanitizer automatically)
@@ -76,30 +71,12 @@ make -j
 The `run_case.sh` script handles configuring, building, and running any example:
 
 ```bash
-./run_case.sh 1D_sod_shocktube              # Build and run
+./run_case.sh 1D_sod_shocktube              # Build and run (1 MPI rank)
 ./run_case.sh --debug 1D_advection           # Debug build
-./run_case.sh --mpi -n 4 1D_sod_shocktube   # Run with 4 MPI ranks
+./run_case.sh -n 4 1D_sod_shocktube         # Run with 4 MPI ranks
 ./run_case.sh --build-only 2D_riemann        # Build without running
 ./run_case.sh --list                         # List available cases
 ```
-
-## Examples
-
-### 1D Sod Shock Tube (`1D_sod_shocktube`)
-
-Classic Sod shock tube problem. Explicit RK3, 3rd-order upwind reconstruction, Lax-Friedrichs Riemann solver, 100 cells, outflow boundary conditions.
-
-### 1D Advection (`1D_advection`)
-
-Low-Mach Gaussian density pulse advected across a periodic domain. Semi-implicit solver with IGR, demonstrating the pressure-split scheme at Mach ~0.15.
-
-### 2D Quasi-1D Sod (`2D_quasi1D_sod`)
-
-Sod shock tube on a 200x200 2D grid, verifying that the 2D solver correctly reduces to the 1D solution. Explicit RK3, 5th-order upwind reconstruction.
-
-### 2D Riemann Problem (`2D_riemann`)
-
-Four-quadrant 2D Riemann problem on a 500x500 grid producing complex wave interaction patterns. Explicit RK3, WENO5 reconstruction, HLLC Riemann solver.
 
 ## Configuration
 
@@ -211,18 +188,16 @@ Rebuild, and the new executable appears automatically:
 
 ## MPI Execution
 
-Build with MPI enabled and run with `mpirun`:
+MPI is always linked. Run with `mpirun`:
 
 ```bash
-cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_MPI=ON
-make -j
 mpirun -np 4 ./build/2D_riemann
 ```
 
 Or via the helper script:
 
 ```bash
-./run_case.sh --mpi -n 4 2D_riemann
+./run_case.sh -n 4 2D_riemann
 ```
 
 The `Runtime` class handles domain decomposition, halo exchange, and parallel VTK output automatically. Each rank writes its own `.vtr` piece file, and rank 0 writes the `.pvtr` and `.pvd` metadata files.

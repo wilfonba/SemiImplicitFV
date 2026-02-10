@@ -9,7 +9,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(BUILD_EXAMPLES "Build example programs" ON)
 option(BUILD_TESTS "Build unit tests" OFF)
 option(ENABLE_OPENMP "Enable OpenMP parallelization" OFF)
-option(ENABLE_MPI "Enable MPI parallelization" OFF)
 
 # Compiler flags
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -28,9 +27,7 @@ if(ENABLE_OPENMP)
 endif()
 
 # MPI
-if(ENABLE_MPI)
-    find_package(MPI REQUIRED)
-endif()
+find_package(MPI REQUIRED)
 
 # Library sources
 set(LIB_SOURCES
@@ -67,10 +64,7 @@ if(ENABLE_OPENMP)
     target_link_libraries(SemiImplicitFV PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
-if(ENABLE_MPI)
-    target_link_libraries(SemiImplicitFV PUBLIC MPI::MPI_CXX)
-    target_compile_definitions(SemiImplicitFV PUBLIC ENABLE_MPI)
-endif()
+target_link_libraries(SemiImplicitFV PUBLIC MPI::MPI_CXX)
 
 # Examples — auto-discover every examples/<case>/*.cpp
 if(BUILD_EXAMPLES)

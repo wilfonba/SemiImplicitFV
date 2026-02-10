@@ -62,8 +62,6 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
     return dt;
 }
 
-#ifdef ENABLE_MPI
-
 double computeAdvectiveTimeStep(const RectilinearMesh& mesh,
                                 const SolutionState& state,
                                 double cfl, double maxDt,
@@ -84,8 +82,6 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
     MPI_Allreduce(&localDt, &globalDt, 1, MPI_DOUBLE, MPI_MIN, comm);
     return globalDt;
 }
-
-#endif // ENABLE_MPI
 
 void runTimeLoop(
     Runtime& rt,

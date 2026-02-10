@@ -1,7 +1,5 @@
 #include "IGR.hpp"
-#ifdef ENABLE_MPI
 #include "HaloExchange.hpp"
-#endif
 #include <cmath>
 #include <algorithm>
 #include <iostream>
@@ -98,8 +96,6 @@ void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
     }
 }
 
-#ifdef ENABLE_MPI
-
 void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
         const RectilinearMesh& mesh,
         SolutionState& state,
@@ -155,8 +151,6 @@ void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
         mesh.fillScalarGhosts(state.sigma, halo);
     }
 }
-
-#endif // ENABLE_MPI
 
 GradientTensor IGRSolver::computeVelocityGradient(
     const std::array<double, 3>& u_xm,

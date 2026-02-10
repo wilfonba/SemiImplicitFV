@@ -7,9 +7,7 @@
 #include <array>
 #include <string>
 
-#ifdef ENABLE_MPI
 namespace SemiImplicitFV { class HaloExchange; }
-#endif
 
 namespace SemiImplicitFV {
 
@@ -44,13 +42,11 @@ public:
             SolutionState& state,
             std::vector<GradientTensor> gradU);
 
-#ifdef ENABLE_MPI
     void solveEntropicPressure(const SimulationConfig& config,
             const RectilinearMesh& mesh,
             SolutionState& state,
             std::vector<GradientTensor> gradU,
             HaloExchange& halo);
-#endif
 
     // Compute velocity gradient tensor from cell-centered velocities
     // Uses central differences

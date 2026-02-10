@@ -1,5 +1,3 @@
-#ifdef ENABLE_MPI
-
 #include "HaloExchange.hpp"
 #include <algorithm>
 
@@ -458,5 +456,3 @@ void HaloExchange::exchangeState(SolutionState& state, VarSet varSet) {
 }
 
 } // namespace SemiImplicitFV
-
-#endif // ENABLE_MPI

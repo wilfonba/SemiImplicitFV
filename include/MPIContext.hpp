@@ -1,8 +1,6 @@
 #ifndef MPI_CONTEXT_HPP
 #define MPI_CONTEXT_HPP
 
-#ifdef ENABLE_MPI
-
 #include <mpi.h>
 #include <array>
 #include <vector>
@@ -104,5 +102,4 @@ private:
 
 } // namespace SemiImplicitFV
 
-#endif // ENABLE_MPI
 #endif // MPI_CONTEXT_HPP

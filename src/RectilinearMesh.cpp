@@ -1,8 +1,6 @@
 #include "RectilinearMesh.hpp"
 #include "SimulationConfig.hpp"
-#ifdef ENABLE_MPI
 #include "HaloExchange.hpp"
-#endif
 #include <iostream>
 #include <algorithm>
 #include <stdexcept>
@@ -497,8 +495,6 @@ void RectilinearMesh::fillScalarGhosts(std::vector<double>& field) const {
 // MPI-aware boundary conditions
 // ---------------------------------------------------------------------------
 
-#ifdef ENABLE_MPI
-
 void RectilinearMesh::applyBoundaryConditions(SolutionState& state,
         VarSet varSet, HaloExchange& halo) const {
     // Onion-peel: for each direction, first exchange halos, then apply
@@ -626,7 +622,5 @@ void RectilinearMesh::fillScalarGhosts(std::vector<double>& field,
         }
     }
 }
-
-#endif // ENABLE_MPI
 
 } // namespace SemiImplicitFV

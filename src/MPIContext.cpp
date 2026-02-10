@@ -1,5 +1,3 @@
-#ifdef ENABLE_MPI
-
 #include "MPIContext.hpp"
 #include <stdexcept>
 #include <algorithm>
@@ -172,5 +170,3 @@ MPIContext MPIContext::create(int globalNx, int globalNy, int globalNz,
 }
 
 } // namespace SemiImplicitFV
-
-#endif // ENABLE_MPI

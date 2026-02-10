@@ -1,8 +1,6 @@
 #include "GaussSeidelPressureSolver.hpp"
 #include "PressureLaplacian.hpp"
-#ifdef ENABLE_MPI
 #include "HaloExchange.hpp"
-#endif
 #include <iostream>
 #include <cmath>
 #include <algorithm>
@@ -52,8 +50,6 @@ int GaussSeidelPressureSolver::solve(
     //std::cout << maxResidual << std::endl;
     return maxIter;
 }
-
-#ifdef ENABLE_MPI
 
 int GaussSeidelPressureSolver::solve(
     const RectilinearMesh& mesh,
@@ -105,7 +101,5 @@ int GaussSeidelPressureSolver::solve(
     }
     return maxIter;
 }
-
-#endif // ENABLE_MPI
 
 } // namespace SemiImplicitFV

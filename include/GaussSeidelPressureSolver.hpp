@@ -21,7 +21,6 @@ public:
         int maxIter
     ) override;
 
-#ifdef ENABLE_MPI
     int solve(
         const RectilinearMesh& mesh,
         const std::vector<double>& rho,
@@ -33,7 +32,6 @@ public:
         int maxIter,
         HaloExchange& halo
     ) override;
-#endif
 
     std::string name() const override { return "GaussSeidel"; }
 };

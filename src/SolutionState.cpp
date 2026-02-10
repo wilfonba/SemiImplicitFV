@@ -272,7 +272,6 @@ void SolutionState::smoothFields(const RectilinearMesh& mesh, int nIterations) {
     smoothField(temp);
 }
 
-#ifdef ENABLE_MPI
 #include "HaloExchange.hpp"
 
 void SolutionState::smoothFields(const RectilinearMesh& mesh, int nIterations,
@@ -331,7 +330,5 @@ void SolutionState::smoothFields(const RectilinearMesh& mesh, int nIterations,
     smoothField(pres);
     smoothField(temp);
 }
-
-#endif // ENABLE_MPI
 
 } // namespace SemiImplicitFV
