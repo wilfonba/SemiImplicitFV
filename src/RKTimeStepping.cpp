@@ -102,12 +102,18 @@ void runTimeLoop(
     rt.print("Running simulation to t = ", params.endTime, "...\n");
 
     double time = 0.0;
-    int fileNum = 1;
+    double nextOutput = params.outputInterval;
     double wallTotal = 0.0;
 
     while (time < params.endTime) {
+        // Clamp dt to hit the next output time or endTime exactly
+        double targetDt = params.endTime - time;
+        if (nextOutput < params.endTime) {
+            targetDt = std::min(targetDt, nextOutput - time);
+        }
+
         auto t0 = std::chrono::high_resolution_clock::now();
-        double dt = stepFn(params.endTime - time);
+        double dt = stepFn(targetDt);
         auto t1 = std::chrono::high_resolution_clock::now();
         double stepWall = std::chrono::duration<double>(t1 - t0).count();
         wallTotal += stepWall;
@@ -115,9 +121,9 @@ void runTimeLoop(
         time += dt;
         config.step++;
 
-        if (std::abs(time - fileNum * params.outputInterval) <= dt) {
+        if (time >= nextOutput - 1e-12 * params.outputInterval) {
             vtk.write(state, time);
-            fileNum++;
+            nextOutput += params.outputInterval;
         }
 
         if (config.step % params.printInterval == 0 || config.step == 1) {

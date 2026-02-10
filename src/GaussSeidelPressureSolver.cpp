@@ -49,7 +49,7 @@ int GaussSeidelPressureSolver::solve(
             return iter + 1;
         }
     }
-    std::cout << maxResidual << std::endl;
+    //std::cout << maxResidual << std::endl;
     return maxIter;
 }
 
@@ -101,7 +101,7 @@ int GaussSeidelPressureSolver::solve(
         }
     }
     if (halo.mpi().rank() == 0) {
-        std::cout << maxResidual << std::endl;
+        //std::cout << maxResidual << std::endl;
     }
     return maxIter;
 }

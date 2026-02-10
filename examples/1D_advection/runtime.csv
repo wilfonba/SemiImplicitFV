@@ -1,5 +1,0 @@
-Case,          CFL, Runtime (s), Steps,  Approx Acoustic CFL, Speedup
-Explicit,      0.8, 121.8,       427000, 
-Semi-Implicit, 0.1, 69.04,       10000,
-Semi-Implicit, 0.2, 33.57,       5000,
-Semi-Implicit, 0.4, 18.63,       2500,

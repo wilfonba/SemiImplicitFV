@@ -161,7 +161,8 @@ double SemiImplicitSolver::step(const SimulationConfig& config,
                         state.rhoWStar[idx] = (c1 * state.rhoW[idx] + c2 * rhoW0 + c3 * dt * rhsRhoW_[idx]) / c4;
                     }
                     state.rhoEstar[idx] = (c1 * state.rhoE[idx] + c2 * rhoE0 + c3 * dt * rhsRhoE_[idx])  / c4;
-                    state.pAdvected[idx] = (c1 * state.pAdvected[idx] + c2 * state.pAdvected[idx] + c3 * dt * rhsPadvected_[idx]) / c4;
+                    double p0 = (config.RKOrder > 1) ? state.pres0[idx] : 0.0;
+                    state.pAdvected[idx] = (c1 * state.pAdvected[idx] + c2 * p0 + c3 * dt * rhsPadvected_[idx]) / c4;
 
                     // Compute star velocities for divergence computation
                     double rhoSafe = std::max(state.rho[idx], 1e-14);

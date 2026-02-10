@@ -91,6 +91,7 @@ public:
     std::vector<double> rhoV0;
     std::vector<double> rhoW0;
     std::vector<double> rhoE0;
+    std::vector<double> pres0;
 
     // Start state for semi-implicit solve
     std::vector<double> rhoUStar;

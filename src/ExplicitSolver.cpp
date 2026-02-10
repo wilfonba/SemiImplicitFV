@@ -104,13 +104,23 @@ double ExplicitSolver::step(const SimulationConfig& config,
                         state.saveConservativeCell(idx);
                     }
 
-                    state.rho[idx]  = (c1 * state.rho[idx]  + c2 * state.rho0[idx]  + c3 * dt * rhsRho_[idx])  / c4;
-                    state.rhoU[idx] = (c1 * state.rhoU[idx] + c2 * state.rhoU0[idx] + c3 * dt * rhsRhoU_[idx]) / c4;
-                    if (config.dim >= 2)
-                        state.rhoV[idx] = (c1 * state.rhoV[idx] + c2 * state.rhoV0[idx] + c3 * dt * rhsRhoV_[idx]) / c4;
-                    if (config.dim >= 3)
-                        state.rhoW[idx] = (c1 * state.rhoW[idx] + c2 * state.rhoW0[idx] + c3 * dt * rhsRhoW_[idx]) / c4;
-                    state.rhoE[idx] = (c1 * state.rhoE[idx] + c2 * state.rhoE0[idx] + c3 * dt * rhsRhoE_[idx]) / c4;
+                    if (config.RKOrder == 1) {
+                        state.rho[idx]  += dt * rhsRho_[idx];
+                        state.rhoU[idx] += dt * rhsRhoU_[idx];
+                        if (config.dim >= 2)
+                            state.rhoV[idx] += dt * rhsRhoV_[idx];
+                        if (config.dim >= 3)
+                            state.rhoW[idx] += dt * rhsRhoW_[idx];
+                        state.rhoE[idx] += dt * rhsRhoE_[idx];
+                    } else {
+                        state.rho[idx]  = (c1 * state.rho[idx]  + c2 * state.rho0[idx]  + c3 * dt * rhsRho_[idx])  / c4;
+                        state.rhoU[idx] = (c1 * state.rhoU[idx] + c2 * state.rhoU0[idx] + c3 * dt * rhsRhoU_[idx]) / c4;
+                        if (config.dim >= 2)
+                            state.rhoV[idx] = (c1 * state.rhoV[idx] + c2 * state.rhoV0[idx] + c3 * dt * rhsRhoV_[idx]) / c4;
+                        if (config.dim >= 3)
+                            state.rhoW[idx] = (c1 * state.rhoW[idx] + c2 * state.rhoW0[idx] + c3 * dt * rhsRhoW_[idx]) / c4;
+                        state.rhoE[idx] = (c1 * state.rhoE[idx] + c2 * state.rhoE0[idx] + c3 * dt * rhsRhoE_[idx]) / c4;
+                    }
                 }
             }
         }

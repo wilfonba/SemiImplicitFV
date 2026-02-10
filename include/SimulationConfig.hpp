@@ -74,9 +74,6 @@ struct SimulationConfig {
         if (RKOrder < 1 || RKOrder > 3)
             throw std::invalid_argument("RKOrder must be 1, 2, or 3 (got " + std::to_string(RKOrder) + ")");
 
-        if (semiImplicit && RKOrder > 1)
-            throw std::invalid_argument("semiImplicit requires RKOrder=1 (SSP-RK blending not supported for pressure-split scheme)");
-
         int reqGhost = requiredGhostCells();
         if (nGhost < reqGhost)
             throw std::invalid_argument("nGhost=" + std::to_string(nGhost)

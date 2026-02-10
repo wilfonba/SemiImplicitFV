@@ -52,6 +52,7 @@ void SolutionState::allocate(std::size_t totalCells, const SimulationConfig& con
         rhoE0.assign(totalCells, 0.0);
         if (dim_ >= 2) rhoV0.assign(totalCells, 0.0); else rhoV0.clear();
         if (dim_ >= 3) rhoW0.assign(totalCells, 0.0); else rhoW0.clear();
+        pres0.assign(totalCells, 0.0);
     }
 }
 
@@ -206,6 +207,7 @@ void SolutionState::saveConservativeCell(std::size_t idx) {
     if (dim_ >= 2) rhoV0[idx] = rhoV[idx];
     if (dim_ >= 3) rhoW0[idx] = rhoW[idx];
     rhoE0[idx] = rhoE[idx];
+    pres0[idx] = pres[idx];
 }
 
 void SolutionState::smoothFields(const RectilinearMesh& mesh, int nIterations) {
