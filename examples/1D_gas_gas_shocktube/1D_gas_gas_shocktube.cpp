@@ -2,6 +2,7 @@
 #include "SolutionState.hpp"
 #include "State.hpp"
 #include "LFSolver.hpp"
+#include "HLLCSolver.hpp"
 #include "ExplicitSolver.hpp"
 #include "IGR.hpp"
 #include "IdealGasEOS.hpp"
@@ -75,9 +76,9 @@ int main(int argc, char** argv) {
 
     SimulationConfig config;
     config.dim = 1;
-    config.nGhost = 2;
-    config.RKOrder = 1;
-    config.reconOrder = ReconstructionOrder::WENO1;
+    config.nGhost = 4;
+    config.RKOrder = 3;
+    config.reconOrder = ReconstructionOrder::WENO5;
     config.explicitParams.cfl = 0.5;
     config.explicitParams.maxDt = 1e-2;
 

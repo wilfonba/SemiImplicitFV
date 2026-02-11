@@ -2,6 +2,7 @@
 #include "SolutionState.hpp"
 #include "State.hpp"
 #include "LFSolver.hpp"
+#include "HLLCSolver.hpp"
 #include "ExplicitSolver.hpp"
 #include "IdealGasEOS.hpp"
 #include "MixtureEOS.hpp"
@@ -87,7 +88,7 @@ int main(int argc, char** argv) {
     config.RKOrder = 3;
     config.reconOrder = ReconstructionOrder::WENO5;
     config.explicitParams.cfl = 0.5;
-    config.explicitParams.maxDt = 1e-4;
+    config.explicitParams.maxDt = 1e-6;
 
     // Two-phase stiffened-gas setup
     // Phase 0 = water (gamma=4.4, pInf=6e8)
@@ -114,7 +115,7 @@ int main(int argc, char** argv) {
 
     // Fallback EOS (not primary for multi-phase)
     auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0, config);
-    auto riemannSolver = std::make_shared<LFSolver>(eos, config);
+    auto riemannSolver = std::make_shared<HLLCSolver>(eos, config);
 
     ExplicitSolver solver(mesh, riemannSolver, eos, nullptr, config);
     rt.attachSolver(solver, mesh);
