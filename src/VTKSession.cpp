@@ -42,9 +42,10 @@ void VTKSession::write(const SolutionState& state, double time) {
                         + "_r" + std::to_string(r) + ".vtr";
         }
         std::string pvtrFile = baseName_ + "_" + std::to_string(fileNum_) + ".pvtr";
+        int nPhases = static_cast<int>(state.alphaRho.size());
         VTKWriter::writePVTR(dir_ + "/" + pvtrFile,
                              rt_.globalNx(), rt_.globalNy(), rt_.globalNz(),
-                             allExtents, allFiles);
+                             allExtents, allFiles, nPhases);
         VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "a", time, pvtrFile);
     }
 

@@ -66,9 +66,9 @@ private:
     std::vector<PrimitiveState> yLeft_, yRight_;
     std::vector<PrimitiveState> zLeft_, zRight_;
 
-    void reconstructX(const RectilinearMesh& mesh, const SolutionState& state);
-    void reconstructY(const RectilinearMesh& mesh, const SolutionState& state);
-    void reconstructZ(const RectilinearMesh& mesh, const SolutionState& state);
+    void reconstructX(const SimulationConfig& config, const RectilinearMesh& mesh, const SolutionState& state);
+    void reconstructY(const SimulationConfig& config, const RectilinearMesh& mesh, const SolutionState& state);
+    void reconstructZ(const SimulationConfig& config, const RectilinearMesh& mesh, const SolutionState& state);
 
     static double weno3Left(const double* v, double eps);
     static double weno3Right(const double* v, double eps);

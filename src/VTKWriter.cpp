@@ -153,6 +153,14 @@ void VTKWriter::writeVTR(const std::string& filename,
     writeVector("Velocity", state.velU, state.velV, state.velW);
     writeVector("Momentum", state.rhoU, state.rhoV, state.rhoW);
 
+    // Multi-phase fields
+    for (std::size_t ph = 0; ph < state.alphaRho.size(); ++ph) {
+        writeScalar("AlphaRho_" + std::to_string(ph), state.alphaRho[ph]);
+    }
+    for (std::size_t ph = 0; ph < state.alpha.size(); ++ph) {
+        writeScalar("Alpha_" + std::to_string(ph), state.alpha[ph]);
+    }
+
     // MPI rank field (only when rank >= 0)
     if (rank >= 0) {
         file << "        <DataArray type=\"Int32\" Name=\"Rank\" format=\"ascii\">\n";
@@ -179,7 +187,8 @@ void VTKWriter::writeVTR(const std::string& filename,
 void VTKWriter::writePVTR(const std::string& filename,
                           int globalNx, int globalNy, int globalNz,
                           const std::vector<std::array<int,6>>& pieceExtents,
-                          const std::vector<std::string>& pieceFiles)
+                          const std::vector<std::string>& pieceFiles,
+                          int nPhases)
 {
     ensureParentDir(filename);
     std::ofstream file(filename);
@@ -209,6 +218,12 @@ void VTKWriter::writePVTR(const std::string& filename,
     file << "      <PDataArray type=\"Float64\" Name=\"TotalEnergy\"/>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"Velocity\" NumberOfComponents=\"3\"/>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"Momentum\" NumberOfComponents=\"3\"/>\n";
+    for (int ph = 0; ph < nPhases; ++ph) {
+        file << "      <PDataArray type=\"Float64\" Name=\"AlphaRho_" << ph << "\"/>\n";
+    }
+    for (int ph = 0; ph < nPhases - 1; ++ph) {
+        file << "      <PDataArray type=\"Float64\" Name=\"Alpha_" << ph << "\"/>\n";
+    }
     file << "      <PDataArray type=\"Int32\" Name=\"Rank\"/>\n";
     file << "    </PCellData>\n";
 

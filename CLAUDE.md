@@ -32,11 +32,13 @@ CMake options:
 
 **EOS**: `IdealGasEOS` and `StiffenedGasEOS`, both inherit from `EquationOfState`.
 
+**Multi-phase**: `MixtureEOS` namespace (`MixtureEOS.hpp` / `MixtureEOS.cpp`) provides N-phase mixture routines — effective gamma/piInf from volume fractions, Wood's mixture sound speed, mixture pressure, and mixture total energy. Enabled by setting `config.multiPhaseParams.nPhases >= 2` with per-phase `{gamma, pInf}` in `PhaseEOS`. Volume fractions (`alpha[k]` for k=0..nPhases-2) and partial densities (`alphaRho[k]` for k=0..nPhases-1) are stored in `SolutionState` and reconstructed to faces. At faces, `gammaEff` and `piInfEff` are computed from reconstructed alphas via `MixtureEOS::effectiveGammaAndPiInf()`. Cell-center sound speed uses the full Wood's formula.
+
 **IGR**: `IGRSolver` computes entropic pressure via Gauss-Seidel iteration on the elliptic equation. Controlled by `SimulationConfig::useIGR` and `IGRParams`.
 
 **Mesh**: `RectilinearMesh` with ghost cells and boundary conditions (Periodic, Reflective, Outflow).
 
-**Output**: `VTKWriter` produces `.vtr` and `.pvd` files.
+**Output**: `VTKWriter` produces `.vtr` and `.pvd` files. Multi-phase fields (`Alpha_k`, `AlphaRho_k`) are written automatically when present.
 
 ## Key Configuration
 
@@ -45,10 +47,11 @@ All simulation parameters live in `SimulationConfig` (see `include/SimulationCon
 - `ExplicitParams`: cfl, constDt, maxDt, minDt
 - `SemiImplicitParams`: cfl, maxDt, minDt, maxPressureIters, pressureTol
 - `IGRParams`: alphaCoeff, IGRIters, IGRWarmStartIters
+- `MultiPhaseParams`: nPhases (0=single-phase), phases (vector of `PhaseEOS{gamma, pInf}`), alphaMin
 
 ## Code Style
 
 - C++17, namespace `SemiImplicitFV`
 - Headers use `#ifndef` include guards (not `#pragma once`)
 - Solver classes take shared pointers to EOS and Riemann solver
-- `SolutionState` holds all field data (rho, momentum, energy, sigma, primitives)
+- `SolutionState` holds all field data (rho, momentum, energy, sigma, primitives, and for multi-phase: alpha[k], alphaRho[k])

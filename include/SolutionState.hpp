@@ -102,6 +102,14 @@ public:
     std::vector<double> rhoc2;      // rho * c^2 for implicit pressure solve
     std::vector<double> divUStar;   // divergence of velocity field at start of time step
 
+    // Multi-phase fields (empty when single-phase)
+    std::vector<std::vector<double>> alphaRho;  // [phase][cell], N arrays
+    std::vector<std::vector<double>> alpha;     // [phase][cell], N-1 arrays
+
+    // Multi-phase RK backup arrays
+    std::vector<std::vector<double>> alphaRho0; // [phase][cell], N arrays
+    std::vector<std::vector<double>> alpha0;    // [phase][cell], N-1 arrays
+
     // Auxiliary variable
     std::vector<double> aux;
 

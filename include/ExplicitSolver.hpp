@@ -9,6 +9,7 @@
 #include "Reconstruction.hpp"
 #include "IGR.hpp"
 #include "EquationOfState.hpp"
+#include "MixtureEOS.hpp"
 #include <memory>
 #include <vector>
 #include "HaloExchange.hpp"
@@ -53,6 +54,10 @@ private:
     std::vector<double> rhsRhoV_;
     std::vector<double> rhsRhoW_;
     std::vector<double> rhsRhoE_;
+
+    // Multi-phase RHS storage
+    std::vector<std::vector<double>> rhsAlphaRho_;  // N arrays
+    std::vector<std::vector<double>> rhsAlpha_;      // N-1 arrays
 
     std::vector<GradientTensor> gradU_;
 

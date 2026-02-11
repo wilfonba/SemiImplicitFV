@@ -1,4 +1,5 @@
 #include "RKTimeStepping.hpp"
+#include "MixtureEOS.hpp"
 #include "Runtime.hpp"
 #include "VTKSession.hpp"
 #include <cmath>
@@ -62,6 +63,48 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
     return dt;
 }
 
+double computeAcousticTimeStep(const RectilinearMesh& mesh,
+                               const SolutionState& state,
+                               const EquationOfState& eos,
+                               const SimulationConfig& config,
+                               double cfl, double maxDt) {
+    if (!config.isMultiPhase())
+        return computeAcousticTimeStep(mesh, state, eos, cfl, maxDt);
+
+    double dt = maxDt;
+    int dim = mesh.dim();
+    const auto& mp = config.multiPhaseParams;
+    int nPhases = mp.nPhases;
+
+    for (int k = 0; k < mesh.nz(); ++k) {
+        for (int j = 0; j < mesh.ny(); ++j) {
+            for (int i = 0; i < mesh.nx(); ++i) {
+                std::size_t idx = mesh.index(i, j, k);
+
+                std::vector<double> alphas(nPhases - 1);
+                for (int ph = 0; ph < nPhases - 1; ++ph)
+                    alphas[ph] = state.alpha[ph][idx];
+                std::vector<double> alphaRhos(nPhases);
+                for (int ph = 0; ph < nPhases; ++ph)
+                    alphaRhos[ph] = state.alphaRho[ph][idx];
+
+                double c = MixtureEOS::mixtureSoundSpeed(
+                    state.rho[idx], state.pres[idx], alphas, alphaRhos, mp);
+
+                double dtCell = mesh.dx(i) / (std::abs(state.velU[idx]) + c);
+                if (dim >= 2)
+                    dtCell = std::min(dtCell, mesh.dy(j) / (std::abs(state.velV[idx]) + c));
+                if (dim >= 3)
+                    dtCell = std::min(dtCell, mesh.dz(k) / (std::abs(state.velW[idx]) + c));
+
+                dt = std::min(dt, cfl * dtCell);
+            }
+        }
+    }
+
+    return dt;
+}
+
 double computeAdvectiveTimeStep(const RectilinearMesh& mesh,
                                 const SolutionState& state,
                                 double cfl, double maxDt,
@@ -78,6 +121,18 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
                                double cfl, double maxDt,
                                MPI_Comm comm) {
     double localDt = computeAcousticTimeStep(mesh, state, eos, cfl, maxDt);
+    double globalDt;
+    MPI_Allreduce(&localDt, &globalDt, 1, MPI_DOUBLE, MPI_MIN, comm);
+    return globalDt;
+}
+
+double computeAcousticTimeStep(const RectilinearMesh& mesh,
+                               const SolutionState& state,
+                               const EquationOfState& eos,
+                               const SimulationConfig& config,
+                               double cfl, double maxDt,
+                               MPI_Comm comm) {
+    double localDt = computeAcousticTimeStep(mesh, state, eos, config, cfl, maxDt);
     double globalDt;
     MPI_Allreduce(&localDt, &globalDt, 1, MPI_DOUBLE, MPI_MIN, comm);
     return globalDt;

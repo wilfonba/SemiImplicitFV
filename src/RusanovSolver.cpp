@@ -20,8 +20,19 @@ RiemannFlux RusanovSolver::computeFlux(
     double sMax = maxWaveSpeed(left, right, normal);
 
     // Conservative total energies (per unit volume)
-    double rhoEL = left.rho * eos_->totalEnergy(left);
-    double rhoER = right.rho * eos_->totalEnergy(right);
+    double rhoEL, rhoER;
+    if (left.gammaEff > 0.0) {
+        double keL = 0.5 * left.rho * (left.u[0]*left.u[0] + left.u[1]*left.u[1] + left.u[2]*left.u[2]);
+        rhoEL = (left.p + left.gammaEff * left.piInfEff) / (left.gammaEff - 1.0) + keL;
+    } else {
+        rhoEL = left.rho * eos_->totalEnergy(left);
+    }
+    if (right.gammaEff > 0.0) {
+        double keR = 0.5 * right.rho * (right.u[0]*right.u[0] + right.u[1]*right.u[1] + right.u[2]*right.u[2]);
+        rhoER = (right.p + right.gammaEff * right.piInfEff) / (right.gammaEff - 1.0) + keR;
+    } else {
+        rhoER = right.rho * eos_->totalEnergy(right);
+    }
 
     // Left flux
     double massFluxL = left.rho * uL;
@@ -74,8 +85,8 @@ double RusanovSolver::maxWaveSpeed(
     double uR = std::abs(normalVelocity(right, normal, dim_));
 
     if (includePressure_) {
-        double cL = eos_->soundSpeed(left);
-        double cR = eos_->soundSpeed(right);
+        double cL = soundSpeedFromState(left, *eos_);
+        double cR = soundSpeedFromState(right, *eos_);
         return std::max(uL + cL, uR + cR);
     }
 

@@ -45,6 +45,17 @@ void SolutionState::allocate(std::size_t totalCells, const SimulationConfig& con
 
     aux.assign(totalCells, 0.0);
 
+    // Allocate multi-phase arrays
+    if (config.isMultiPhase()) {
+        int nPhases = config.multiPhaseParams.nPhases;
+        alphaRho.resize(nPhases);
+        for (int ph = 0; ph < nPhases; ++ph)
+            alphaRho[ph].assign(totalCells, 0.0);
+        alpha.resize(nPhases - 1);
+        for (int ph = 0; ph < nPhases - 1; ++ph)
+            alpha[ph].assign(totalCells, 0.0);
+    }
+
     // Allocate backup arrays for multi-stage time stepping
     if (config.RKOrder > 1) {
         rho0.assign(totalCells, 0.0);
@@ -53,6 +64,16 @@ void SolutionState::allocate(std::size_t totalCells, const SimulationConfig& con
         if (dim_ >= 2) rhoV0.assign(totalCells, 0.0); else rhoV0.clear();
         if (dim_ >= 3) rhoW0.assign(totalCells, 0.0); else rhoW0.clear();
         pres0.assign(totalCells, 0.0);
+
+        if (config.isMultiPhase()) {
+            int nPhases = config.multiPhaseParams.nPhases;
+            alphaRho0.resize(nPhases);
+            for (int ph = 0; ph < nPhases; ++ph)
+                alphaRho0[ph].assign(totalCells, 0.0);
+            alpha0.resize(nPhases - 1);
+            for (int ph = 0; ph < nPhases - 1; ++ph)
+                alpha0[ph].assign(totalCells, 0.0);
+        }
     }
 }
 
@@ -74,6 +95,9 @@ void SolutionState::copyCell_P(std::size_t dst, std::size_t src,
     temp[dst] = temp[src];
     sigma[dst] = sigma[src];
     aux[dst] = aux[src];
+
+    for (auto& ar : alphaRho) ar[dst] = ar[src];
+    for (auto& a : alpha) a[dst] = a[src];
 }
 
 void SolutionState::copyCell_C(std::size_t dst, std::size_t src,
@@ -93,6 +117,9 @@ void SolutionState::copyCell_C(std::size_t dst, std::size_t src,
     rhoE[dst] = rhoE[src];
     sigma[dst] = sigma[src];
     aux[dst] = aux[src];
+
+    for (auto& ar : alphaRho) ar[dst] = ar[src];
+    for (auto& a : alpha) a[dst] = a[src];
 }
 
 void SolutionState::copyCell(std::size_t dst, std::size_t src,
@@ -117,6 +144,9 @@ void SolutionState::copyCell(std::size_t dst, std::size_t src,
     temp[dst] = temp[src];
     sigma[dst] = sigma[src];
     aux[dst] = aux[src];
+
+    for (auto& ar : alphaRho) ar[dst] = ar[src];
+    for (auto& a : alpha) a[dst] = a[src];
 }
 
 ConservativeState SolutionState::getConservativeState(std::size_t idx) const {
@@ -208,6 +238,11 @@ void SolutionState::saveConservativeCell(std::size_t idx) {
     if (dim_ >= 3) rhoW0[idx] = rhoW[idx];
     rhoE0[idx] = rhoE[idx];
     pres0[idx] = pres[idx];
+
+    for (std::size_t ph = 0; ph < alphaRho0.size(); ++ph)
+        alphaRho0[ph][idx] = alphaRho[ph][idx];
+    for (std::size_t ph = 0; ph < alpha0.size(); ++ph)
+        alpha0[ph][idx] = alpha[ph][idx];
 }
 
 void SolutionState::smoothFields(const RectilinearMesh& mesh, int nIterations) {
@@ -270,6 +305,10 @@ void SolutionState::smoothFields(const RectilinearMesh& mesh, int nIterations) {
     if (dim >= 3) smoothField(velW);
     smoothField(pres);
     smoothField(temp);
+
+    // Smooth multi-phase fields
+    for (auto& ar : alphaRho) smoothField(ar);
+    for (auto& a : alpha) smoothField(a);
 }
 
 #include "HaloExchange.hpp"
@@ -329,6 +368,9 @@ void SolutionState::smoothFields(const RectilinearMesh& mesh, int nIterations,
     if (dim >= 3) smoothField(velW);
     smoothField(pres);
     smoothField(temp);
+
+    for (auto& ar : alphaRho) smoothField(ar);
+    for (auto& a : alpha) smoothField(a);
 }
 
 } // namespace SemiImplicitFV

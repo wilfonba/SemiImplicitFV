@@ -3,6 +3,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace SemiImplicitFV {
 
@@ -36,6 +37,17 @@ struct IGRParams {
     int IGRWarmStartIters = 50;
 };
 
+struct PhaseEOS {
+    double gamma = 1.4;
+    double pInf = 0.0;           // stiffened gas reference pressure
+};
+
+struct MultiPhaseParams {
+    int nPhases = 0;             // 0 means single-phase (all existing code unchanged)
+    std::vector<PhaseEOS> phases;
+    double alphaMin = 1e-8;      // minimum volume fraction clamp
+};
+
 struct SimulationConfig {
     // Global parameters
     int dim = 3;
@@ -51,6 +63,9 @@ struct SimulationConfig {
     ExplicitParams explicitParams;
     SemiImplicitParams semiImplicitParams;
     IGRParams igrParams;
+    MultiPhaseParams multiPhaseParams;
+
+    bool isMultiPhase() const { return multiPhaseParams.nPhases > 0; }
 
     int requiredGhostCells() const {
         switch (reconOrder) {
@@ -109,6 +124,22 @@ struct SimulationConfig {
                 throw std::invalid_argument("igrParams.IGRIters must be > 0");
             if (p.IGRWarmStartIters < 0)
                 throw std::invalid_argument("igrParams.IGRWarmStartIters must be >= 0");
+        }
+
+        if (isMultiPhase()) {
+            const auto& mp = multiPhaseParams;
+            if (static_cast<int>(mp.phases.size()) != mp.nPhases)
+                throw std::invalid_argument("multiPhaseParams.phases.size() must equal nPhases");
+            for (int ph = 0; ph < mp.nPhases; ++ph) {
+                if (mp.phases[ph].gamma <= 1.0)
+                    throw std::invalid_argument("multiPhaseParams.phases[" + std::to_string(ph)
+                        + "].gamma must be > 1");
+                if (mp.phases[ph].pInf < 0.0)
+                    throw std::invalid_argument("multiPhaseParams.phases[" + std::to_string(ph)
+                        + "].pInf must be >= 0");
+            }
+            if (mp.alphaMin <= 0.0)
+                throw std::invalid_argument("multiPhaseParams.alphaMin must be > 0");
         }
     }
 };

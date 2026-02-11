@@ -8,6 +8,7 @@ A finite volume solver for the compressible Euler equations on rectilinear meshe
 - **High-order spatial reconstruction** — WENO and upwind schemes at 1st, 3rd, and 5th order
 - **Riemann solvers** — Lax-Friedrichs, Rusanov, and HLLC
 - **Equations of state** — Ideal gas and stiffened gas
+- **N-phase compressible flow** — Volume-fraction-based multi-phase model with per-phase stiffened gas EOS, Wood's mixture sound speed, and mixture Riemann solvers
 - **Information Geometric Regularization (IGR)** — Entropic pressure via elliptic solve for improved stability
 - **1D / 2D / 3D** on rectilinear (uniform) meshes with ghost cells
 - **Boundary conditions** — Periodic, Reflective, Outflow, Slip Wall, No-Slip Wall
@@ -107,6 +108,22 @@ config.igrParams.IGRIters = 5;
 
 The `validate()` method checks consistency (e.g., ghost cell count matches reconstruction stencil, semi-implicit requires RK order 1).
 
+### Multi-Phase Configuration
+
+Enable N-phase flow by setting `multiPhaseParams` in the config. Each phase has its own stiffened gas EOS parameters (`gamma` and `pInf`). Set `pInf = 0` for ideal gas phases.
+
+```cpp
+// Two-phase setup: water (stiffened gas) + air (ideal gas)
+config.multiPhaseParams.nPhases = 2;
+config.multiPhaseParams.phases = {
+    {4.4, 6.0e8},   // Phase 0 (water): gamma = 4.4, pInf = 6e8 Pa
+    {1.4, 0.0}      // Phase 1 (air):   gamma = 1.4, pInf = 0
+};
+config.multiPhaseParams.alphaMin = 1e-8;     // Minimum volume fraction clamp
+```
+
+Volume fractions (`alpha[k]`) are tracked for phases 0 through `nPhases - 2`; the last phase fraction is `1 - sum(alpha[k])`. The solver uses Wood's mixture sound speed at cell centers and an equivalent single-fluid formula at reconstructed faces.
+
 ### Reconstruction Orders
 
 | Scheme | Order | Ghost Cells Required |
@@ -119,13 +136,15 @@ WENO schemes include nonlinear shock-capturing weights. Upwind schemes use stand
 
 ## Writing a New Problem
 
-Each example is a standalone `main.cpp` in its own subdirectory under `examples/`. CMake automatically discovers and builds them. To add a new case:
+Each example is a standalone `.cpp` file in its own subdirectory under `examples/`. CMake automatically discovers and builds them. To add a new case:
 
 1. Create `examples/my_case/my_case.cpp`
 2. Set up a `SimulationConfig` and create a mesh via `Runtime`
 3. Choose an EOS, Riemann solver, and (optionally) IGR and pressure solvers
 4. Attach the solver to the runtime and set initial/boundary conditions
 5. Run the time loop
+
+### Single-Phase Example
 
 ```cpp
 #include "Runtime.hpp"
@@ -180,6 +199,93 @@ int main(int argc, char* argv[]) {
 }
 ```
 
+### Multi-Phase Example
+
+Multi-phase problems require additional initialization of per-phase volume fractions (`alpha`) and partial densities (`alphaRho`). The `MixtureEOS` namespace provides the mixture total energy function. A fallback single-phase EOS is still needed for the solver constructor.
+
+```cpp
+#include "Runtime.hpp"
+#include "IdealGasEOS.hpp"
+#include "MixtureEOS.hpp"
+#include "LFSolver.hpp"
+#include "ExplicitSolver.hpp"
+#include "VTKSession.hpp"
+#include "RKTimeStepping.hpp"
+
+using namespace SemiImplicitFV;
+
+int main(int argc, char** argv) {
+    Runtime rt(argc, argv);
+
+    SimulationConfig config;
+    config.dim = 1;
+    config.nGhost = 4;
+    config.RKOrder = 3;
+    config.reconOrder = ReconstructionOrder::WENO5;
+    config.explicitParams.cfl = 0.5;
+
+    // Two-phase stiffened-gas setup
+    config.multiPhaseParams.nPhases = 2;
+    config.multiPhaseParams.phases = {{4.4, 6.0e8}, {1.4, 0.0}};
+    config.multiPhaseParams.alphaMin = 1e-8;
+
+    config.validate();
+
+    RectilinearMesh mesh = rt.createUniformMesh(config, 500, 0.0, 1.0);
+    rt.setBoundaryCondition(mesh, RectilinearMesh::XLow,  BoundaryCondition::Outflow);
+    rt.setBoundaryCondition(mesh, RectilinearMesh::XHigh, BoundaryCondition::Outflow);
+
+    SolutionState state;
+    state.allocate(mesh.totalCells(), config);
+
+    auto& mp = config.multiPhaseParams;
+    double alphaMin = mp.alphaMin;
+
+    for (int i = 0; i < mesh.nx(); ++i) {
+        std::size_t idx = mesh.index(i, 0, 0);
+        double x = mesh.cellCentroidX(i);
+
+        double rho, p, alphaWater;
+        if (x < 0.7) {
+            rho = 1000.0; p = 1.0e9; alphaWater = 1.0 - alphaMin;
+        } else {
+            rho = 50.0;   p = 1.0e5; alphaWater = alphaMin;
+        }
+        double alphaAir = 1.0 - alphaWater;
+
+        state.alphaRho[0][idx] = alphaWater * rho;
+        state.alphaRho[1][idx] = alphaAir * rho;
+        state.alpha[0][idx] = alphaWater;
+        state.rho[idx] = rho;
+        state.pres[idx] = p;
+        state.velU[idx] = 0.0;
+
+        std::vector<double> alphas = {alphaWater};
+        state.rhoE[idx] = MixtureEOS::mixtureTotalEnergy(rho, p, alphas, 0.0, mp);
+    }
+
+    auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0, config);
+    auto riemann = std::make_shared<LFSolver>(eos, config);
+    ExplicitSolver solver(mesh, riemann, eos, nullptr, config);
+    rt.attachSolver(solver, mesh);
+
+    VTKSession vtk(rt, "my_multiphase_case", mesh);
+    auto stepFn = [&](double targetDt) {
+        return solver.step(config, mesh, state, targetDt);
+    };
+    runTimeLoop(rt, config, mesh, state, vtk, stepFn,
+                {.endTime = 2.4e-4, .outputInterval = 1.2e-5, .printInterval = 50});
+
+    return 0;
+}
+```
+
+Key differences from single-phase:
+- Set `config.multiPhaseParams` with phase count, per-phase `{gamma, pInf}`, and `alphaMin`
+- Call `state.allocate(mesh.totalCells(), config)` (the config overload allocates `alpha` and `alphaRho` arrays)
+- Initialize `state.alpha[k]`, `state.alphaRho[k]` for each phase, and compute `state.rhoE` via `MixtureEOS::mixtureTotalEnergy()`
+- The solver automatically detects multi-phase mode from the config and uses mixture EOS routines for reconstruction, Riemann solving, and time stepping
+
 Rebuild, and the new executable appears automatically:
 
 ```bash
@@ -221,6 +327,7 @@ SemiImplicitFV/
 │   ├── EquationOfState.hpp    Abstract EOS interface
 │   ├── IdealGasEOS.hpp        Ideal gas EOS
 │   ├── StiffenedGasEOS.hpp    Stiffened gas EOS
+│   ├── MixtureEOS.hpp         N-phase mixture EOS routines
 │   ├── PressureSolver.hpp     Abstract pressure solver
 │   ├── Runtime.hpp            MPI/serial runtime abstraction
 │   ├── MPIContext.hpp         MPI domain decomposition
@@ -231,6 +338,9 @@ SemiImplicitFV/
 ├── examples/              Example problems
 │   ├── 1D_advection/
 │   ├── 1D_sod_shocktube/
+│   ├── 1D_gas_gas_shocktube/       Two-phase ideal gas shock tube
+│   ├── 1D_liquid_gas_shocktube/    Water-air stiffened gas shock tube
+│   ├── 2D_isentropic_vortex/
 │   ├── 2D_quasi1D_sod/
 │   └── 2D_riemann/
 ├── CMakeLists.txt
@@ -245,7 +355,7 @@ Output files are VTK XML RectilinearGrid format, viewable in [ParaView](https://
 2. Apply a color map to fields like `Density`, `Pressure`, or `Velocity`
 3. Use the animation controls to step through time
 
-Fields written per cell: density, velocity (u, v, w), pressure, temperature, and entropic pressure (sigma).
+Fields written per cell: density, velocity (u, v, w), momentum, pressure, temperature, total energy, and entropic pressure (sigma). Multi-phase simulations additionally write per-phase volume fractions (`Alpha_0`, `Alpha_1`, ...) and partial densities (`AlphaRho_0`, `AlphaRho_1`, ...).
 
 ## License
 

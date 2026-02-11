@@ -1,5 +1,6 @@
 #include "ExplicitSolver.hpp"
 #include "RKTimeStepping.hpp"
+#include "MixtureEOS.hpp"
 #include "SimulationConfig.hpp"
 #include <array>
 #include <cmath>
@@ -33,6 +34,16 @@ ExplicitSolver::ExplicitSolver(
 
     reconstructor_.allocate(mesh);
 
+    if (config.isMultiPhase()) {
+        int nPhases = config.multiPhaseParams.nPhases;
+        rhsAlphaRho_.resize(nPhases);
+        for (int ph = 0; ph < nPhases; ++ph)
+            rhsAlphaRho_[ph].resize(n);
+        rhsAlpha_.resize(nPhases - 1);
+        for (int ph = 0; ph < nPhases - 1; ++ph)
+            rhsAlpha_[ph].resize(n);
+    }
+
     if (igrSolver_) {
         gradU_.resize(n);
     }
@@ -47,7 +58,7 @@ double ExplicitSolver::step(const SimulationConfig& config,
         dt = params_.constDt;
     } else {
         dt = SemiImplicitFV::computeAcousticTimeStep(
-            mesh, state, *eos_, params_.cfl, params_.maxDt, halo_->mpi().comm());
+            mesh, state, *eos_, config, params_.cfl, params_.maxDt, halo_->mpi().comm());
     }
 
     if (targetDt > 0) {
@@ -67,9 +78,16 @@ double ExplicitSolver::step(const SimulationConfig& config,
         rk_coef[2] = {2.0, 1.0, 2.0, 3.0};
     }
 
+    const bool multiPhase = config.isMultiPhase();
+    const int nPhases = multiPhase ? config.multiPhaseParams.nPhases : 0;
+    const double alphaMin = multiPhase ? config.multiPhaseParams.alphaMin : 0.0;
+
     for (int s = 0; s < config.RKOrder; ++s) {
 
-        state.convertConservativeToPrimitiveVariables(mesh, eos_);
+        if (multiPhase)
+            MixtureEOS::convertConservativeToPrimitive(mesh, state, config.multiPhaseParams);
+        else
+            state.convertConservativeToPrimitiveVariables(mesh, eos_);
         mesh.applyBoundaryConditions(state, VarSet::PRIM, *halo_);
 
         if (config.useIGR && igrSolver_) solveIGR(config, mesh, state);
@@ -98,6 +116,13 @@ double ExplicitSolver::step(const SimulationConfig& config,
                         if (config.dim >= 3)
                             state.rhoW[idx] += dt * rhsRhoW_[idx];
                         state.rhoE[idx] += dt * rhsRhoE_[idx];
+
+                        if (multiPhase) {
+                            for (int ph = 0; ph < nPhases; ++ph)
+                                state.alphaRho[ph][idx] += dt * rhsAlphaRho_[ph][idx];
+                            for (int ph = 0; ph < nPhases - 1; ++ph)
+                                state.alpha[ph][idx] += dt * rhsAlpha_[ph][idx];
+                        }
                     } else {
                         state.rho[idx]  = (c1 * state.rho[idx]  + c2 * state.rho0[idx]  + c3 * dt * rhsRho_[idx])  / c4;
                         state.rhoU[idx] = (c1 * state.rhoU[idx] + c2 * state.rhoU0[idx] + c3 * dt * rhsRhoU_[idx]) / c4;
@@ -106,6 +131,34 @@ double ExplicitSolver::step(const SimulationConfig& config,
                         if (config.dim >= 3)
                             state.rhoW[idx] = (c1 * state.rhoW[idx] + c2 * state.rhoW0[idx] + c3 * dt * rhsRhoW_[idx]) / c4;
                         state.rhoE[idx] = (c1 * state.rhoE[idx] + c2 * state.rhoE0[idx] + c3 * dt * rhsRhoE_[idx]) / c4;
+
+                        if (multiPhase) {
+                            for (int ph = 0; ph < nPhases; ++ph)
+                                state.alphaRho[ph][idx] = (c1 * state.alphaRho[ph][idx] + c2 * state.alphaRho0[ph][idx] + c3 * dt * rhsAlphaRho_[ph][idx]) / c4;
+                            for (int ph = 0; ph < nPhases - 1; ++ph)
+                                state.alpha[ph][idx] = (c1 * state.alpha[ph][idx] + c2 * state.alpha0[ph][idx] + c3 * dt * rhsAlpha_[ph][idx]) / c4;
+                        }
+                    }
+
+                    // Multi-phase post-update: recompute rho, clamp alpha and alphaRho
+                    if (multiPhase) {
+                        double rhoSum = 0.0;
+                        for (int ph = 0; ph < nPhases; ++ph) {
+                            state.alphaRho[ph][idx] = std::max(state.alphaRho[ph][idx], 1e-14);
+                            rhoSum += state.alphaRho[ph][idx];
+                        }
+                        state.rho[idx] = rhoSum;
+
+                        double alphaSum = 0.0;
+                        for (int ph = 0; ph < nPhases - 1; ++ph) {
+                            state.alpha[ph][idx] = std::clamp(state.alpha[ph][idx], alphaMin, 1.0 - alphaMin);
+                            alphaSum += state.alpha[ph][idx];
+                        }
+                        if (alphaSum > 1.0 - alphaMin) {
+                            double scale = (1.0 - alphaMin) / alphaSum;
+                            for (int ph = 0; ph < nPhases - 1; ++ph)
+                                state.alpha[ph][idx] *= scale;
+                        }
                     }
                 }
             }
@@ -186,6 +239,8 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
     reconstructor_.reconstruct(config, mesh, state);
 
     int dim = mesh.dim();
+    const bool multiPhase = config.isMultiPhase();
+    const int nPhases = multiPhase ? config.multiPhaseParams.nPhases : 0;
 
     // Zero RHS arrays
     std::fill(rhsRho_.begin(),  rhsRho_.end(),  0.0);
@@ -193,6 +248,13 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
     if (dim >= 2) std::fill(rhsRhoV_.begin(), rhsRhoV_.end(), 0.0);
     if (dim >= 3) std::fill(rhsRhoW_.begin(), rhsRhoW_.end(), 0.0);
     std::fill(rhsRhoE_.begin(), rhsRhoE_.end(), 0.0);
+
+    if (multiPhase) {
+        for (int ph = 0; ph < nPhases; ++ph)
+            std::fill(rhsAlphaRho_[ph].begin(), rhsAlphaRho_[ph].end(), 0.0);
+        for (int ph = 0; ph < nPhases - 1; ++ph)
+            std::fill(rhsAlpha_[ph].begin(), rhsAlpha_[ph].end(), 0.0);
+    }
 
     // --- X-direction fluxes ---
     for (int k = 0; k < mesh.nz(); ++k) {
@@ -207,6 +269,17 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
 
                 double area = mesh.faceAreaX(j, k);
 
+                // Upwind partial density fluxes for multi-phase
+                std::size_t upwindIdx = 0;
+                if (multiPhase) {
+                    if (flux.massFlux >= 0 && i >= 1)
+                        upwindIdx = mesh.index(i - 1, j, k);
+                    else if (flux.massFlux < 0 && i < mesh.nx())
+                        upwindIdx = mesh.index(i, j, k);
+                    else
+                        upwindIdx = (i >= 1) ? mesh.index(i - 1, j, k) : mesh.index(i, j, k);
+                }
+
                 if (i >= 1) {
                     std::size_t idxL = mesh.index(i - 1, j, k);
                     double coeff = area / mesh.cellVolume(i - 1, j, k);
@@ -215,6 +288,14 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                     if (dim >= 2) rhsRhoV_[idxL] -= coeff * flux.momentumFlux[1];
                     if (dim >= 3) rhsRhoW_[idxL] -= coeff * flux.momentumFlux[2];
                     rhsRhoE_[idxL] -= coeff * flux.energyFlux;
+
+                    if (multiPhase) {
+                        double rhoUpw = std::max(state.rho[upwindIdx], 1e-14);
+                        for (int ph = 0; ph < nPhases; ++ph) {
+                            double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
+                            rhsAlphaRho_[ph][idxL] -= coeff * alphaRhoFlux;
+                        }
+                    }
                 }
 
                 if (i < mesh.nx()) {
@@ -225,6 +306,14 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                     if (dim >= 2) rhsRhoV_[idxR] += coeff * flux.momentumFlux[1];
                     if (dim >= 3) rhsRhoW_[idxR] += coeff * flux.momentumFlux[2];
                     rhsRhoE_[idxR] += coeff * flux.energyFlux;
+
+                    if (multiPhase) {
+                        double rhoUpw = std::max(state.rho[upwindIdx], 1e-14);
+                        for (int ph = 0; ph < nPhases; ++ph) {
+                            double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
+                            rhsAlphaRho_[ph][idxR] += coeff * alphaRhoFlux;
+                        }
+                    }
                 }
             }
         }
@@ -244,6 +333,16 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
 
                     double area = mesh.faceAreaY(i, k);
 
+                    std::size_t upwindIdx = 0;
+                    if (multiPhase) {
+                        if (flux.massFlux >= 0 && j >= 1)
+                            upwindIdx = mesh.index(i, j - 1, k);
+                        else if (flux.massFlux < 0 && j < mesh.ny())
+                            upwindIdx = mesh.index(i, j, k);
+                        else
+                            upwindIdx = (j >= 1) ? mesh.index(i, j - 1, k) : mesh.index(i, j, k);
+                    }
+
                     if (j >= 1) {
                         std::size_t idxL = mesh.index(i, j - 1, k);
                         double coeff = area / mesh.cellVolume(i, j - 1, k);
@@ -252,6 +351,14 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                         rhsRhoV_[idxL] -= coeff * flux.momentumFlux[1];
                         if (dim >= 3) rhsRhoW_[idxL] -= coeff * flux.momentumFlux[2];
                         rhsRhoE_[idxL] -= coeff * flux.energyFlux;
+
+                        if (multiPhase) {
+                            double rhoUpw = std::max(state.rho[upwindIdx], 1e-14);
+                            for (int ph = 0; ph < nPhases; ++ph) {
+                                double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
+                                rhsAlphaRho_[ph][idxL] -= coeff * alphaRhoFlux;
+                            }
+                        }
                     }
 
                     if (j < mesh.ny()) {
@@ -262,6 +369,14 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                         rhsRhoV_[idxR] += coeff * flux.momentumFlux[1];
                         if (dim >= 3) rhsRhoW_[idxR] += coeff * flux.momentumFlux[2];
                         rhsRhoE_[idxR] += coeff * flux.energyFlux;
+
+                        if (multiPhase) {
+                            double rhoUpw = std::max(state.rho[upwindIdx], 1e-14);
+                            for (int ph = 0; ph < nPhases; ++ph) {
+                                double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
+                                rhsAlphaRho_[ph][idxR] += coeff * alphaRhoFlux;
+                            }
+                        }
                     }
                 }
             }
@@ -282,6 +397,16 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
 
                     double area = mesh.faceAreaZ(i, j);
 
+                    std::size_t upwindIdx = 0;
+                    if (multiPhase) {
+                        if (flux.massFlux >= 0 && k >= 1)
+                            upwindIdx = mesh.index(i, j, k - 1);
+                        else if (flux.massFlux < 0 && k < mesh.nz())
+                            upwindIdx = mesh.index(i, j, k);
+                        else
+                            upwindIdx = (k >= 1) ? mesh.index(i, j, k - 1) : mesh.index(i, j, k);
+                    }
+
                     if (k >= 1) {
                         std::size_t idxL = mesh.index(i, j, k - 1);
                         double coeff = area / mesh.cellVolume(i, j, k - 1);
@@ -290,6 +415,14 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                         rhsRhoV_[idxL] -= coeff * flux.momentumFlux[1];
                         rhsRhoW_[idxL] -= coeff * flux.momentumFlux[2];
                         rhsRhoE_[idxL] -= coeff * flux.energyFlux;
+
+                        if (multiPhase) {
+                            double rhoUpw = std::max(state.rho[upwindIdx], 1e-14);
+                            for (int ph = 0; ph < nPhases; ++ph) {
+                                double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
+                                rhsAlphaRho_[ph][idxL] -= coeff * alphaRhoFlux;
+                            }
+                        }
                     }
 
                     if (k < mesh.nz()) {
@@ -300,6 +433,56 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                         rhsRhoV_[idxR] += coeff * flux.momentumFlux[1];
                         rhsRhoW_[idxR] += coeff * flux.momentumFlux[2];
                         rhsRhoE_[idxR] += coeff * flux.energyFlux;
+
+                        if (multiPhase) {
+                            double rhoUpw = std::max(state.rho[upwindIdx], 1e-14);
+                            for (int ph = 0; ph < nPhases; ++ph) {
+                                double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
+                                rhsAlphaRho_[ph][idxR] += coeff * alphaRhoFlux;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Volume fraction advection: d(alpha_k)/dt + u . grad(alpha_k) = 0 ---
+    if (multiPhase) {
+        for (int k = 0; k < mesh.nz(); ++k) {
+            for (int j = 0; j < mesh.ny(); ++j) {
+                for (int i = 0; i < mesh.nx(); ++i) {
+                    std::size_t idx = mesh.index(i, j, k);
+
+                    for (int ph = 0; ph < nPhases - 1; ++ph) {
+                        double advection = 0.0;
+                        double a = state.alpha[ph][idx];
+
+                        {
+                            double u = state.velU[idx];
+                            double axm = state.alpha[ph][mesh.index(i - 1, j, k)];
+                            double axp = state.alpha[ph][mesh.index(i + 1, j, k)];
+                            if (u > 0) advection += u * (a - axm) / mesh.dx(i);
+                            else       advection += u * (axp - a) / mesh.dx(i);
+                        }
+
+                        if (dim >= 2) {
+                            double v = state.velV[idx];
+                            double aym = state.alpha[ph][mesh.index(i, j - 1, k)];
+                            double ayp = state.alpha[ph][mesh.index(i, j + 1, k)];
+                            if (v > 0) advection += v * (a - aym) / mesh.dy(j);
+                            else       advection += v * (ayp - a) / mesh.dy(j);
+                        }
+
+                        if (dim >= 3) {
+                            double w = state.velW[idx];
+                            double azm = state.alpha[ph][mesh.index(i, j, k - 1)];
+                            double azp = state.alpha[ph][mesh.index(i, j, k + 1)];
+                            if (w > 0) advection += w * (a - azm) / mesh.dz(k);
+                            else       advection += w * (azp - a) / mesh.dz(k);
+                        }
+
+                        rhsAlpha_[ph][idx] = -advection;
                     }
                 }
             }

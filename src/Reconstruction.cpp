@@ -1,4 +1,5 @@
 #include "Reconstruction.hpp"
+#include "MixtureEOS.hpp"
 #include <iostream>
 #include <cassert>
 
@@ -199,7 +200,7 @@ double Reconstructor::upwind5Right(const double* v, [[maybe_unused]] double eps)
 
 // ---- Direction-specific reconstruction sweeps ----
 
-void Reconstructor::reconstructX(const RectilinearMesh& mesh, const SolutionState& state) {
+void Reconstructor::reconstructX(const SimulationConfig& config, const RectilinearMesh& mesh, const SolutionState& state) {
     const int nx = mesh.nx();
     const int ny = mesh.ny();
     const int nz = mesh.nz();
@@ -210,6 +211,10 @@ void Reconstructor::reconstructX(const RectilinearMesh& mesh, const SolutionStat
     const double* sig  = state.sigma.data();
     const double* velV = (dim_ >= 2) ? state.velV.data() : nullptr;
     const double* velW = (dim_ >= 3) ? state.velW.data() : nullptr;
+
+    const bool multiPhase = config.isMultiPhase();
+    const int nAlphas = multiPhase ? config.multiPhaseParams.nPhases - 1 : 0;
+    const MultiPhaseParams& mp = config.multiPhaseParams;
 
     for (int k = 0; k < nz; ++k) {
         for (int j = 0; j < ny; ++j) {
@@ -239,9 +244,17 @@ void Reconstructor::reconstructX(const RectilinearMesh& mesh, const SolutionStat
                         left.u[2]  = velW[idxL];
                         right.u[2] = velW[idxR];
                     }
+                    if (multiPhase) {
+                        double aL[8], aR[8];
+                        for (int ph = 0; ph < nAlphas; ++ph) {
+                            aL[ph] = state.alpha[ph][idxL];
+                            aR[ph] = state.alpha[ph][idxR];
+                        }
+                        MixtureEOS::effectiveGammaAndPiInf(aL, nAlphas, mp, left.gammaEff, left.piInfEff);
+                        MixtureEOS::effectiveGammaAndPiInf(aR, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    }
                 }
                 else if (order_ == ReconstructionOrder::WENO3 || order_ == ReconstructionOrder::UPWIND3) {
-                    // 4 cells: i-2, i-1, i, i+1
                     std::size_t c[4];
                     c[0] = mesh.index(i - 2, j, k);
                     c[1] = mesh.index(i - 1, j, k);
@@ -258,9 +271,15 @@ void Reconstructor::reconstructX(const RectilinearMesh& mesh, const SolutionStat
                         reconstructScalar(velV, c, 3, lFn, rFn, wenoEps_, left.u[1], right.u[1]);
                     if (dim_ >= 3)
                         reconstructScalar(velW, c, 3, lFn, rFn, wenoEps_, left.u[2], right.u[2]);
+                    if (multiPhase) {
+                        double aL[8], aR[8];
+                        for (int ph = 0; ph < nAlphas; ++ph)
+                            reconstructScalar(state.alpha[ph].data(), c, 3, lFn, rFn, wenoEps_, aL[ph], aR[ph]);
+                        MixtureEOS::effectiveGammaAndPiInf(aL, nAlphas, mp, left.gammaEff, left.piInfEff);
+                        MixtureEOS::effectiveGammaAndPiInf(aR, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    }
                 }
                 else { // WENO5 or UPWIND5
-                    // 6 cells: i-3, i-2, i-1, i, i+1, i+2
                     std::size_t c[6];
                     c[0] = mesh.index(i - 3, j, k);
                     c[1] = mesh.index(i - 2, j, k);
@@ -279,13 +298,20 @@ void Reconstructor::reconstructX(const RectilinearMesh& mesh, const SolutionStat
                         reconstructScalar(velV, c, 5, lFn, rFn, wenoEps_, left.u[1], right.u[1]);
                     if (dim_ >= 3)
                         reconstructScalar(velW, c, 5, lFn, rFn, wenoEps_, left.u[2], right.u[2]);
+                    if (multiPhase) {
+                        double aL[8], aR[8];
+                        for (int ph = 0; ph < nAlphas; ++ph)
+                            reconstructScalar(state.alpha[ph].data(), c, 5, lFn, rFn, wenoEps_, aL[ph], aR[ph]);
+                        MixtureEOS::effectiveGammaAndPiInf(aL, nAlphas, mp, left.gammaEff, left.piInfEff);
+                        MixtureEOS::effectiveGammaAndPiInf(aR, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    }
                 }
             }
         }
     }
 }
 
-void Reconstructor::reconstructY(const RectilinearMesh& mesh, const SolutionState& state) {
+void Reconstructor::reconstructY(const SimulationConfig& config, const RectilinearMesh& mesh, const SolutionState& state) {
     const int nx = mesh.nx();
     const int ny = mesh.ny();
     const int nz = mesh.nz();
@@ -296,6 +322,10 @@ void Reconstructor::reconstructY(const RectilinearMesh& mesh, const SolutionStat
     const double* pres = state.pres.data();
     const double* sig  = state.sigma.data();
     const double* velW = (dim_ >= 3) ? state.velW.data() : nullptr;
+
+    const bool multiPhase = config.isMultiPhase();
+    const int nAlphas = multiPhase ? config.multiPhaseParams.nPhases - 1 : 0;
+    const MultiPhaseParams& mp = config.multiPhaseParams;
 
     for (int k = 0; k < nz; ++k) {
         for (int j = 0; j <= ny; ++j) {
@@ -323,6 +353,15 @@ void Reconstructor::reconstructY(const RectilinearMesh& mesh, const SolutionStat
                         left.u[2]  = velW[idxL];
                         right.u[2] = velW[idxR];
                     }
+                    if (multiPhase) {
+                        double aL[8], aR[8];
+                        for (int ph = 0; ph < nAlphas; ++ph) {
+                            aL[ph] = state.alpha[ph][idxL];
+                            aR[ph] = state.alpha[ph][idxR];
+                        }
+                        MixtureEOS::effectiveGammaAndPiInf(aL, nAlphas, mp, left.gammaEff, left.piInfEff);
+                        MixtureEOS::effectiveGammaAndPiInf(aR, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    }
                 }
                 else if (order_ == ReconstructionOrder::WENO3 || order_ == ReconstructionOrder::UPWIND3) {
                     std::size_t c[4];
@@ -340,6 +379,13 @@ void Reconstructor::reconstructY(const RectilinearMesh& mesh, const SolutionStat
                     reconstructScalar(sig,  c, 3, lFn, rFn, wenoEps_, left.sigma, right.sigma);
                     if (dim_ >= 3)
                         reconstructScalar(velW, c, 3, lFn, rFn, wenoEps_, left.u[2], right.u[2]);
+                    if (multiPhase) {
+                        double aL[8], aR[8];
+                        for (int ph = 0; ph < nAlphas; ++ph)
+                            reconstructScalar(state.alpha[ph].data(), c, 3, lFn, rFn, wenoEps_, aL[ph], aR[ph]);
+                        MixtureEOS::effectiveGammaAndPiInf(aL, nAlphas, mp, left.gammaEff, left.piInfEff);
+                        MixtureEOS::effectiveGammaAndPiInf(aR, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    }
                 }
                 else { // WENO5 or UPWIND5
                     std::size_t c[6];
@@ -359,13 +405,20 @@ void Reconstructor::reconstructY(const RectilinearMesh& mesh, const SolutionStat
                     reconstructScalar(sig,  c, 5, lFn, rFn, wenoEps_, left.sigma, right.sigma);
                     if (dim_ >= 3)
                         reconstructScalar(velW, c, 5, lFn, rFn, wenoEps_, left.u[2], right.u[2]);
+                    if (multiPhase) {
+                        double aL[8], aR[8];
+                        for (int ph = 0; ph < nAlphas; ++ph)
+                            reconstructScalar(state.alpha[ph].data(), c, 5, lFn, rFn, wenoEps_, aL[ph], aR[ph]);
+                        MixtureEOS::effectiveGammaAndPiInf(aL, nAlphas, mp, left.gammaEff, left.piInfEff);
+                        MixtureEOS::effectiveGammaAndPiInf(aR, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    }
                 }
             }
         }
     }
 }
 
-void Reconstructor::reconstructZ(const RectilinearMesh& mesh, const SolutionState& state) {
+void Reconstructor::reconstructZ(const SimulationConfig& config, const RectilinearMesh& mesh, const SolutionState& state) {
     const int nx = mesh.nx();
     const int ny = mesh.ny();
     const int nz = mesh.nz();
@@ -376,6 +429,10 @@ void Reconstructor::reconstructZ(const RectilinearMesh& mesh, const SolutionStat
     const double* velW = state.velW.data();
     const double* pres = state.pres.data();
     const double* sig  = state.sigma.data();
+
+    const bool multiPhase = config.isMultiPhase();
+    const int nAlphas = multiPhase ? config.multiPhaseParams.nPhases - 1 : 0;
+    const MultiPhaseParams& mp = config.multiPhaseParams;
 
     for (int k = 0; k <= nz; ++k) {
         for (int j = 0; j < ny; ++j) {
@@ -401,6 +458,15 @@ void Reconstructor::reconstructZ(const RectilinearMesh& mesh, const SolutionStat
                     right.u[2]  = velW[idxR];
                     right.p     = pres[idxR];
                     right.sigma = sig[idxR];
+                    if (multiPhase) {
+                        double aL[8], aR[8];
+                        for (int ph = 0; ph < nAlphas; ++ph) {
+                            aL[ph] = state.alpha[ph][idxL];
+                            aR[ph] = state.alpha[ph][idxR];
+                        }
+                        MixtureEOS::effectiveGammaAndPiInf(aL, nAlphas, mp, left.gammaEff, left.piInfEff);
+                        MixtureEOS::effectiveGammaAndPiInf(aR, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    }
                 }
                 else if (order_ == ReconstructionOrder::WENO3 || order_ == ReconstructionOrder::UPWIND3) {
                     std::size_t c[4];
@@ -417,6 +483,13 @@ void Reconstructor::reconstructZ(const RectilinearMesh& mesh, const SolutionStat
                     reconstructScalar(velW, c, 3, lFn, rFn, wenoEps_, left.u[2], right.u[2]);
                     reconstructScalar(pres, c, 3, lFn, rFn, wenoEps_, left.p,    right.p);
                     reconstructScalar(sig,  c, 3, lFn, rFn, wenoEps_, left.sigma, right.sigma);
+                    if (multiPhase) {
+                        double aL[8], aR[8];
+                        for (int ph = 0; ph < nAlphas; ++ph)
+                            reconstructScalar(state.alpha[ph].data(), c, 3, lFn, rFn, wenoEps_, aL[ph], aR[ph]);
+                        MixtureEOS::effectiveGammaAndPiInf(aL, nAlphas, mp, left.gammaEff, left.piInfEff);
+                        MixtureEOS::effectiveGammaAndPiInf(aR, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    }
                 }
                 else { // WENO5 or UPWIND5
                     std::size_t c[6];
@@ -435,6 +508,13 @@ void Reconstructor::reconstructZ(const RectilinearMesh& mesh, const SolutionStat
                     reconstructScalar(velW, c, 5, lFn, rFn, wenoEps_, left.u[2], right.u[2]);
                     reconstructScalar(pres, c, 5, lFn, rFn, wenoEps_, left.p,    right.p);
                     reconstructScalar(sig,  c, 5, lFn, rFn, wenoEps_, left.sigma, right.sigma);
+                    if (multiPhase) {
+                        double aL[8], aR[8];
+                        for (int ph = 0; ph < nAlphas; ++ph)
+                            reconstructScalar(state.alpha[ph].data(), c, 5, lFn, rFn, wenoEps_, aL[ph], aR[ph]);
+                        MixtureEOS::effectiveGammaAndPiInf(aL, nAlphas, mp, left.gammaEff, left.piInfEff);
+                        MixtureEOS::effectiveGammaAndPiInf(aR, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    }
                 }
             }
         }
@@ -442,14 +522,14 @@ void Reconstructor::reconstructZ(const RectilinearMesh& mesh, const SolutionStat
 }
 
 void Reconstructor::reconstruct(
-        [[maybe_unused]] const SimulationConfig& config,
+        const SimulationConfig& config,
         const RectilinearMesh& mesh,
         const SolutionState& state)
 {
     assert(config.nGhost >= requiredGhostCells());
-    reconstructX(mesh, state);
-    if (dim_ >= 2) reconstructY(mesh, state);
-    if (dim_ >= 3) reconstructZ(mesh, state);
+    reconstructX(config, mesh, state);
+    if (dim_ >= 2) reconstructY(config, mesh, state);
+    if (dim_ >= 3) reconstructZ(config, mesh, state);
 }
 
 } // namespace SemiImplicitFV

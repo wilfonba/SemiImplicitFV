@@ -32,7 +32,8 @@ public:
     static void writePVTR(const std::string& filename,
                           int globalNx, int globalNy, int globalNz,
                           const std::vector<std::array<int,6>>& pieceExtents,
-                          const std::vector<std::string>& pieceFiles);
+                          const std::vector<std::string>& pieceFiles,
+                          int nPhases = 0);
 
     /// Three-phase .pvd time-series file:
     ///   mode="w"     -- write header

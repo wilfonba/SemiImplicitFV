@@ -26,8 +26,19 @@ RiemannFlux LFSolver::computeFlux(
                                0.5 * C * (right.rho * right.u[i] - left.rho * left.u[i]);
     }
 
-    double rhoEL = left.rho * eos_->totalEnergy(left);
-    double rhoER = right.rho * eos_->totalEnergy(right);
+    double rhoEL, rhoER;
+    if (left.gammaEff > 0.0) {
+        double keL = 0.5 * left.rho * (left.u[0]*left.u[0] + left.u[1]*left.u[1] + left.u[2]*left.u[2]);
+        rhoEL = (left.p + left.gammaEff * left.piInfEff) / (left.gammaEff - 1.0) + keL;
+    } else {
+        rhoEL = left.rho * eos_->totalEnergy(left);
+    }
+    if (right.gammaEff > 0.0) {
+        double keR = 0.5 * right.rho * (right.u[0]*right.u[0] + right.u[1]*right.u[1] + right.u[2]*right.u[2]);
+        rhoER = (right.p + right.gammaEff * right.piInfEff) / (right.gammaEff - 1.0) + keR;
+    } else {
+        rhoER = right.rho * eos_->totalEnergy(right);
+    }
     flux.energyFlux = 0.5 * (rhoEL * uL + rhoER * uR) - 0.5 * C * (rhoER - rhoEL);
 
     if (includePressure_) {
@@ -66,8 +77,8 @@ double LFSolver::maxWaveSpeed(
     uRS = std::sqrt(uRS);
 
     if (includePressure_) {
-        double cL = eos_->soundSpeed(left);
-        double cR = eos_->soundSpeed(right);
+        double cL = soundSpeedFromState(left, *eos_);
+        double cR = soundSpeedFromState(right, *eos_);
         return std::max(uLS, uRS) + std::max(cL, cR);
     }
 

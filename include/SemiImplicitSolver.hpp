@@ -8,6 +8,7 @@
 #include "Reconstruction.hpp"
 #include "IGR.hpp"
 #include "EquationOfState.hpp"
+#include "MixtureEOS.hpp"
 #include "PressureSolver.hpp"
 #include "SimulationConfig.hpp"
 #include <memory>
@@ -69,10 +70,14 @@ private:
     std::vector<double> rhsRhoE_;
     std::vector<double> rhsPadvected_;
 
+    // Multi-phase RHS storage
+    std::vector<std::vector<double>> rhsAlphaRho_;  // N arrays
+    std::vector<std::vector<double>> rhsAlpha_;      // N-1 arrays
+
     void computeRHS(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state);
     void solveIGR(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state);
-    void solvePressure(const RectilinearMesh& mesh, SolutionState& state, double dt);
-    void correctionStep(const RectilinearMesh& mesh, SolutionState& state, double dt);
+    void solvePressure(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state, double dt);
+    void correctionStep(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state, double dt);
     void computeDivergence(const RectilinearMesh& mesh, const SolutionState& state, std::vector<double>& divU);
     void computeVelocityGradients(const SimulationConfig& config, const RectilinearMesh& mesh, const SolutionState& state);
     void writeStarToState(const RectilinearMesh& mesh, SolutionState& state);

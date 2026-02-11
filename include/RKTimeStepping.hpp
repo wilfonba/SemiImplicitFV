@@ -27,6 +27,13 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
                                const EquationOfState& eos,
                                double cfl, double maxDt);
 
+// Acoustic time step with config for multi-phase sound speed via Wood's formula.
+double computeAcousticTimeStep(const RectilinearMesh& mesh,
+                               const SolutionState& state,
+                               const EquationOfState& eos,
+                               const SimulationConfig& config,
+                               double cfl, double maxDt);
+
 // MPI-aware advective time step with global reduction.
 double computeAdvectiveTimeStep(const RectilinearMesh& mesh,
                                 const SolutionState& state,
@@ -37,6 +44,14 @@ double computeAdvectiveTimeStep(const RectilinearMesh& mesh,
 double computeAcousticTimeStep(const RectilinearMesh& mesh,
                                const SolutionState& state,
                                const EquationOfState& eos,
+                               double cfl, double maxDt,
+                               MPI_Comm comm);
+
+// MPI-aware acoustic time step with config for multi-phase.
+double computeAcousticTimeStep(const RectilinearMesh& mesh,
+                               const SolutionState& state,
+                               const EquationOfState& eos,
+                               const SimulationConfig& config,
                                double cfl, double maxDt,
                                MPI_Comm comm);
 

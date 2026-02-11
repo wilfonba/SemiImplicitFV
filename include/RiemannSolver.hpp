@@ -5,6 +5,7 @@
 #include "EquationOfState.hpp"
 #include "SimulationConfig.hpp"
 #include <array>
+#include <cmath>
 #include <memory>
 #include <string>
 
@@ -51,6 +52,14 @@ protected:
     std::shared_ptr<EquationOfState> eos_;
     SimulationConfig config_;
 };
+
+// Utility: compute sound speed using gammaEff if available (multi-phase),
+// otherwise fall back to EOS
+inline double soundSpeedFromState(const PrimitiveState& W, const EquationOfState& eos) {
+    if (W.gammaEff > 0.0)
+        return std::sqrt(W.gammaEff * std::max(W.p + W.piInfEff, 1e-14) / std::max(W.rho, 1e-14));
+    return eos.soundSpeed(W);
+}
 
 // Utility used by solver implementations
 inline double normalVelocity(const PrimitiveState& W, const std::array<double, 3>& n, int dim = 3) {

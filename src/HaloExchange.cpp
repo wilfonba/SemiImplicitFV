@@ -170,17 +170,24 @@ void HaloExchange::unpackScalar(std::vector<double>& field, int face) {
 // ---------------------------------------------------------------------------
 
 // Helper: number of scalar fields for a given VarSet and dimension
-static int numFields(VarSet varSet, int dim) {
+static int numFields(VarSet varSet, int dim, const SolutionState& state) {
+    int nMultiPhase = 0;
+    int nPhases = static_cast<int>(state.alphaRho.size());
+    if (nPhases > 0) {
+        // alphaRho (N) + alpha (N-1)
+        nMultiPhase = nPhases + (nPhases - 1);
+    }
+
     switch (varSet) {
         case VarSet::PRIM:
             // rho, velU, velV (if dim>=2), velW (if dim>=3), pres, temp, sigma
-            return 4 + (dim >= 2 ? 1 : 0) + (dim >= 3 ? 1 : 0) + 1;
+            return 4 + (dim >= 2 ? 1 : 0) + (dim >= 3 ? 1 : 0) + 1 + nMultiPhase;
         case VarSet::CONS:
             // rho, rhoU, rhoV (if dim>=2), rhoW (if dim>=3), rhoE
-            return 2 + (dim >= 2 ? 1 : 0) + (dim >= 3 ? 1 : 0) + 1;
+            return 2 + (dim >= 2 ? 1 : 0) + (dim >= 3 ? 1 : 0) + 1 + nMultiPhase;
         default:
             // All fields: conservative + primitive + sigma
-            return 5 + (dim >= 2 ? 2 : 0) + (dim >= 3 ? 2 : 0) + 3 + 1;
+            return 5 + (dim >= 2 ? 2 : 0) + (dim >= 3 ? 2 : 0) + 3 + 1 + nMultiPhase;
     }
 }
 
@@ -202,6 +209,8 @@ void HaloExchange::packState(SolutionState& state, VarSet varSet, int face) {
                 buf[pos++] = state.pres[idx];
                 buf[pos++] = state.temp[idx];
                 buf[pos++] = state.sigma[idx];
+                for (auto& ar : state.alphaRho) buf[pos++] = ar[idx];
+                for (auto& a : state.alpha) buf[pos++] = a[idx];
                 break;
             case VarSet::CONS:
                 buf[pos++] = state.rho[idx];
@@ -209,6 +218,8 @@ void HaloExchange::packState(SolutionState& state, VarSet varSet, int face) {
                 if (dim >= 2) buf[pos++] = state.rhoV[idx];
                 if (dim >= 3) buf[pos++] = state.rhoW[idx];
                 buf[pos++] = state.rhoE[idx];
+                for (auto& ar : state.alphaRho) buf[pos++] = ar[idx];
+                for (auto& a : state.alpha) buf[pos++] = a[idx];
                 break;
             default:
                 buf[pos++] = state.rho[idx];
@@ -222,6 +233,8 @@ void HaloExchange::packState(SolutionState& state, VarSet varSet, int face) {
                 buf[pos++] = state.pres[idx];
                 buf[pos++] = state.temp[idx];
                 buf[pos++] = state.sigma[idx];
+                for (auto& ar : state.alphaRho) buf[pos++] = ar[idx];
+                for (auto& a : state.alpha) buf[pos++] = a[idx];
                 break;
         }
     };
@@ -291,6 +304,8 @@ void HaloExchange::unpackState(SolutionState& state, VarSet varSet, int face) {
                 state.pres[idx]  = buf[pos++];
                 state.temp[idx]  = buf[pos++];
                 state.sigma[idx] = buf[pos++];
+                for (auto& ar : state.alphaRho) ar[idx] = buf[pos++];
+                for (auto& a : state.alpha) a[idx] = buf[pos++];
                 break;
             case VarSet::CONS:
                 state.rho[idx]  = buf[pos++];
@@ -298,6 +313,8 @@ void HaloExchange::unpackState(SolutionState& state, VarSet varSet, int face) {
                 if (dim >= 2) state.rhoV[idx] = buf[pos++];
                 if (dim >= 3) state.rhoW[idx] = buf[pos++];
                 state.rhoE[idx] = buf[pos++];
+                for (auto& ar : state.alphaRho) ar[idx] = buf[pos++];
+                for (auto& a : state.alpha) a[idx] = buf[pos++];
                 break;
             default:
                 state.rho[idx]   = buf[pos++];
@@ -311,6 +328,8 @@ void HaloExchange::unpackState(SolutionState& state, VarSet varSet, int face) {
                 state.pres[idx]  = buf[pos++];
                 state.temp[idx]  = buf[pos++];
                 state.sigma[idx] = buf[pos++];
+                for (auto& ar : state.alphaRho) ar[idx] = buf[pos++];
+                for (auto& a : state.alpha) a[idx] = buf[pos++];
                 break;
         }
     };
@@ -427,7 +446,7 @@ void HaloExchange::exchangeScalar(std::vector<double>& field) {
 
 void HaloExchange::exchangeStateDirection(SolutionState& state, VarSet varSet, int direction) {
     int dim = state.dim();
-    int nf = numFields(varSet, dim);
+    int nf = numFields(varSet, dim, state);
 
     int lowFace  = direction * 2;
     int highFace = direction * 2 + 1;
