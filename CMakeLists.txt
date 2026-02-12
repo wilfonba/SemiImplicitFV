@@ -45,6 +45,7 @@ set(LIB_SOURCES
     src/GaussSeidelPressureSolver.cpp
     src/JacobiPressureSolver.cpp
     src/MixtureEOS.cpp
+    src/ViscousFlux.cpp
     src/StiffenedGasEOS.cpp
     src/IdealGasEOS.cpp
     src/VTKWriter.cpp

@@ -99,8 +99,7 @@ while [[ $# -gt 0 ]]; do
             if [[ -z "$CASE_NAME" ]]; then
                 CASE_NAME="$1"
             else
-                echo "Error: multiple case names given" >&2
-                usage 1
+                PROGRAM_ARGS+=("$1")
             fi
             shift
             ;;

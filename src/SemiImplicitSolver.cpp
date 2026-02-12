@@ -1,6 +1,7 @@
 #include "SemiImplicitSolver.hpp"
 #include "RKTimeStepping.hpp"
 #include "MixtureEOS.hpp"
+#include "ViscousFlux.hpp"
 #include <array>
 #include <cmath>
 #include <algorithm>
@@ -528,6 +529,12 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                 }
             }
         }
+    }
+
+    // --- Viscous stress ---
+    if (config.hasViscosity()) {
+        addViscousFluxes(config, mesh, state, config.viscousParams.mu,
+                         rhsRhoU_, rhsRhoV_, rhsRhoW_, rhsRhoE_);
     }
 }
 

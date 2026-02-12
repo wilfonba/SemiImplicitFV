@@ -1,6 +1,7 @@
 #include "ExplicitSolver.hpp"
 #include "RKTimeStepping.hpp"
 #include "MixtureEOS.hpp"
+#include "ViscousFlux.hpp"
 #include "SimulationConfig.hpp"
 #include <array>
 #include <cmath>
@@ -513,6 +514,12 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                 }
             }
         }
+    }
+
+    // --- Viscous stress ---
+    if (config.hasViscosity()) {
+        addViscousFluxes(config, mesh, state, config.viscousParams.mu,
+                         rhsRhoU_, rhsRhoV_, rhsRhoW_, rhsRhoE_);
     }
 }
 

@@ -58,6 +58,10 @@ struct BodyForceParams {
     std::array<double, 3> d = {0.0, 0.0, 0.0};
 };
 
+struct ViscousParams {
+    double mu = 0.0;             // dynamic viscosity (0 = inviscid)
+};
+
 struct SimulationConfig {
     // Global parameters
     int dim = 3;
@@ -76,8 +80,11 @@ struct SimulationConfig {
     IGRParams igrParams;
     MultiPhaseParams multiPhaseParams;
     BodyForceParams bodyForceParams;
+    ViscousParams viscousParams;
 
     bool isMultiPhase() const { return multiPhaseParams.nPhases > 0; }
+
+    bool hasViscosity() const { return viscousParams.mu > 0.0; }
 
     bool hasBodyForce() const {
         for (int i = 0; i < 3; ++i)
@@ -160,6 +167,9 @@ struct SimulationConfig {
             if (mp.alphaMin <= 0.0)
                 throw std::invalid_argument("multiPhaseParams.alphaMin must be > 0");
         }
+
+        if (viscousParams.mu < 0.0)
+            throw std::invalid_argument("viscousParams.mu must be >= 0");
     }
 };
 
