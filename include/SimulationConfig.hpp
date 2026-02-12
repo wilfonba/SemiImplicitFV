@@ -1,6 +1,8 @@
 #ifndef SIMULATION_CONFIG_HPP
 #define SIMULATION_CONFIG_HPP
 
+#include <array>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -48,6 +50,14 @@ struct MultiPhaseParams {
     double alphaMin = 1e-8;      // minimum volume fraction clamp
 };
 
+struct BodyForceParams {
+    // Per-dimension: accel(t) = a + b * cos(c * t + d)
+    std::array<double, 3> a = {0.0, 0.0, 0.0};
+    std::array<double, 3> b = {0.0, 0.0, 0.0};
+    std::array<double, 3> c = {0.0, 0.0, 0.0};
+    std::array<double, 3> d = {0.0, 0.0, 0.0};
+};
+
 struct SimulationConfig {
     // Global parameters
     int dim = 3;
@@ -58,14 +68,23 @@ struct SimulationConfig {
     ReconstructionOrder reconOrder = ReconstructionOrder::WENO1;
     double wenoEps = 1e-6;
     int step = 0;
+    double time = 0.0;
 
     // Solver-specific parameters
     ExplicitParams explicitParams;
     SemiImplicitParams semiImplicitParams;
     IGRParams igrParams;
     MultiPhaseParams multiPhaseParams;
+    BodyForceParams bodyForceParams;
 
     bool isMultiPhase() const { return multiPhaseParams.nPhases > 0; }
+
+    bool hasBodyForce() const {
+        for (int i = 0; i < 3; ++i)
+            if (bodyForceParams.a[i] != 0.0 || bodyForceParams.b[i] != 0.0)
+                return true;
+        return false;
+    }
 
     int requiredGhostCells() const {
         switch (reconOrder) {

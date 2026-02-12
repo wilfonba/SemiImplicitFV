@@ -504,6 +504,31 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
             }
         }
     }
+
+    // --- Body force source terms ---
+    if (config.hasBodyForce()) {
+        const auto& bf = config.bodyForceParams;
+        double accel_x = bf.a[0] + bf.b[0] * std::cos(bf.c[0] * config.time + bf.d[0]);
+        double accel_y = bf.a[1] + bf.b[1] * std::cos(bf.c[1] * config.time + bf.d[1]);
+        double accel_z = bf.a[2] + bf.b[2] * std::cos(bf.c[2] * config.time + bf.d[2]);
+
+        for (int k = 0; k < mesh.nz(); ++k) {
+            for (int j = 0; j < mesh.ny(); ++j) {
+                for (int i = 0; i < mesh.nx(); ++i) {
+                    std::size_t idx = mesh.index(i, j, k);
+
+                    rhsRhoU_[idx] += state.rho[idx] * accel_x;
+                    if (dim >= 2) rhsRhoV_[idx] += state.rho[idx] * accel_y;
+                    if (dim >= 3) rhsRhoW_[idx] += state.rho[idx] * accel_z;
+
+                    double work = state.velU[idx] * accel_x;
+                    if (dim >= 2) work += state.velV[idx] * accel_y;
+                    if (dim >= 3) work += state.velW[idx] * accel_z;
+                    rhsRhoE_[idx] += state.rho[idx] * work;
+                }
+            }
+        }
+    }
 }
 
 void SemiImplicitSolver::solveIGR(const SimulationConfig& config,

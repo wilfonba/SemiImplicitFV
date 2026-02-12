@@ -163,6 +163,7 @@ void runTimeLoop(
             targetDt = std::min(targetDt, nextOutput - time);
         }
 
+        config.time = time;
         auto t0 = std::chrono::high_resolution_clock::now();
         double dt = stepFn(targetDt);
         auto t1 = std::chrono::high_resolution_clock::now();
