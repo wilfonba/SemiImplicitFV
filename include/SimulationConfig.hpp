@@ -62,6 +62,11 @@ struct ViscousParams {
     double mu = 0.0;             // dynamic viscosity (0 = inviscid)
 };
 
+struct SurfaceTensionParams {
+    double sigma = 0.0;          // surface tension coefficient (0 = disabled)
+    double epsGradAlpha = 1e-8;  // regularization for |grad(alpha)|
+};
+
 struct SimulationConfig {
     // Global parameters
     int dim = 3;
@@ -81,10 +86,13 @@ struct SimulationConfig {
     MultiPhaseParams multiPhaseParams;
     BodyForceParams bodyForceParams;
     ViscousParams viscousParams;
+    SurfaceTensionParams surfaceTensionParams;
 
     bool isMultiPhase() const { return multiPhaseParams.nPhases > 0; }
 
     bool hasViscosity() const { return viscousParams.mu > 0.0; }
+
+    bool hasSurfaceTension() const { return surfaceTensionParams.sigma > 0.0; }
 
     bool hasBodyForce() const {
         for (int i = 0; i < 3; ++i)
@@ -170,6 +178,11 @@ struct SimulationConfig {
 
         if (viscousParams.mu < 0.0)
             throw std::invalid_argument("viscousParams.mu must be >= 0");
+
+        if (surfaceTensionParams.sigma < 0.0)
+            throw std::invalid_argument("surfaceTensionParams.sigma must be >= 0");
+        if (surfaceTensionParams.epsGradAlpha <= 0.0)
+            throw std::invalid_argument("surfaceTensionParams.epsGradAlpha must be > 0");
     }
 };
 

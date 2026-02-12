@@ -2,6 +2,7 @@
 #include "RKTimeStepping.hpp"
 #include "MixtureEOS.hpp"
 #include "ViscousFlux.hpp"
+#include "SurfaceTension.hpp"
 #include <array>
 #include <cmath>
 #include <algorithm>
@@ -535,6 +536,13 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
     if (config.hasViscosity()) {
         addViscousFluxes(config, mesh, state, config.viscousParams.mu,
                          rhsRhoU_, rhsRhoV_, rhsRhoW_, rhsRhoE_);
+    }
+
+    // --- Surface tension (capillary stress) ---
+    if (config.hasSurfaceTension()) {
+        addSurfaceTensionFluxes(config, mesh, state,
+            config.surfaceTensionParams.sigma,
+            rhsRhoU_, rhsRhoV_, rhsRhoW_, rhsRhoE_);
     }
 }
 

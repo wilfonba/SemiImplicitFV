@@ -114,6 +114,9 @@ void convertConservativeToPrimitive(const RectilinearMesh& mesh,
     int dim = state.dim();
     int nPhases = mp.nPhases;
 
+    // Pre-allocate outside the loop to avoid per-cell heap allocations
+    std::vector<double> alphas(nPhases - 1);
+
     for (int k = 0; k < mesh.nz(); ++k) {
         for (int j = 0; j < mesh.ny(); ++j) {
             for (int i = 0; i < mesh.nx(); ++i) {
@@ -137,7 +140,6 @@ void convertConservativeToPrimitive(const RectilinearMesh& mesh,
                 if (dim >= 3) ke += 0.5 * rhoSafe * state.velW[idx] * state.velW[idx];
 
                 // Gather volume fractions
-                std::vector<double> alphas(nPhases - 1);
                 for (int ph = 0; ph < nPhases - 1; ++ph)
                     alphas[ph] = state.alpha[ph][idx];
 
@@ -159,6 +161,9 @@ void convertPrimitiveToConservative(const RectilinearMesh& mesh,
     int dim = state.dim();
     int nPhases = mp.nPhases;
 
+    // Pre-allocate outside the loop to avoid per-cell heap allocations
+    std::vector<double> alphas(nPhases - 1);
+
     for (int k = 0; k < mesh.nz(); ++k) {
         for (int j = 0; j < mesh.ny(); ++j) {
             for (int i = 0; i < mesh.nx(); ++i) {
@@ -173,7 +178,6 @@ void convertPrimitiveToConservative(const RectilinearMesh& mesh,
                 if (dim >= 2) ke += 0.5 * rho * state.velV[idx] * state.velV[idx];
                 if (dim >= 3) ke += 0.5 * rho * state.velW[idx] * state.velW[idx];
 
-                std::vector<double> alphas(nPhases - 1);
                 for (int ph = 0; ph < nPhases - 1; ++ph)
                     alphas[ph] = state.alpha[ph][idx];
 

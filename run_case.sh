@@ -126,8 +126,15 @@ if $CLEAN && [[ -d "$BUILD_DIR" ]]; then
     rm -rf "$BUILD_DIR"
 fi
 
-# --- Configure if needed ---
+# --- Configure if needed or if build type changed ---
+NEED_CONFIGURE=false
 if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
+    NEED_CONFIGURE=true
+elif ! grep -q "CMAKE_BUILD_TYPE:STRING=${BUILD_TYPE}$" "$BUILD_DIR/CMakeCache.txt"; then
+    NEED_CONFIGURE=true
+fi
+
+if $NEED_CONFIGURE; then
     echo "Configuring (${BUILD_TYPE})..."
     cmake -S "$ROOT_DIR" -B "$BUILD_DIR" \
         -DCMAKE_BUILD_TYPE="$BUILD_TYPE"

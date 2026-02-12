@@ -76,15 +76,17 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
     const auto& mp = config.multiPhaseParams;
     int nPhases = mp.nPhases;
 
+    // Pre-allocate outside the loop to avoid per-cell heap allocations
+    std::vector<double> alphas(nPhases - 1);
+    std::vector<double> alphaRhos(nPhases);
+
     for (int k = 0; k < mesh.nz(); ++k) {
         for (int j = 0; j < mesh.ny(); ++j) {
             for (int i = 0; i < mesh.nx(); ++i) {
                 std::size_t idx = mesh.index(i, j, k);
 
-                std::vector<double> alphas(nPhases - 1);
                 for (int ph = 0; ph < nPhases - 1; ++ph)
                     alphas[ph] = state.alpha[ph][idx];
-                std::vector<double> alphaRhos(nPhases);
                 for (int ph = 0; ph < nPhases; ++ph)
                     alphaRhos[ph] = state.alphaRho[ph][idx];
 
