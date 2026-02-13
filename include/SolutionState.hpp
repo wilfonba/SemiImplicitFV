@@ -82,7 +82,6 @@ public:
     std::vector<double> velV;  // y-velocity
     std::vector<double> velW;  // z-velocity
     std::vector<double> pres;  // pressure
-    std::vector<double> temp;  // temperature
     std::vector<double> sigma; // entropic pressure (IGR)
 
     // Backup conservative variables (for multi-stage time stepping)

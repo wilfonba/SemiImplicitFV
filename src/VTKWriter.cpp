@@ -143,9 +143,7 @@ void VTKWriter::writeVTR(const std::string& filename,
     };
 
     // Scalar fields
-    writeScalar("Density", state.rho);
     writeScalar("Pressure", state.pres);
-    writeScalar("Temperature", state.temp);
     writeScalar("Sigma", state.sigma);
     writeScalar("TotalEnergy", state.rhoE);
 
@@ -211,9 +209,7 @@ void VTKWriter::writePVTR(const std::string& filename,
 
     // Declare cell data arrays
     file << "    <PCellData>\n";
-    file << "      <PDataArray type=\"Float64\" Name=\"Density\"/>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"Pressure\"/>\n";
-    file << "      <PDataArray type=\"Float64\" Name=\"Temperature\"/>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"Sigma\"/>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"TotalEnergy\"/>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"Velocity\" NumberOfComponents=\"3\"/>\n";

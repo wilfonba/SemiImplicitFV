@@ -149,7 +149,6 @@ void convertConservativeToPrimitive(const RectilinearMesh& mesh,
                 // Pressure
                 double p = mixturePressure(rhoE_internal, alphas, mp);
                 state.pres[idx] = p;
-                state.temp[idx] = 0.0; // Temperature not well-defined for mixture
             }
         }
     }

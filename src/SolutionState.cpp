@@ -13,7 +13,6 @@ void SolutionState::allocate(std::size_t totalCells, const SimulationConfig& con
 
     velU.assign(totalCells, 0.0);
     pres.assign(totalCells, 0.0);
-    temp.assign(totalCells, 0.0);
     sigma.assign(totalCells, 0.0);
 
     if (dim_ >= 2) {
@@ -92,7 +91,6 @@ void SolutionState::copyCell_P(std::size_t dst, std::size_t src,
     }
 
     pres[dst] = pres[src];
-    temp[dst] = temp[src];
     sigma[dst] = sigma[src];
     aux[dst] = aux[src];
 
@@ -141,7 +139,6 @@ void SolutionState::copyCell(std::size_t dst, std::size_t src,
 
     rhoE[dst] = rhoE[src];
     pres[dst] = pres[src];
-    temp[dst] = temp[src];
     sigma[dst] = sigma[src];
     aux[dst] = aux[src];
 
@@ -174,7 +171,6 @@ PrimitiveState SolutionState::getPrimitiveState(std::size_t idx) const {
     W.u[1] = (dim_ >= 2) ? velV[idx] : 0.0;
     W.u[2] = (dim_ >= 3) ? velW[idx] : 0.0;
     W.p = pres[idx];
-    W.T = temp[idx];
     W.sigma = sigma[idx];
     return W;
 }
@@ -185,7 +181,6 @@ void SolutionState::setPrimitiveState(std::size_t idx, const PrimitiveState& W) 
     if (dim_ >= 2) velV[idx] = W.u[1];
     if (dim_ >= 3) velW[idx] = W.u[2];
     pres[idx]  = W.p;
-    temp[idx]  = W.T;
     sigma[idx] = W.sigma;
 }
 
@@ -204,7 +199,6 @@ void SolutionState::convertConservativeToPrimitiveVariables(
                 if (dim_ >= 2) velV[idx] = W.u[1];
                 if (dim_ >= 3) velW[idx] = W.u[2];
                 pres[idx] = W.p;
-                temp[idx] = W.T;
             }
         }
     }
@@ -304,7 +298,6 @@ void SolutionState::smoothFields(const RectilinearMesh& mesh, int nIterations) {
     if (dim >= 2) smoothField(velV);
     if (dim >= 3) smoothField(velW);
     smoothField(pres);
-    smoothField(temp);
 
     // Smooth multi-phase fields
     for (auto& ar : alphaRho) smoothField(ar);
@@ -367,7 +360,6 @@ void SolutionState::smoothFields(const RectilinearMesh& mesh, int nIterations,
     if (dim >= 2) smoothField(velV);
     if (dim >= 3) smoothField(velW);
     smoothField(pres);
-    smoothField(temp);
 
     for (auto& ar : alphaRho) smoothField(ar);
     for (auto& a : alpha) smoothField(a);

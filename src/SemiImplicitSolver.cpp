@@ -81,7 +81,6 @@ void SemiImplicitSolver::writeStarToState(const RectilinearMesh& mesh, SolutionS
                 if (dim >= 2) state.velV[idx] = W.u[1];
                 if (dim >= 3) state.velW[idx] = W.u[2];
                 state.pres[idx] = W.p;
-                state.temp[idx] = W.T;
             }
         }
     }
