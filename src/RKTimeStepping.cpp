@@ -140,6 +140,78 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
     return globalDt;
 }
 
+double computeViscousDt(const RectilinearMesh& mesh,
+                        const SolutionState& state,
+                        double mu, double cfl, double maxDt) {
+    double dt = maxDt;
+    int dim = mesh.dim();
+
+    for (int k = 0; k < mesh.nz(); ++k) {
+        for (int j = 0; j < mesh.ny(); ++j) {
+            for (int i = 0; i < mesh.nx(); ++i) {
+                std::size_t idx = mesh.index(i, j, k);
+
+                double dxMin = mesh.dx(i);
+                if (dim >= 2) dxMin = std::min(dxMin, mesh.dy(j));
+                if (dim >= 3) dxMin = std::min(dxMin, mesh.dz(k));
+
+                double nu = mu / std::max(state.rho[idx], 1e-14);
+                double dtCell = dxMin * dxMin / (2.0 * dim * nu);
+
+                dt = std::min(dt, cfl * dtCell);
+            }
+        }
+    }
+
+    return dt;
+}
+
+double computeViscousDt(const RectilinearMesh& mesh,
+                        const SolutionState& state,
+                        double mu, double cfl, double maxDt,
+                        MPI_Comm comm) {
+    double localDt = computeViscousDt(mesh, state, mu, cfl, maxDt);
+    double globalDt;
+    MPI_Allreduce(&localDt, &globalDt, 1, MPI_DOUBLE, MPI_MIN, comm);
+    return globalDt;
+}
+
+double computeCapillaryDt(const RectilinearMesh& mesh,
+                          const SolutionState& state,
+                          double sigma, double cfl, double maxDt) {
+    double dt = maxDt;
+    int dim = mesh.dim();
+
+    for (int k = 0; k < mesh.nz(); ++k) {
+        for (int j = 0; j < mesh.ny(); ++j) {
+            for (int i = 0; i < mesh.nx(); ++i) {
+                std::size_t idx = mesh.index(i, j, k);
+
+                double dxMin = mesh.dx(i);
+                if (dim >= 2) dxMin = std::min(dxMin, mesh.dy(j));
+                if (dim >= 3) dxMin = std::min(dxMin, mesh.dz(k));
+
+                double dtCell = std::sqrt(
+                    std::max(state.rho[idx], 1e-14) * dxMin * dxMin * dxMin / sigma);
+
+                dt = std::min(dt, cfl * dtCell);
+            }
+        }
+    }
+
+    return dt;
+}
+
+double computeCapillaryDt(const RectilinearMesh& mesh,
+                          const SolutionState& state,
+                          double sigma, double cfl, double maxDt,
+                          MPI_Comm comm) {
+    double localDt = computeCapillaryDt(mesh, state, sigma, cfl, maxDt);
+    double globalDt;
+    MPI_Allreduce(&localDt, &globalDt, 1, MPI_DOUBLE, MPI_MIN, comm);
+    return globalDt;
+}
+
 void runTimeLoop(
     Runtime& rt,
     SimulationConfig& config,

@@ -107,20 +107,14 @@ int main(int argc, char** argv)
     // Viscosity
     config.viscousParams.mu = mu;
 
-    // Viscous CFL limit: dt <= CFL_visc * dy^2 / (2 * nu)  where nu = mu/rho
-    // Viscous fluxes are explicit in both solvers, so this constrains maxDt.
-    double dy = H / Ny;
-    double nu = mu / rho0;
-    double viscousDtLimit = 0.4 * dy * dy / (2.0 * nu);
-
+    // Viscous dt limit is now enforced automatically by the solvers
+    // via computeViscousDt.
     if (useSemiImplicit) {
         config.semiImplicitParams.cfl              = 0.8;
-        config.semiImplicitParams.maxDt            = viscousDtLimit;
         config.semiImplicitParams.pressureTol      = 1e-8;
         config.semiImplicitParams.maxPressureIters = 500;
     } else {
         config.explicitParams.cfl   = 0.8;
-        config.explicitParams.maxDt = viscousDtLimit;
     }
 
     config.validate();

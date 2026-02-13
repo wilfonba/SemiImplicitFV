@@ -94,6 +94,14 @@ double SemiImplicitSolver::step(const SimulationConfig& config,
         double targetDt) {
     double dt = SemiImplicitFV::computeAdvectiveTimeStep(
         mesh, state, params_.cfl, params_.maxDt, halo_->mpi().comm());
+    if (config.hasViscosity()) {
+        dt = std::min(dt, computeViscousDt(mesh, state,
+            config.viscousParams.mu, params_.cfl, params_.maxDt, halo_->mpi().comm()));
+    }
+    if (config.hasSurfaceTension()) {
+        dt = std::min(dt, computeCapillaryDt(mesh, state,
+            config.surfaceTensionParams.sigma, params_.cfl, params_.maxDt, halo_->mpi().comm()));
+    }
     if (targetDt > 0) {
         dt = std::min(dt, targetDt);
     }

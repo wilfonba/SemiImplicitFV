@@ -61,6 +61,14 @@ double ExplicitSolver::step(const SimulationConfig& config,
     } else {
         dt = SemiImplicitFV::computeAcousticTimeStep(
             mesh, state, *eos_, config, params_.cfl, params_.maxDt, halo_->mpi().comm());
+        if (config.hasViscosity()) {
+            dt = std::min(dt, computeViscousDt(mesh, state,
+                config.viscousParams.mu, params_.cfl, params_.maxDt, halo_->mpi().comm()));
+        }
+        if (config.hasSurfaceTension()) {
+            dt = std::min(dt, computeCapillaryDt(mesh, state,
+                config.surfaceTensionParams.sigma, params_.cfl, params_.maxDt, halo_->mpi().comm()));
+        }
     }
 
     if (targetDt > 0) {
@@ -167,6 +175,15 @@ double ExplicitSolver::step(const SimulationConfig& config,
         }
 
     }
+
+    // Finalize: recompute primitives from the updated conservative state
+    // and synchronize ghost cells so the state is consistent for output
+    // and the next time step.
+    if (multiPhase)
+        MixtureEOS::convertConservativeToPrimitive(mesh, state, config.multiPhaseParams);
+    else
+        state.convertConservativeToPrimitiveVariables(mesh, eos_);
+    mesh.applyBoundaryConditions(state, VarSet::PRIM, *halo_);
 
     return dt;
 }

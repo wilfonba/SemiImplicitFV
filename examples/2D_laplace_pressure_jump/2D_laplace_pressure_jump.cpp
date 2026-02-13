@@ -131,26 +131,18 @@ int main(int argc, char** argv)
     // Surface tension
     config.surfaceTensionParams.sigma = sigma;
 
-    // ---- Time step estimates ----
-    double dxEst   = domainSize / N;
-    double cWater  = std::sqrt(gammaWater * (pAtm + pInfWater) / rhoWater);
-    double dtAcoustic  = 0.5 * dxEst / cWater;
-    double dtCapillary = 0.5 * std::sqrt(
-        std::min(rhoWater, rhoAir) * dxEst * dxEst * dxEst / sigma);
-    double dtLimit = std::min(dtAcoustic, dtCapillary);
-
     // End time: several capillary relaxation times
     double tCap   = std::sqrt(rhoWater * R0 * R0 * R0 / sigma);
     double endTime = 0.2 * tCap;
 
+    // Capillary dt limit is now enforced automatically by the solvers
+    // via computeCapillaryDt.
     if (useSemiImplicit) {
         config.semiImplicitParams.cfl              = 0.5;
-        config.semiImplicitParams.maxDt            = dtCapillary;
         config.semiImplicitParams.pressureTol      = 1e-3;
         config.semiImplicitParams.maxPressureIters = 200;
     } else {
         config.explicitParams.cfl   = 0.5;
-        config.explicitParams.maxDt = dtLimit;
     }
 
     config.validate();
@@ -167,14 +159,11 @@ int main(int argc, char** argv)
     rt.print("=== 2D Laplace Pressure Jump (Water-Air) ===\n");
     rt.print("  Solver:       ", useSemiImplicit ? "Semi-implicit" : "Explicit", "\n");
     rt.print("  Grid:         ", N, " x ", N, "\n");
-    rt.print("  dx:           ", dxEst, " m\n");
+    rt.print("  dx:           ", domainSize / N, " m\n");
     rt.print("  Droplet R:    ", R0, " m\n");
     rt.print("  sigma:        ", sigma, " N/m\n");
     rt.print("  dp_exact:     ", laplaceDp, " Pa  (sigma/R)\n");
     rt.print("  p_atm:        ", pAtm, " Pa\n");
-    rt.print("  c_water:      ", cWater, " m/s\n");
-    rt.print("  dt acoustic:  ", dtAcoustic, " s\n");
-    rt.print("  dt capillary: ", dtCapillary, " s\n");
     rt.print("  t_cap:        ", tCap, " s\n");
     rt.print("  End time:     ", endTime, " s\n");
     rt.print("  RK order:     3\n");

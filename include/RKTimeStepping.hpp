@@ -55,6 +55,26 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
                                double cfl, double maxDt,
                                MPI_Comm comm);
 
+// Viscous time step: dt <= cfl * dx_min^2 / (2 * dim * nu), nu = mu/rho.
+double computeViscousDt(const RectilinearMesh& mesh,
+                        const SolutionState& state,
+                        double mu, double cfl, double maxDt);
+
+double computeViscousDt(const RectilinearMesh& mesh,
+                        const SolutionState& state,
+                        double mu, double cfl, double maxDt,
+                        MPI_Comm comm);
+
+// Capillary time step: dt <= cfl * sqrt(rho * dx_min^3 / sigma).
+double computeCapillaryDt(const RectilinearMesh& mesh,
+                          const SolutionState& state,
+                          double sigma, double cfl, double maxDt);
+
+double computeCapillaryDt(const RectilinearMesh& mesh,
+                          const SolutionState& state,
+                          double sigma, double cfl, double maxDt,
+                          MPI_Comm comm);
+
 // ---- Time loop ----
 
 struct TimeLoopParams {
