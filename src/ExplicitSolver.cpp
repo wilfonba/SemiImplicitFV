@@ -44,6 +44,7 @@ ExplicitSolver::ExplicitSolver(
         rhsAlpha_.resize(nPhases - 1);
         for (int ph = 0; ph < nPhases - 1; ++ph)
             rhsAlpha_[ph].resize(n);
+        divU_.resize(n);
     }
 
     if (igrSolver_) {
@@ -274,6 +275,7 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
             std::fill(rhsAlphaRho_[ph].begin(), rhsAlphaRho_[ph].end(), 0.0);
         for (int ph = 0; ph < nPhases - 1; ++ph)
             std::fill(rhsAlpha_[ph].begin(), rhsAlpha_[ph].end(), 0.0);
+        std::fill(divU_.begin(), divU_.end(), 0.0);
     }
 
     // --- X-direction fluxes ---
@@ -294,11 +296,6 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                 if (multiPhase)
                     upwindIdx = (flux.massFlux >= 0) ? mesh.index(i - 1, j, k) : mesh.index(i, j, k);
 
-                // Face velocity for Abgrall-consistent alpha advection
-                double uFaceX = 0.0;
-                if (multiPhase)
-                    uFaceX = 0.5 * (left.u[0] + right.u[0]);
-
                 if (i >= 1) {
                     std::size_t idxL = mesh.index(i - 1, j, k);
                     double coeff = area / mesh.cellVolume(i - 1, j, k);
@@ -314,10 +311,9 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                             double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
                             rhsAlphaRho_[ph][idxL] -= coeff * alphaRhoFlux;
                         }
-                        for (int ph = 0; ph < nPhases - 1; ++ph) {
-                            double alphaFace = (uFaceX >= 0) ? left.alpha[ph] : right.alpha[ph];
-                            rhsAlpha_[ph][idxL] -= coeff * (alphaFace - state.alpha[ph][idxL]) * uFaceX;
-                        }
+                        for (int ph = 0; ph < nPhases - 1; ++ph)
+                            rhsAlpha_[ph][idxL] -= coeff * flux.alphaFlux[ph];
+                        divU_[idxL] += coeff * flux.faceVelocity;
                     }
                 }
 
@@ -336,10 +332,9 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                             double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
                             rhsAlphaRho_[ph][idxR] += coeff * alphaRhoFlux;
                         }
-                        for (int ph = 0; ph < nPhases - 1; ++ph) {
-                            double alphaFace = (uFaceX >= 0) ? left.alpha[ph] : right.alpha[ph];
-                            rhsAlpha_[ph][idxR] += coeff * (alphaFace - state.alpha[ph][idxR]) * uFaceX;
-                        }
+                        for (int ph = 0; ph < nPhases - 1; ++ph)
+                            rhsAlpha_[ph][idxR] += coeff * flux.alphaFlux[ph];
+                        divU_[idxR] -= coeff * flux.faceVelocity;
                     }
                 }
             }
@@ -364,11 +359,6 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                     if (multiPhase)
                         upwindIdx = (flux.massFlux >= 0) ? mesh.index(i, j - 1, k) : mesh.index(i, j, k);
 
-                    // Face velocity for Abgrall-consistent alpha advection
-                    double uFaceY = 0.0;
-                    if (multiPhase)
-                        uFaceY = 0.5 * (left.u[1] + right.u[1]);
-
                     if (j >= 1) {
                         std::size_t idxL = mesh.index(i, j - 1, k);
                         double coeff = area / mesh.cellVolume(i, j - 1, k);
@@ -384,10 +374,9 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                                 double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
                                 rhsAlphaRho_[ph][idxL] -= coeff * alphaRhoFlux;
                             }
-                            for (int ph = 0; ph < nPhases - 1; ++ph) {
-                                double alphaFace = (uFaceY >= 0) ? left.alpha[ph] : right.alpha[ph];
-                                rhsAlpha_[ph][idxL] -= coeff * (alphaFace - state.alpha[ph][idxL]) * uFaceY;
-                            }
+                            for (int ph = 0; ph < nPhases - 1; ++ph)
+                                rhsAlpha_[ph][idxL] -= coeff * flux.alphaFlux[ph];
+                            divU_[idxL] += coeff * flux.faceVelocity;
                         }
                     }
 
@@ -406,10 +395,9 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                                 double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
                                 rhsAlphaRho_[ph][idxR] += coeff * alphaRhoFlux;
                             }
-                            for (int ph = 0; ph < nPhases - 1; ++ph) {
-                                double alphaFace = (uFaceY >= 0) ? left.alpha[ph] : right.alpha[ph];
-                                rhsAlpha_[ph][idxR] += coeff * (alphaFace - state.alpha[ph][idxR]) * uFaceY;
-                            }
+                            for (int ph = 0; ph < nPhases - 1; ++ph)
+                                rhsAlpha_[ph][idxR] += coeff * flux.alphaFlux[ph];
+                            divU_[idxR] -= coeff * flux.faceVelocity;
                         }
                     }
                 }
@@ -435,11 +423,6 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                     if (multiPhase)
                         upwindIdx = (flux.massFlux >= 0) ? mesh.index(i, j, k - 1) : mesh.index(i, j, k);
 
-                    // Face velocity for Abgrall-consistent alpha advection
-                    double uFaceZ = 0.0;
-                    if (multiPhase)
-                        uFaceZ = 0.5 * (left.u[2] + right.u[2]);
-
                     if (k >= 1) {
                         std::size_t idxL = mesh.index(i, j, k - 1);
                         double coeff = area / mesh.cellVolume(i, j, k - 1);
@@ -455,10 +438,9 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                                 double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
                                 rhsAlphaRho_[ph][idxL] -= coeff * alphaRhoFlux;
                             }
-                            for (int ph = 0; ph < nPhases - 1; ++ph) {
-                                double alphaFace = (uFaceZ >= 0) ? left.alpha[ph] : right.alpha[ph];
-                                rhsAlpha_[ph][idxL] -= coeff * (alphaFace - state.alpha[ph][idxL]) * uFaceZ;
-                            }
+                            for (int ph = 0; ph < nPhases - 1; ++ph)
+                                rhsAlpha_[ph][idxL] -= coeff * flux.alphaFlux[ph];
+                            divU_[idxL] += coeff * flux.faceVelocity;
                         }
                     }
 
@@ -477,12 +459,24 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                                 double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
                                 rhsAlphaRho_[ph][idxR] += coeff * alphaRhoFlux;
                             }
-                            for (int ph = 0; ph < nPhases - 1; ++ph) {
-                                double alphaFace = (uFaceZ >= 0) ? left.alpha[ph] : right.alpha[ph];
-                                rhsAlpha_[ph][idxR] += coeff * (alphaFace - state.alpha[ph][idxR]) * uFaceZ;
-                            }
+                            for (int ph = 0; ph < nPhases - 1; ++ph)
+                                rhsAlpha_[ph][idxR] += coeff * flux.alphaFlux[ph];
+                            divU_[idxR] -= coeff * flux.faceVelocity;
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // --- Alpha source term: α ∇·u ---
+    if (multiPhase) {
+        for (int k = 0; k < mesh.nz(); ++k) {
+            for (int j = 0; j < mesh.ny(); ++j) {
+                for (int i = 0; i < mesh.nx(); ++i) {
+                    std::size_t idx = mesh.index(i, j, k);
+                    for (int ph = 0; ph < nPhases - 1; ++ph)
+                        rhsAlpha_[ph][idx] += state.alpha[ph][idx] * divU_[idx];
                 }
             }
         }

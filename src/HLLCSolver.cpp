@@ -140,6 +140,30 @@ RiemannFlux HLLCSolver::computeFlux(
         }
     }
 
+    // Alpha fluxes: alpha is a contact-type quantity (constant across acoustic waves)
+    int nAlphas = config_.isMultiPhase() ? config_.multiPhaseParams.nPhases - 1 : 0;
+    if (sL >= 0) {
+        // Pure left state
+        flux.faceVelocity = uL;
+        for (int ph = 0; ph < nAlphas; ++ph)
+            flux.alphaFlux[ph] = left.alpha[ph] * uL;
+    } else if (sR <= 0) {
+        // Pure right state
+        flux.faceVelocity = uR;
+        for (int ph = 0; ph < nAlphas; ++ph)
+            flux.alphaFlux[ph] = right.alpha[ph] * uR;
+    } else {
+        // Star region: face velocity is S*, alpha upwinds on S*
+        flux.faceVelocity = sStar;
+        if (sStar >= 0) {
+            for (int ph = 0; ph < nAlphas; ++ph)
+                flux.alphaFlux[ph] = left.alpha[ph] * sStar;
+        } else {
+            for (int ph = 0; ph < nAlphas; ++ph)
+                flux.alphaFlux[ph] = right.alpha[ph] * sStar;
+        }
+    }
+
     return flux;
 }
 

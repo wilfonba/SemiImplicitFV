@@ -71,6 +71,14 @@ RiemannFlux RusanovSolver::computeFlux(
     flux.energyFlux = 0.5 * (energyFluxL + energyFluxR)
                     - 0.5 * sMax * (rhoER - rhoEL);
 
+    // Alpha fluxes: central + Rusanov dissipation
+    flux.faceVelocity = 0.5 * (uL + uR);
+    int nAlphas = config_.isMultiPhase() ? config_.multiPhaseParams.nPhases - 1 : 0;
+    for (int ph = 0; ph < nAlphas; ++ph) {
+        flux.alphaFlux[ph] = 0.5 * (left.alpha[ph] * uL + right.alpha[ph] * uR)
+                           - 0.5 * sMax * (right.alpha[ph] - left.alpha[ph]);
+    }
+
     return flux;
 }
 

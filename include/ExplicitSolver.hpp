@@ -59,6 +59,9 @@ private:
     std::vector<std::vector<double>> rhsAlphaRho_;  // N arrays
     std::vector<std::vector<double>> rhsAlpha_;      // N-1 arrays
 
+    // Scratch array for velocity divergence (alpha source term)
+    std::vector<double> divU_;
+
     std::vector<GradientTensor> gradU_;
 
     void computeRHS(const SimulationConfig& config,

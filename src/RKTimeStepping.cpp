@@ -290,7 +290,7 @@ void runTimeLoop(
             double pct = 100.0 * time / params.endTime;
 
             std::ostringstream oss;
-            oss << "  Step " << std::setw(6) << config.step << " (" << std::fixed << std::setprecision(1) << std::setw(4) << pct << "%)"
+            oss << "  Step " << std::setw(6) << config.step << " (" << std::fixed << std::setprecision(1) << std::setw(5) << pct << "%)"
                 << " | t = " << std::scientific << std::setprecision(3) << std::setw(10) << time
                 << " | dt = " << std::scientific << std::setprecision(3) << std::setw(10) << dt;
 

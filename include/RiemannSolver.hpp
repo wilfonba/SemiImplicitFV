@@ -15,8 +15,11 @@ struct RiemannFlux {
     double massFlux;
     std::array<double, 3> momentumFlux;
     double energyFlux;
+    double alphaFlux[8];   // volume fraction fluxes (nPhases-1 entries)
+    double faceVelocity;   // normal velocity at face (for div(u) source term)
 
-    RiemannFlux() : massFlux(0.0), momentumFlux{0.0, 0.0, 0.0}, energyFlux(0.0) {}
+    RiemannFlux() : massFlux(0.0), momentumFlux{0.0, 0.0, 0.0}, energyFlux(0.0),
+                    alphaFlux{}, faceVelocity(0.0) {}
 };
 
 // Abstract base class for Riemann solvers

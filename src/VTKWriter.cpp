@@ -151,7 +151,10 @@ void VTKWriter::writeVTR(const std::string& filename,
     writeVector("Velocity", state.velU, state.velV, state.velW);
     writeVector("Momentum", state.rhoU, state.rhoV, state.rhoW);
 
-    // Multi-phase fields
+    // Density: use rho for single-phase, per-phase alphaRho for multi-phase
+    if (state.alphaRho.empty()) {
+        writeScalar("Density", state.rho);
+    }
     for (std::size_t ph = 0; ph < state.alphaRho.size(); ++ph) {
         writeScalar("AlphaRho_" + std::to_string(ph), state.alphaRho[ph]);
     }
@@ -214,6 +217,9 @@ void VTKWriter::writePVTR(const std::string& filename,
     file << "      <PDataArray type=\"Float64\" Name=\"TotalEnergy\"/>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"Velocity\" NumberOfComponents=\"3\"/>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"Momentum\" NumberOfComponents=\"3\"/>\n";
+    if (nPhases <= 0) {
+        file << "      <PDataArray type=\"Float64\" Name=\"Density\"/>\n";
+    }
     for (int ph = 0; ph < nPhases; ++ph) {
         file << "      <PDataArray type=\"Float64\" Name=\"AlphaRho_" << ph << "\"/>\n";
     }

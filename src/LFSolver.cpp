@@ -55,6 +55,14 @@ RiemannFlux LFSolver::computeFlux(
         flux.energyFlux += 0.5 * (left.sigma * uL + right.sigma * uR);
     }
 
+    // Alpha fluxes: central + Lax-Friedrichs dissipation
+    flux.faceVelocity = 0.5 * (uL + uR);
+    int nAlphas = config_.isMultiPhase() ? config_.multiPhaseParams.nPhases - 1 : 0;
+    for (int ph = 0; ph < nAlphas; ++ph) {
+        flux.alphaFlux[ph] = 0.5 * (left.alpha[ph] * uL + right.alpha[ph] * uR)
+                           - 0.5 * C * (right.alpha[ph] - left.alpha[ph]);
+    }
+
     return flux;
 }
 

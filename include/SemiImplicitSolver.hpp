@@ -74,6 +74,9 @@ private:
     std::vector<std::vector<double>> rhsAlphaRho_;  // N arrays
     std::vector<std::vector<double>> rhsAlpha_;      // N-1 arrays
 
+    // Scratch array for velocity divergence (alpha source term)
+    std::vector<double> divU_;
+
     void computeRHS(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state);
     void solveIGR(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state);
     void solvePressure(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state, double dt);
