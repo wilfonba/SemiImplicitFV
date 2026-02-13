@@ -9,11 +9,23 @@ A finite volume solver for the compressible Euler equations on rectilinear meshe
 - **Riemann solvers** — Lax-Friedrichs, Rusanov, and HLLC
 - **Equations of state** — Ideal gas and stiffened gas
 - **N-phase compressible flow** — Volume-fraction-based multi-phase model with per-phase stiffened gas EOS, Wood's mixture sound speed, and mixture Riemann solvers
+- **Viscosity** — Newtonian viscous stress tensor with Stokes hypothesis
+- **Body forces** — Time-dependent gravitational / body force acceleration per dimension
+- **Surface tension** — Capillary stress tensor (Schmidmayer et al. 2017) with CSF interface force
 - **Information Geometric Regularization (IGR)** — Entropic pressure via elliptic solve for improved stability
 - **1D / 2D / 3D** on rectilinear (uniform) meshes with ghost cells
 - **Boundary conditions** — Periodic, Reflective, Outflow, Slip Wall, No-Slip Wall
 - **MPI parallelism** — Cartesian domain decomposition with non-blocking halo exchange
 - **VTK output** — `.vtr` (serial), `.pvtr` (parallel), and `.pvd` (time series) for ParaView
+
+## Convergence
+
+The 1D advection test case (Gaussian density pulse on a periodic domain, WENO5 + RK3) demonstrates the expected convergence rates for both solvers across grid resolutions from 128 to 2048 cells:
+
+![Convergence of explicit and semi-implicit solvers](examples/1D_advection/convergence.png)
+
+- **Explicit solver** (red, CFL = 0.8): 5th-order convergence in all norms, matching the WENO5 spatial accuracy
+- **Semi-implicit solver** (blue, effective CFL ~ 27): 3rd-order convergence, limited by the RK3 time integrator but with substantially larger time steps
 
 ## Quick Start
 
@@ -123,6 +135,43 @@ config.multiPhaseParams.alphaMin = 1e-8;     // Minimum volume fraction clamp
 ```
 
 Volume fractions (`alpha[k]`) are tracked for phases 0 through `nPhases - 2`; the last phase fraction is `1 - sum(alpha[k])`. The solver uses Wood's mixture sound speed at cell centers and an equivalent single-fluid formula at reconstructed faces.
+
+### Viscosity
+
+Enable Newtonian viscous fluxes by setting a non-zero dynamic viscosity:
+
+```cpp
+config.viscousParams.mu = 1.81e-5;  // dynamic viscosity in Pa·s (0 = inviscid)
+```
+
+The viscous stress tensor uses the Stokes hypothesis: `tau_ij = mu * (du_i/dx_j + du_j/dx_i) - (2/3) * mu * div(u) * delta_ij`. Viscous work (`tau . u`) is included in the energy equation.
+
+### Body Forces
+
+Apply time-dependent body forces with a per-dimension acceleration of the form `a(t) = a + b * cos(c * t + d)`:
+
+```cpp
+// Constant gravity in the y-direction
+config.bodyForceParams.a = {0.0, -9.81, 0.0};
+
+// Oscillating force in the x-direction: 5.0 * cos(2*pi*t)
+config.bodyForceParams.a = {0.0, 0.0, 0.0};
+config.bodyForceParams.b = {5.0, 0.0, 0.0};
+config.bodyForceParams.c = {2.0 * M_PI, 0.0, 0.0};
+```
+
+### Surface Tension
+
+Enable surface tension for multi-phase simulations. The capillary stress tensor (Schmidmayer et al. 2017) is:
+
+`T_cap = sigma * ( |grad(alpha)| I - grad(alpha) x grad(alpha) / |grad(alpha)| )`
+
+whose divergence recovers the classical Continuum Surface Force (CSF): `div(T_cap) = sigma * kappa * grad(alpha)`.
+
+```cpp
+config.surfaceTensionParams.sigma = 0.0728;        // surface tension coefficient in N/m
+config.surfaceTensionParams.epsGradAlpha = 1e-8;    // regularization for |grad(alpha)|
+```
 
 ### Reconstruction Orders
 
@@ -328,6 +377,8 @@ SemiImplicitFV/
 │   ├── IdealGasEOS.hpp        Ideal gas EOS
 │   ├── StiffenedGasEOS.hpp    Stiffened gas EOS
 │   ├── MixtureEOS.hpp         N-phase mixture EOS routines
+│   ├── ViscousFlux.hpp        Newtonian viscous stress
+│   ├── SurfaceTension.hpp     Capillary stress tensor
 │   ├── PressureSolver.hpp     Abstract pressure solver
 │   ├── Runtime.hpp            MPI/serial runtime abstraction
 │   ├── MPIContext.hpp         MPI domain decomposition
@@ -340,7 +391,10 @@ SemiImplicitFV/
 │   ├── 1D_sod_shocktube/
 │   ├── 1D_gas_gas_shocktube/       Two-phase ideal gas shock tube
 │   ├── 1D_liquid_gas_shocktube/    Water-air stiffened gas shock tube
+│   ├── 1D_hydrostatic_water/       Hydrostatic column with gravity
+│   ├── 2D_channel_flow/            Viscous Poiseuille flow
 │   ├── 2D_isentropic_vortex/
+│   ├── 2D_laplace_pressure_jump/   Droplet with surface tension
 │   ├── 2D_quasi1D_sod/
 │   └── 2D_riemann/
 ├── CMakeLists.txt
