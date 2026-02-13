@@ -15,7 +15,7 @@ VTKSession::VTKSession(Runtime& rt, const std::string& baseName,
     localExtent_ = rt_.mpiContext().localExtent();
 
     if (rt_.isRoot()) {
-        VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "w");
+        VTKWriter::writePVD(baseName_ + ".pvd", "w");
     }
 }
 
@@ -46,7 +46,7 @@ void VTKSession::write(const SolutionState& state, double time) {
         VTKWriter::writePVTR(dir_ + "/" + pvtrFile,
                              rt_.globalNx(), rt_.globalNy(), rt_.globalNz(),
                              allExtents, allFiles, nPhases);
-        VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "a", time, pvtrFile);
+        VTKWriter::writePVD(baseName_ + ".pvd", "a", time, dir_ + "/" + pvtrFile);
     }
 
     fileNum_++;
@@ -54,7 +54,7 @@ void VTKSession::write(const SolutionState& state, double time) {
 
 void VTKSession::finalize() {
     if (rt_.isRoot()) {
-        VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "close");
+        VTKWriter::writePVD(baseName_ + ".pvd", "close");
     }
 }
 
