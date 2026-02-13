@@ -23,8 +23,9 @@ struct PrimitiveState {
     double sigma;                  // Entropic pressure (IGR)
     double gammaEff;               // Effective gamma for multi-phase (0 = single-phase)
     double piInfEff;               // Effective piInf for multi-phase stiffened gas (0 = ideal gas)
+    double alpha[8];               // Reconstructed volume fractions at face (multi-phase)
 
-    PrimitiveState() : rho(0.0), u{0.0}, p(0.0), T(0.0), sigma(0.0), gammaEff(0.0), piInfEff(0.0) {}
+    PrimitiveState() : rho(0.0), u{0.0}, p(0.0), T(0.0), sigma(0.0), gammaEff(0.0), piInfEff(0.0), alpha{} {}
 };
 
 } // namespace SemiImplicitFV

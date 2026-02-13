@@ -5,6 +5,9 @@
 #include "ExplicitSolver.hpp"
 #include "SemiImplicitSolver.hpp"
 #include "GaussSeidelPressureSolver.hpp"
+#ifdef SIFV_HAS_HYPRE
+#include "HyprePressureSolver.hpp"
+#endif
 #include "IdealGasEOS.hpp"
 #include "MixtureEOS.hpp"
 #include "SimulationConfig.hpp"
@@ -38,11 +41,9 @@ static constexpr double rhoLight = 1.0;        // bubble fluid density (kg/m^3)
 static constexpr double grav     = 0.98;       // gravitational acceleration (m/s^2)
 static constexpr double sigmaST  = 1.96;       // surface tension coefficient (N/m)
 
-// Dynamic viscosity: mu_heavy = 10 Pa*s, mu_light = 0.1 Pa*s
-// NOTE: The code uses a single global mu, so we set it from the heavy phase.
-// The light phase would need mu = 0.1 Pa*s for an exact match,
-// but that requires per-phase viscosity which is not yet implemented.
-static constexpr double muVisc   = 10.0;       // Pa*s (heavy phase)
+// Dynamic viscosity (Hysing et al. Case 2): mu_heavy = 10 Pa*s, mu_light = 0.1 Pa*s
+static constexpr double muHeavy  = 10.0;      // Pa*s (heavy/surrounding)
+static constexpr double muLight  = 0.1;       // Pa*s (light/bubble)
 
 // EOS: both phases ideal gas with same gamma (artificial benchmark fluids)
 static constexpr double gammaGas = 1.4;
@@ -123,15 +124,26 @@ int main(int argc, char** argv)
     // ---- Parse command-line arguments ----
     int Ny = 80;
     bool useSemiImplicit = false;
+    bool useHypre = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg(argv[i]);
         if (arg == "--semi-implicit") {
             useSemiImplicit = true;
+        } else if (arg == "--hypre") {
+            useHypre = true;
         } else {
             Ny = std::stoi(arg);
         }
     }
+
+#ifndef SIFV_HAS_HYPRE
+    if (useHypre) {
+        std::cerr << "Warning: --hypre requested but SIFV_HAS_HYPRE not enabled at build time. "
+                  << "Falling back to Gauss-Seidel.\n";
+        useHypre = false;
+    }
+#endif
 
     int Nx = Ny / 2;  // uniform grid: dx = dy
 
@@ -153,16 +165,17 @@ int main(int argc, char** argv)
     // Body force: gravity in -y direction
     config.bodyForceParams.a[1] = -grav;
 
-    // Viscosity
-    config.viscousParams.mu = muVisc;
+    // Per-phase viscosity (arithmetic mixture rule: mu = sum alpha_k * mu_k)
+    config.viscousParams.phaseMu = {muHeavy, muLight};
 
     // Surface tension
     config.surfaceTensionParams.sigma = sigmaST;
 
     // ---- Solver parameters ----
     if (useSemiImplicit) {
-        config.semiImplicitParams.cfl              = 0.5;
-        config.semiImplicitParams.pressureTol      = 1e-3;
+        config.semiImplicitParams.cfl              = 0.2;
+        config.semiImplicitParams.pressureTol      = 1e-6;
+        config.semiImplicitParams.maxDt            = 1e-3;
         config.semiImplicitParams.maxPressureIters = 200;
     } else {
         config.explicitParams.cfl   = 0.5;
@@ -183,12 +196,16 @@ int main(int argc, char** argv)
     // ---- Print setup ----
     rt.print("=== 2D Rising Bubble (Hysing et al. 2009, Case 2) ===\n");
     rt.print("  Solver:       ", useSemiImplicit ? "Semi-implicit" : "Explicit", "\n");
+    if (useSemiImplicit) {
+        rt.print("  Pressure:     ", useHypre ? "Hypre PCG+PFMG" : "Gauss-Seidel", "\n");
+    }
     rt.print("  Grid:         ", Nx, " x ", Ny, "\n");
     rt.print("  dx = dy:      ", Ly / Ny, " m\n");
     rt.print("  Bubble R:     ", R0, " m, center (", xc0, ", ", yc0, ")\n");
     rt.print("  rho_heavy:    ", rhoHeavy, " kg/m^3\n");
     rt.print("  rho_light:    ", rhoLight, " kg/m^3\n");
-    rt.print("  mu:           ", muVisc, " Pa*s\n");
+    rt.print("  mu_heavy:     ", muHeavy, " Pa*s\n");
+    rt.print("  mu_light:     ", muLight, " Pa*s\n");
     rt.print("  g:            ", grav, " m/s^2\n");
     rt.print("  sigma:        ", sigmaST, " N/m\n");
     rt.print("  Re:           35\n");
@@ -214,7 +231,22 @@ int main(int argc, char** argv)
     std::unique_ptr<SemiImplicitSolver> semiImplicitSolver;
 
     if (useSemiImplicit) {
-        auto pressureSolver = std::make_shared<GaussSeidelPressureSolver>();
+        std::shared_ptr<PressureSolver> pressureSolver;
+#ifdef SIFV_HAS_HYPRE
+        if (useHypre) {
+            if (rt.size() > 1) {
+                pressureSolver = std::make_shared<HyprePressureSolver>(
+                    rt.mpiContext().comm(),
+                    rt.mpiContext().localExtent(),
+                    std::array<int,3>{0, 0, 0});
+            } else {
+                pressureSolver = std::make_shared<HyprePressureSolver>();
+            }
+        } else
+#endif
+        {
+            pressureSolver = std::make_shared<GaussSeidelPressureSolver>();
+        }
         semiImplicitSolver = std::make_unique<SemiImplicitSolver>(
             mesh, riemannSolver, pressureSolver, eos, nullptr, config);
         rt.attachSolver(*semiImplicitSolver, mesh);
@@ -233,10 +265,17 @@ int main(int argc, char** argv)
     // ---- Run ----
     VTKSession vtk(rt, "2D_rising_bubble", mesh);
 
-    runTimeLoop(rt, config, mesh, state, vtk, stepFn,
-                {.endTime        = endTime,
-                 .outputInterval = 0.03,
-                 .printInterval  = 50});
+    TimeLoopParams tlp;
+    tlp.endTime        = endTime;
+    tlp.outputInterval = 0.03;
+    tlp.printInterval  = 50;
+    if (useSemiImplicit) {
+        tlp.acousticDtFn = [&]() {
+            return computeAcousticTimeStep(mesh, state, *eos, config,
+                                           1.0, 1e30, rt.mpiContext().comm());
+        };
+    }
+    runTimeLoop(rt, config, mesh, state, vtk, stepFn, tlp);
 
     // ---- Diagnostics: bubble center of mass and rise velocity ----
     // Phase 1 (light/bubble) volume fraction = 1 - alpha[0]

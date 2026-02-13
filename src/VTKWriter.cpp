@@ -243,6 +243,10 @@ void VTKWriter::writePVTR(const std::string& filename,
     file.close();
 }
 
+// PVD footer written after every append so the file is always valid XML
+// and can be opened in ParaView while the simulation is still running.
+static const std::string pvdFooter = "  </Collection>\n</VTKFile>\n";
+
 void VTKWriter::writePVD(const std::string& filename,
                          const std::string& mode,
                          double time,
@@ -257,8 +261,13 @@ void VTKWriter::writePVD(const std::string& filename,
         file << "<?xml version=\"1.0\"?>\n";
         file << "<VTKFile type=\"Collection\" version=\"1.0\" byte_order=\"LittleEndian\">\n";
         file << "  <Collection>\n";
+        file << pvdFooter;
         file.close();
     } else if (mode == "a") {
+        // Truncate the closing tags, append new entry, re-write closing tags.
+        auto fileSize = std::filesystem::file_size(filename);
+        std::filesystem::resize_file(filename, fileSize - pvdFooter.size());
+
         std::ofstream file(filename, std::ios::app);
         if (!file.is_open()) {
             throw std::runtime_error("VTKWriter::writePVD: cannot open " + filename);
@@ -266,16 +275,10 @@ void VTKWriter::writePVD(const std::string& filename,
         file << std::setprecision(15);
         file << "    <DataSet timestep=\"" << time
              << "\" file=\"" << dataFile << "\"/>\n";
-        file.close();
-    } else if (mode == "close") {
-        std::ofstream file(filename, std::ios::app);
-        if (!file.is_open()) {
-            throw std::runtime_error("VTKWriter::writePVD: cannot open " + filename);
-        }
-        file << "  </Collection>\n";
-        file << "</VTKFile>\n";
+        file << pvdFooter;
         file.close();
     }
+    // "close" is a no-op — the file is always kept in a valid state.
 }
 
 } // namespace SemiImplicitFV

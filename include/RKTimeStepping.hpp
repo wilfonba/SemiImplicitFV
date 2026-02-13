@@ -81,6 +81,10 @@ struct TimeLoopParams {
     double endTime;
     double outputInterval;
     int printInterval = 1;
+    bool checkNaN = true;           // Abort if NaNs detected at I/O steps
+    // If set, prints acoustic CFL = dt / acousticDtFn() at each print step.
+    // The callback should return the acoustic time step with CFL=1.
+    std::function<double()> acousticDtFn;
 };
 
 void runTimeLoop(

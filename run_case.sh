@@ -18,6 +18,7 @@ Options:
   -d, --debug       Build in Debug mode
   -n <N>            Number of MPI ranks (default: 1)
   --build-only      Only build, do not run
+  --hypre           Enable Hypre pressure solver (PCG+PFMG)
   -j <N>            Parallel build jobs (default: number of cores)
   -h, --help        Show this help
 
@@ -26,6 +27,7 @@ Examples:
   ./run_case.sh --debug 1D_advection
   ./run_case.sh -n 4 1D_sod_shocktube
   ./run_case.sh -j4 1D_sod_shocktube -- --some-arg
+  ./run_case.sh --hypre 2D_rising_bubble -- --semi-implicit --hypre
 EOF
     exit "${1:-0}"
 }
@@ -44,6 +46,7 @@ list_cases() {
 # --- Parse arguments ---
 CLEAN=false
 BUILD_ONLY=false
+ENABLE_HYPRE=false
 MPI_RANKS=1
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)"
 CASE_NAME=""
@@ -73,6 +76,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --build-only)
             BUILD_ONLY=true
+            shift
+            ;;
+        --hypre)
+            ENABLE_HYPRE=true
             shift
             ;;
         -j)
@@ -126,18 +133,28 @@ if $CLEAN && [[ -d "$BUILD_DIR" ]]; then
     rm -rf "$BUILD_DIR"
 fi
 
-# --- Configure if needed or if build type changed ---
+# --- Resolve cmake option values ---
+if $ENABLE_HYPRE; then
+    HYPRE_OPT="ON"
+else
+    HYPRE_OPT="OFF"
+fi
+
+# --- Configure if needed or if build type / options changed ---
 NEED_CONFIGURE=false
 if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
     NEED_CONFIGURE=true
 elif ! grep -q "CMAKE_BUILD_TYPE:STRING=${BUILD_TYPE}$" "$BUILD_DIR/CMakeCache.txt"; then
     NEED_CONFIGURE=true
+elif ! grep -q "ENABLE_HYPRE:BOOL=${HYPRE_OPT}$" "$BUILD_DIR/CMakeCache.txt"; then
+    NEED_CONFIGURE=true
 fi
 
 if $NEED_CONFIGURE; then
-    echo "Configuring (${BUILD_TYPE})..."
+    echo "Configuring (${BUILD_TYPE}, HYPRE=${HYPRE_OPT})..."
     cmake -S "$ROOT_DIR" -B "$BUILD_DIR" \
-        -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+        -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+        -DENABLE_HYPRE="$HYPRE_OPT"
 fi
 
 # --- Build just this target ---

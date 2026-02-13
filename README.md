@@ -9,7 +9,7 @@ A finite volume solver for the compressible Euler equations on rectilinear meshe
 - **Riemann solvers** — Lax-Friedrichs, Rusanov, and HLLC
 - **Equations of state** — Ideal gas and stiffened gas
 - **N-phase compressible flow** — Volume-fraction-based multi-phase model with per-phase stiffened gas EOS, Wood's mixture sound speed, and mixture Riemann solvers
-- **Viscosity** — Newtonian viscous stress tensor with Stokes hypothesis
+- **Viscosity** — Newtonian viscous stress tensor with Stokes hypothesis; per-phase viscosity via arithmetic mixture rule for multi-phase flows
 - **Body forces** — Time-dependent gravitational / body force acceleration per dimension
 - **Surface tension** — Capillary stress tensor (Schmidmayer et al. 2017) with CSF interface force
 - **Information Geometric Regularization (IGR)** — Entropic pressure via elliptic solve for improved stability
@@ -145,6 +145,24 @@ config.viscousParams.mu = 1.81e-5;  // dynamic viscosity in Pa·s (0 = inviscid)
 ```
 
 The viscous stress tensor uses the Stokes hypothesis: `tau_ij = mu * (du_i/dx_j + du_j/dx_i) - (2/3) * mu * div(u) * delta_ij`. Viscous work (`tau . u`) is included in the energy equation.
+
+#### Per-Phase Viscosity
+
+For multi-phase problems where each fluid has a different viscosity, set `phaseMu` instead of the scalar `mu`. The vector must have one entry per phase, matching the order in `multiPhaseParams.phases`:
+
+```cpp
+// Per-phase viscosity: water (phase 0) and air (phase 1)
+config.viscousParams.phaseMu = {1.0e-3, 1.81e-5};  // Pa·s per phase
+```
+
+The effective viscosity at each cell face is computed on-the-fly using an arithmetic volume-fraction-weighted mixture rule:
+
+```
+mu_cell = sum_k( alpha_k * mu_k )
+mu_face = 0.5 * ( mu_left + mu_right )
+```
+
+When `phaseMu` is set, the scalar `mu` field is ignored. When `phaseMu` is empty (the default), the scalar `mu` is used uniformly. This avoids allocating a viscosity array equal to the problem size.
 
 ### Body Forces
 
@@ -341,6 +359,52 @@ Rebuild, and the new executable appears automatically:
 ./run_case.sh my_case
 ```
 
+### Multi-Phase Viscous Example
+
+The `2D_rising_bubble` example demonstrates a full multi-phase viscous setup with gravity and surface tension (Hysing et al. 2009, Test Case 2). The key configuration pattern for combining multi-phase with per-phase viscosity, body forces, and surface tension:
+
+```cpp
+// Two-phase EOS: heavy surrounding fluid + light bubble
+config.multiPhaseParams.nPhases  = 2;
+config.multiPhaseParams.phases   = {{6.12, 3.43e8}, {1.4, 0.0}};
+config.multiPhaseParams.alphaMin = 1e-8;
+
+// Per-phase viscosity (phase 0 = heavy, phase 1 = light)
+config.viscousParams.phaseMu = {10.0, 0.1};     // Pa·s
+
+// Gravity
+config.bodyForceParams.a[1] = -9.81;
+
+// Surface tension
+config.surfaceTensionParams.sigma = 1.96;        // N/m
+```
+
+When initializing the solution state, set the volume fractions and partial densities per cell. The mixture EOS computes total energy from the local phase composition:
+
+```cpp
+SolutionState state;
+state.allocate(mesh.totalCells(), config);
+
+for (int j = 0; j < mesh.ny(); ++j) {
+    for (int i = 0; i < mesh.nx(); ++i) {
+        std::size_t idx = mesh.index(i, j, 0);
+        // ... compute alphaHeavy from interface geometry ...
+
+        state.alpha[0][idx]    = alphaHeavy;              // phase 0 volume fraction
+        state.alphaRho[0][idx] = alphaHeavy * rhoHeavy;   // phase 0 partial density
+        state.alphaRho[1][idx] = (1.0 - alphaHeavy) * rhoLight;
+        state.rho[idx]         = state.alphaRho[0][idx] + state.alphaRho[1][idx];
+
+        state.pres[idx] = p;
+        std::vector<double> alphas = {alphaHeavy};
+        state.rhoE[idx] = MixtureEOS::mixtureTotalEnergy(
+            state.rho[idx], p, alphas, 0.0, config.multiPhaseParams);
+    }
+}
+```
+
+No viscosity array is allocated — the viscous flux routine evaluates `mu = sum(alpha_k * mu_k)` at each face directly from the volume fractions stored in the solution state.
+
 ## MPI Execution
 
 MPI is always linked. Run with `mpirun`:
@@ -396,7 +460,8 @@ SemiImplicitFV/
 │   ├── 2D_isentropic_vortex/
 │   ├── 2D_laplace_pressure_jump/   Droplet with surface tension
 │   ├── 2D_quasi1D_sod/
-│   └── 2D_riemann/
+│   ├── 2D_riemann/
+│   └── 2D_rising_bubble/         Multi-phase viscous bubble with surface tension
 ├── CMakeLists.txt
 └── run_case.sh            Build & run helper script
 ```

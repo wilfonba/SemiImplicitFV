@@ -250,17 +250,57 @@ void runTimeLoop(
         if (time >= nextOutput - 1e-12 * params.outputInterval) {
             vtk.write(state, time);
             nextOutput += params.outputInterval;
+
+            // NaN check at each I/O step
+            if (params.checkNaN) {
+                const char* nanField = nullptr;
+                for (int k = 0; k < mesh.nz() && !nanField; ++k)
+                    for (int j = 0; j < mesh.ny() && !nanField; ++j)
+                        for (int i = 0; i < mesh.nx() && !nanField; ++i) {
+                            std::size_t idx = mesh.index(i, j, k);
+                            if (std::isnan(state.rho[idx]))  { nanField = "rho";  break; }
+                            if (std::isnan(state.rhoU[idx])) { nanField = "rhoU"; break; }
+                            if (std::isnan(state.rhoE[idx])) { nanField = "rhoE"; break; }
+                            if (std::isnan(state.pres[idx])) { nanField = "pres"; break; }
+                            if (mesh.dim() >= 2 && std::isnan(state.rhoV[idx])) { nanField = "rhoV"; break; }
+                            if (mesh.dim() >= 3 && std::isnan(state.rhoW[idx])) { nanField = "rhoW"; break; }
+                        }
+
+                int localNaN = nanField ? 1 : 0;
+                int globalNaN = 0;
+                MPI_Allreduce(&localNaN, &globalNaN, 1, MPI_INT, MPI_MAX,
+                              rt.mpiContext().comm());
+
+                if (globalNaN) {
+                    if (nanField) {
+                        rt.print("ERROR: NaN detected in field '", nanField,
+                                 "' at step ", config.step,
+                                 ", t = ", time, ". Aborting.\n");
+                    } else {
+                        rt.print("ERROR: NaN detected on another rank at step ",
+                                 config.step, ", t = ", time, ". Aborting.\n");
+                    }
+                    vtk.finalize();
+                    MPI_Abort(rt.mpiContext().comm(), 1);
+                }
+            }
         }
 
         if (config.step % params.printInterval == 0 || config.step == 1) {
             double pct = 100.0 * time / params.endTime;
 
             std::ostringstream oss;
-            oss << "  Step " << std::setw(6) << config.step
+            oss << "  Step " << std::setw(6) << config.step << " (" << std::fixed << std::setprecision(1) << std::setw(4) << pct << "%)"
                 << " | t = " << std::scientific << std::setprecision(3) << std::setw(10) << time
-                << " | dt = " << std::scientific << std::setprecision(3) << std::setw(10) << dt
-                << " | t/T = " << std::fixed << std::setprecision(1) << std::setw(5) << pct << "%"
-                << " | step wall = " << std::scientific << std::setprecision(2) << stepWall << " s";
+                << " | dt = " << std::scientific << std::setprecision(3) << std::setw(10) << dt;
+
+            if (params.acousticDtFn) {
+                double dtAcoustic = params.acousticDtFn();
+                double acousticCFL = dt / std::max(dtAcoustic, 1e-30);
+                oss << " | CFL_ac = " << std::fixed << std::setprecision(1) << acousticCFL;
+            }
+
+            oss << " | T/step = " << std::scientific << std::setprecision(2) << stepWall << " s";
 
             if (config.useIGR) {
                 double localMaxSigma = 0.0;

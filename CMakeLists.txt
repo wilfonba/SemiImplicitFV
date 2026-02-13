@@ -9,6 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(BUILD_EXAMPLES "Build example programs" ON)
 option(BUILD_TESTS "Build unit tests" OFF)
 option(ENABLE_OPENMP "Enable OpenMP parallelization" OFF)
+option(ENABLE_HYPRE "Enable Hypre pressure solver (PCG+PFMG)" OFF)
 
 # Compiler flags
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -28,6 +29,20 @@ endif()
 
 # MPI
 find_package(MPI REQUIRED)
+
+# Hypre (optional, fetched automatically)
+if(ENABLE_HYPRE)
+    include(FetchContent)
+    FetchContent_Declare(
+        hypre
+        GIT_REPOSITORY https://github.com/hypre-space/hypre.git
+        GIT_TAG v2.31.0
+        SOURCE_SUBDIR src
+    )
+    set(HYPRE_ENABLE_SHARED OFF CACHE BOOL "" FORCE)
+    set(HYPRE_ENABLE_BIGINT OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(hypre)
+endif()
 
 # Library sources
 set(LIB_SOURCES
@@ -68,6 +83,14 @@ if(ENABLE_OPENMP)
 endif()
 
 target_link_libraries(SemiImplicitFV PUBLIC MPI::MPI_CXX)
+
+# Hypre integration
+if(ENABLE_HYPRE)
+    target_sources(SemiImplicitFV PRIVATE src/HyprePressureSolver.cpp)
+    target_compile_definitions(SemiImplicitFV PUBLIC SIFV_HAS_HYPRE)
+    target_link_libraries(SemiImplicitFV PUBLIC HYPRE)
+    target_include_directories(SemiImplicitFV PUBLIC ${hypre_BINARY_DIR}/include)
+endif()
 
 # Examples — auto-discover every examples/<case>/*.cpp
 if(BUILD_EXAMPLES)

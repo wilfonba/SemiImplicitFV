@@ -59,7 +59,8 @@ struct BodyForceParams {
 };
 
 struct ViscousParams {
-    double mu = 0.0;             // dynamic viscosity (0 = inviscid)
+    double mu = 0.0;             // dynamic viscosity (0 = inviscid, single-phase)
+    std::vector<double> phaseMu; // per-phase viscosity (empty = use scalar mu)
 };
 
 struct SurfaceTensionParams {
@@ -90,7 +91,9 @@ struct SimulationConfig {
 
     bool isMultiPhase() const { return multiPhaseParams.nPhases > 0; }
 
-    bool hasViscosity() const { return viscousParams.mu > 0.0; }
+    bool hasViscosity() const {
+        return viscousParams.mu > 0.0 || !viscousParams.phaseMu.empty();
+    }
 
     bool hasSurfaceTension() const { return surfaceTensionParams.sigma > 0.0; }
 
@@ -178,6 +181,17 @@ struct SimulationConfig {
 
         if (viscousParams.mu < 0.0)
             throw std::invalid_argument("viscousParams.mu must be >= 0");
+
+        if (!viscousParams.phaseMu.empty()) {
+            if (!isMultiPhase())
+                throw std::invalid_argument("viscousParams.phaseMu requires multi-phase (nPhases >= 2)");
+            if (static_cast<int>(viscousParams.phaseMu.size()) != multiPhaseParams.nPhases)
+                throw std::invalid_argument("viscousParams.phaseMu.size() must equal nPhases");
+            for (int ph = 0; ph < multiPhaseParams.nPhases; ++ph)
+                if (viscousParams.phaseMu[ph] < 0.0)
+                    throw std::invalid_argument("viscousParams.phaseMu[" + std::to_string(ph)
+                        + "] must be >= 0");
+        }
 
         if (surfaceTensionParams.sigma < 0.0)
             throw std::invalid_argument("surfaceTensionParams.sigma must be >= 0");

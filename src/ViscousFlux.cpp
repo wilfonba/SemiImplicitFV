@@ -6,13 +6,33 @@ void addViscousFluxes(
     const SimulationConfig& config,
     const RectilinearMesh& mesh,
     const SolutionState& state,
-    double mu,
     std::vector<double>& rhsRhoU,
     std::vector<double>& rhsRhoV,
     std::vector<double>& rhsRhoW,
     std::vector<double>& rhsRhoE)
 {
     int dim = config.dim;
+    const auto& vp = config.viscousParams;
+    const auto& mp = config.multiPhaseParams;
+    const bool perPhase = !vp.phaseMu.empty();
+
+    // Compute face viscosity from the two neighboring cells.
+    // Arithmetic mixture rule: mu_cell = sum_k(alpha_k * mu_k),
+    // then face value = average of left and right cells.
+    auto faceMu = [&](std::size_t idxL, std::size_t idxR) -> double {
+        if (!perPhase) return vp.mu;
+        double muL = 0.0, muR = 0.0;
+        double alphaLastL = 1.0, alphaLastR = 1.0;
+        for (int ph = 0; ph < mp.nPhases - 1; ++ph) {
+            muL += state.alpha[ph][idxL] * vp.phaseMu[ph];
+            muR += state.alpha[ph][idxR] * vp.phaseMu[ph];
+            alphaLastL -= state.alpha[ph][idxL];
+            alphaLastR -= state.alpha[ph][idxR];
+        }
+        muL += alphaLastL * vp.phaseMu[mp.nPhases - 1];
+        muR += alphaLastR * vp.phaseMu[mp.nPhases - 1];
+        return 0.5 * (muL + muR);
+    };
 
     // --- X-direction faces ---
     for (int k = 0; k < mesh.nz(); ++k) {
@@ -70,9 +90,10 @@ void addViscousFluxes(
                 double divU = dudx + dvdy + dwdz;
 
                 // Viscous stress components (x-face normal = x)
-                double tau_xx = mu * (2.0 * dudx - (2.0 / 3.0) * divU);
-                double tau_xy = mu * (dvdx + dudy);
-                double tau_xz = mu * (dwdx + dudz);
+                double muF = faceMu(idxL, idxR);
+                double tau_xx = muF * (2.0 * dudx - (2.0 / 3.0) * divU);
+                double tau_xy = muF * (dvdx + dudy);
+                double tau_xz = muF * (dwdx + dudz);
 
                 // Face velocity (simple average)
                 double uFace = 0.5 * (state.velU[idxL] + state.velU[idxR]);
@@ -158,9 +179,10 @@ void addViscousFluxes(
                     double divU = dudx + dvdy + dwdz;
 
                     // Viscous stress components (y-face normal = y)
-                    double tau_yx = mu * (dudy + dvdx);
-                    double tau_yy = mu * (2.0 * dvdy - (2.0 / 3.0) * divU);
-                    double tau_yz = mu * (dwdy + dvdz);
+                    double muF = faceMu(idxL, idxR);
+                    double tau_yx = muF * (dudy + dvdx);
+                    double tau_yy = muF * (2.0 * dvdy - (2.0 / 3.0) * divU);
+                    double tau_yz = muF * (dwdy + dvdz);
 
                     // Face velocity
                     double uFace = 0.5 * (state.velU[idxL] + state.velU[idxR]);
@@ -240,9 +262,10 @@ void addViscousFluxes(
                     double divU = dudx + dvdy + dwdz;
 
                     // Viscous stress components (z-face normal = z)
-                    double tau_zx = mu * (dudz + dwdx);
-                    double tau_zy = mu * (dvdz + dwdy);
-                    double tau_zz = mu * (2.0 * dwdz - (2.0 / 3.0) * divU);
+                    double muF = faceMu(idxL, idxR);
+                    double tau_zx = muF * (dudz + dwdx);
+                    double tau_zy = muF * (dvdz + dwdy);
+                    double tau_zz = muF * (2.0 * dwdz - (2.0 / 3.0) * divU);
 
                     // Face velocity
                     double uFace = 0.5 * (state.velU[idxL] + state.velU[idxR]);

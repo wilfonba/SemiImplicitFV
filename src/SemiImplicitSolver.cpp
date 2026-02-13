@@ -260,14 +260,13 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                 double area = mesh.faceAreaX(j, k);
 
                 std::size_t upwindIdx = 0;
-                if (multiPhase) {
-                    if (flux.massFlux >= 0 && i >= 1)
-                        upwindIdx = mesh.index(i - 1, j, k);
-                    else if (flux.massFlux < 0 && i < mesh.nx())
-                        upwindIdx = mesh.index(i, j, k);
-                    else
-                        upwindIdx = (i >= 1) ? mesh.index(i - 1, j, k) : mesh.index(i, j, k);
-                }
+                if (multiPhase)
+                    upwindIdx = (flux.massFlux >= 0) ? mesh.index(i - 1, j, k) : mesh.index(i, j, k);
+
+                // Face velocity for Abgrall-consistent alpha advection
+                double uFaceX = 0.0;
+                if (multiPhase)
+                    uFaceX = 0.5 * (left.u[0] + right.u[0]);
 
                 if (i >= 1) {
                     std::size_t idxL = mesh.index(i - 1, j, k);
@@ -283,6 +282,10 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                         for (int ph = 0; ph < nPhases; ++ph) {
                             double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
                             rhsAlphaRho_[ph][idxL] -= coeff * alphaRhoFlux;
+                        }
+                        for (int ph = 0; ph < nPhases - 1; ++ph) {
+                            double alphaFace = (uFaceX >= 0) ? left.alpha[ph] : right.alpha[ph];
+                            rhsAlpha_[ph][idxL] -= coeff * (alphaFace - state.alpha[ph][idxL]) * uFaceX;
                         }
                     }
                 }
@@ -301,6 +304,10 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                         for (int ph = 0; ph < nPhases; ++ph) {
                             double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
                             rhsAlphaRho_[ph][idxR] += coeff * alphaRhoFlux;
+                        }
+                        for (int ph = 0; ph < nPhases - 1; ++ph) {
+                            double alphaFace = (uFaceX >= 0) ? left.alpha[ph] : right.alpha[ph];
+                            rhsAlpha_[ph][idxR] += coeff * (alphaFace - state.alpha[ph][idxR]) * uFaceX;
                         }
                     }
                 }
@@ -323,14 +330,13 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                     double area = mesh.faceAreaY(i, k);
 
                     std::size_t upwindIdx = 0;
-                    if (multiPhase) {
-                        if (flux.massFlux >= 0 && j >= 1)
-                            upwindIdx = mesh.index(i, j - 1, k);
-                        else if (flux.massFlux < 0 && j < mesh.ny())
-                            upwindIdx = mesh.index(i, j, k);
-                        else
-                            upwindIdx = (j >= 1) ? mesh.index(i, j - 1, k) : mesh.index(i, j, k);
-                    }
+                    if (multiPhase)
+                        upwindIdx = (flux.massFlux >= 0) ? mesh.index(i, j - 1, k) : mesh.index(i, j, k);
+
+                    // Face velocity for Abgrall-consistent alpha advection
+                    double uFaceY = 0.0;
+                    if (multiPhase)
+                        uFaceY = 0.5 * (left.u[1] + right.u[1]);
 
                     if (j >= 1) {
                         std::size_t idxL = mesh.index(i, j - 1, k);
@@ -346,6 +352,10 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                             for (int ph = 0; ph < nPhases; ++ph) {
                                 double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
                                 rhsAlphaRho_[ph][idxL] -= coeff * alphaRhoFlux;
+                            }
+                            for (int ph = 0; ph < nPhases - 1; ++ph) {
+                                double alphaFace = (uFaceY >= 0) ? left.alpha[ph] : right.alpha[ph];
+                                rhsAlpha_[ph][idxL] -= coeff * (alphaFace - state.alpha[ph][idxL]) * uFaceY;
                             }
                         }
                     }
@@ -364,6 +374,10 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                             for (int ph = 0; ph < nPhases; ++ph) {
                                 double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
                                 rhsAlphaRho_[ph][idxR] += coeff * alphaRhoFlux;
+                            }
+                            for (int ph = 0; ph < nPhases - 1; ++ph) {
+                                double alphaFace = (uFaceY >= 0) ? left.alpha[ph] : right.alpha[ph];
+                                rhsAlpha_[ph][idxR] += coeff * (alphaFace - state.alpha[ph][idxR]) * uFaceY;
                             }
                         }
                     }
@@ -387,14 +401,13 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                     double area = mesh.faceAreaZ(i, j);
 
                     std::size_t upwindIdx = 0;
-                    if (multiPhase) {
-                        if (flux.massFlux >= 0 && k >= 1)
-                            upwindIdx = mesh.index(i, j, k - 1);
-                        else if (flux.massFlux < 0 && k < mesh.nz())
-                            upwindIdx = mesh.index(i, j, k);
-                        else
-                            upwindIdx = (k >= 1) ? mesh.index(i, j, k - 1) : mesh.index(i, j, k);
-                    }
+                    if (multiPhase)
+                        upwindIdx = (flux.massFlux >= 0) ? mesh.index(i, j, k - 1) : mesh.index(i, j, k);
+
+                    // Face velocity for Abgrall-consistent alpha advection
+                    double uFaceZ = 0.0;
+                    if (multiPhase)
+                        uFaceZ = 0.5 * (left.u[2] + right.u[2]);
 
                     if (k >= 1) {
                         std::size_t idxL = mesh.index(i, j, k - 1);
@@ -410,6 +423,10 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                             for (int ph = 0; ph < nPhases; ++ph) {
                                 double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
                                 rhsAlphaRho_[ph][idxL] -= coeff * alphaRhoFlux;
+                            }
+                            for (int ph = 0; ph < nPhases - 1; ++ph) {
+                                double alphaFace = (uFaceZ >= 0) ? left.alpha[ph] : right.alpha[ph];
+                                rhsAlpha_[ph][idxL] -= coeff * (alphaFace - state.alpha[ph][idxL]) * uFaceZ;
                             }
                         }
                     }
@@ -428,6 +445,10 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                             for (int ph = 0; ph < nPhases; ++ph) {
                                 double alphaRhoFlux = (state.alphaRho[ph][upwindIdx] / rhoUpw) * flux.massFlux;
                                 rhsAlphaRho_[ph][idxR] += coeff * alphaRhoFlux;
+                            }
+                            for (int ph = 0; ph < nPhases - 1; ++ph) {
+                                double alphaFace = (uFaceZ >= 0) ? left.alpha[ph] : right.alpha[ph];
+                                rhsAlpha_[ph][idxR] += coeff * (alphaFace - state.alpha[ph][idxR]) * uFaceZ;
                             }
                         }
                     }
@@ -473,48 +494,6 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
         }
     }
 
-    // --- Volume fraction advection: d(alpha_k)/dt + u . grad(alpha_k) = 0 ---
-    if (multiPhase) {
-        for (int k = 0; k < mesh.nz(); ++k) {
-            for (int j = 0; j < mesh.ny(); ++j) {
-                for (int i = 0; i < mesh.nx(); ++i) {
-                    std::size_t idx = mesh.index(i, j, k);
-
-                    for (int ph = 0; ph < nPhases - 1; ++ph) {
-                        double advection = 0.0;
-                        double a = state.alpha[ph][idx];
-
-                        {
-                            double u = state.velU[idx];
-                            double axm = state.alpha[ph][mesh.index(i - 1, j, k)];
-                            double axp = state.alpha[ph][mesh.index(i + 1, j, k)];
-                            if (u > 0) advection += u * (a - axm) / mesh.dx(i);
-                            else       advection += u * (axp - a) / mesh.dx(i);
-                        }
-
-                        if (dim >= 2) {
-                            double v = state.velV[idx];
-                            double aym = state.alpha[ph][mesh.index(i, j - 1, k)];
-                            double ayp = state.alpha[ph][mesh.index(i, j + 1, k)];
-                            if (v > 0) advection += v * (a - aym) / mesh.dy(j);
-                            else       advection += v * (ayp - a) / mesh.dy(j);
-                        }
-
-                        if (dim >= 3) {
-                            double w = state.velW[idx];
-                            double azm = state.alpha[ph][mesh.index(i, j, k - 1)];
-                            double azp = state.alpha[ph][mesh.index(i, j, k + 1)];
-                            if (w > 0) advection += w * (a - azm) / mesh.dz(k);
-                            else       advection += w * (azp - a) / mesh.dz(k);
-                        }
-
-                        rhsAlpha_[ph][idx] = -advection;
-                    }
-                }
-            }
-        }
-    }
-
     // --- Body force source terms ---
     if (config.hasBodyForce()) {
         const auto& bf = config.bodyForceParams;
@@ -542,7 +521,7 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
 
     // --- Viscous stress ---
     if (config.hasViscosity()) {
-        addViscousFluxes(config, mesh, state, config.viscousParams.mu,
+        addViscousFluxes(config, mesh, state,
                          rhsRhoU_, rhsRhoV_, rhsRhoW_, rhsRhoE_);
     }
 

@@ -20,7 +20,6 @@ void addViscousFluxes(
     const SimulationConfig& config,
     const RectilinearMesh& mesh,
     const SolutionState& state,
-    double mu,
     std::vector<double>& rhsRhoU,
     std::vector<double>& rhsRhoV,
     std::vector<double>& rhsRhoW,
