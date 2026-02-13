@@ -1,6 +1,7 @@
 #include "Runtime.hpp"
 #include "ExplicitSolver.hpp"
 #include "SemiImplicitSolver.hpp"
+#include "ImmersedBoundary.hpp"
 
 #include <mpi.h>
 
@@ -135,6 +136,12 @@ void Runtime::attachSolver(ExplicitSolver& solver, const RectilinearMesh& mesh) 
 void Runtime::attachSolver(SemiImplicitSolver& solver, const RectilinearMesh& mesh) {
     halo_ = std::make_unique<HaloExchange>(*mpiCtx_, mesh);
     solver.setHaloExchange(halo_.get());
+}
+
+// ---- IBM attachment ----
+
+void Runtime::attachIBM(ImmersedBoundaryMethod& ibm, ExplicitSolver& solver) {
+    solver.setIBM(&ibm);
 }
 
 // ---- Field smoothing ----

@@ -132,7 +132,7 @@ int main(int argc, char** argv) {
 
     initializeUniform(mesh, state, *eos, rho0, p0);
 
-    VTKSession vtk(rt, "1D_hydrostatic_water", mesh);
+    VTKSession vtk(rt, "1D_hydrostatic_water", mesh, config);
 
     runTimeLoop(rt, config, mesh, state, vtk, stepFn,
                 {.endTime = endTime, .outputInterval = 0.01, .printInterval = 100});

@@ -16,7 +16,8 @@ class SolutionState;
 class VTKSession {
 public:
     VTKSession(Runtime& rt, const std::string& baseName,
-               const RectilinearMesh& mesh, const std::string& dir = "VTK");
+               const RectilinearMesh& mesh, const SimulationConfig& config,
+               const std::string& dir = "VTK");
 
     /// Write current state at the given time.  Collective in MPI mode.
     void write(const SolutionState& state, double time);
@@ -28,6 +29,7 @@ private:
     Runtime& rt_;
     const RectilinearMesh& mesh_;
     std::string baseName_;
+    const SimulationConfig& config_;
     std::string dir_;
     int fileNum_ = 0;
 

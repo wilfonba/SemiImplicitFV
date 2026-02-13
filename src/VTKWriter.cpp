@@ -1,6 +1,7 @@
 #include "VTKWriter.hpp"
 #include "RectilinearMesh.hpp"
 #include "SolutionState.hpp"
+#include "SimulationConfig.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -20,6 +21,7 @@ static void ensureParentDir(const std::string& filepath) {
 void VTKWriter::writeVTR(const std::string& filename,
                          const RectilinearMesh& mesh,
                          const SolutionState& state,
+                         const SimulationConfig& config,
                          const std::array<int,6>& pieceExtent,
                          int rank)
 {
@@ -144,7 +146,9 @@ void VTKWriter::writeVTR(const std::string& filename,
 
     // Scalar fields
     writeScalar("Pressure", state.pres);
-    writeScalar("Sigma", state.sigma);
+    if (config.useIGR) {
+        writeScalar("Sigma", state.sigma);
+    }
     writeScalar("TotalEnergy", state.rhoE);
 
     // Vector fields
@@ -189,7 +193,7 @@ void VTKWriter::writePVTR(const std::string& filename,
                           int globalNx, int globalNy, int globalNz,
                           const std::vector<std::array<int,6>>& pieceExtents,
                           const std::vector<std::string>& pieceFiles,
-                          int nPhases)
+                          const SimulationConfig& config)
 {
     ensureParentDir(filename);
     std::ofstream file(filename);
@@ -213,10 +217,13 @@ void VTKWriter::writePVTR(const std::string& filename,
     // Declare cell data arrays
     file << "    <PCellData>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"Pressure\"/>\n";
-    file << "      <PDataArray type=\"Float64\" Name=\"Sigma\"/>\n";
+    if (config.useIGR) {
+        file << "      <PDataArray type=\"Float64\" Name=\"Sigma\"/>\n";
+    }
     file << "      <PDataArray type=\"Float64\" Name=\"TotalEnergy\"/>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"Velocity\" NumberOfComponents=\"3\"/>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"Momentum\" NumberOfComponents=\"3\"/>\n";
+    int nPhases = config.multiPhaseParams.nPhases;
     if (nPhases <= 0) {
         file << "      <PDataArray type=\"Float64\" Name=\"Density\"/>\n";
     }

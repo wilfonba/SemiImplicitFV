@@ -203,7 +203,7 @@ int main(int argc, char** argv)
     }
 
     // ---- Run ----
-    VTKSession vtk(rt, "2D_laplace_pressure_jump", mesh);
+    VTKSession vtk(rt, "2D_laplace_pressure_jump", mesh, config);
 
     runTimeLoop(rt, config, mesh, state, vtk, stepFn,
                 {.endTime        = endTime,

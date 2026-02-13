@@ -4,6 +4,7 @@
 #include "ViscousFlux.hpp"
 #include "SurfaceTension.hpp"
 #include "SimulationConfig.hpp"
+#include "ImmersedBoundary.hpp"
 #include <array>
 #include <cmath>
 #include <algorithm>
@@ -61,14 +62,14 @@ double ExplicitSolver::step(const SimulationConfig& config,
         dt = params_.constDt;
     } else {
         dt = SemiImplicitFV::computeAcousticTimeStep(
-            mesh, state, *eos_, config, params_.cfl, params_.maxDt, halo_->mpi().comm());
+            mesh, state, *eos_, config, params_.cfl, params_.maxDt, halo_->mpi().comm(), ibm_);
         if (config.hasViscosity()) {
             dt = std::min(dt, computeViscousDt(mesh, state,
-                config.viscousParams.mu, params_.cfl, params_.maxDt, halo_->mpi().comm()));
+                config.viscousParams.mu, params_.cfl, params_.maxDt, halo_->mpi().comm(), ibm_));
         }
         if (config.hasSurfaceTension()) {
             dt = std::min(dt, computeCapillaryDt(mesh, state,
-                config.surfaceTensionParams.sigma, params_.cfl, params_.maxDt, halo_->mpi().comm()));
+                config.surfaceTensionParams.sigma, params_.cfl, params_.maxDt, halo_->mpi().comm(), ibm_));
         }
     }
 
@@ -100,6 +101,7 @@ double ExplicitSolver::step(const SimulationConfig& config,
         else
             state.convertConservativeToPrimitiveVariables(mesh, eos_);
         mesh.applyBoundaryConditions(state, VarSet::PRIM, *halo_);
+        if (ibm_) ibm_->applyGhostCells(mesh, state, config.dim);
 
         if (config.useIGR && igrSolver_) solveIGR(config, mesh, state);
 
@@ -114,6 +116,7 @@ double ExplicitSolver::step(const SimulationConfig& config,
             for (int j = 0; j < mesh.ny(); ++j) {
                 for (int i = 0; i < mesh.nx(); ++i) {
                     std::size_t idx = mesh.index(i, j, k);
+                    if (ibm_ && ibm_->isSolid(idx)) continue;
 
                     if (s == 0 && config.RKOrder > 1) {
                         state.saveConservativeCell(idx);
@@ -185,6 +188,7 @@ double ExplicitSolver::step(const SimulationConfig& config,
     else
         state.convertConservativeToPrimitiveVariables(mesh, eos_);
     mesh.applyBoundaryConditions(state, VarSet::PRIM, *halo_);
+    if (ibm_) ibm_->applyGhostCells(mesh, state, config.dim);
 
     return dt;
 }

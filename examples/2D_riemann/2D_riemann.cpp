@@ -121,7 +121,7 @@ int main(int argc, char** argv) {
     initializeRiemannProblem(mesh, state, *eos);
     rt.smoothFields(state, mesh, 3);
 
-    VTKSession vtk(rt, "riemann2d", mesh);
+    VTKSession vtk(rt, "riemann2d", mesh, config);
 
     auto stepFn = [&](double targetDt) {
         return solver.step(config, mesh, state, targetDt);

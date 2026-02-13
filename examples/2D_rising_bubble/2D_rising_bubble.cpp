@@ -263,7 +263,7 @@ int main(int argc, char** argv)
     }
 
     // ---- Run ----
-    VTKSession vtk(rt, "2D_rising_bubble", mesh);
+    VTKSession vtk(rt, "2D_rising_bubble", mesh, config);
 
     TimeLoopParams tlp;
     tlp.endTime        = endTime;

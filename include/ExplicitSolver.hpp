@@ -16,6 +16,8 @@
 
 namespace SemiImplicitFV {
 
+class ImmersedBoundaryMethod;
+
 class ExplicitSolver {
 public:
     ExplicitSolver(
@@ -34,6 +36,10 @@ public:
                 double targetDt = -1.0);
 
     void setHaloExchange(HaloExchange* halo) { halo_ = halo; }
+    void setIBM(ImmersedBoundaryMethod* ibm) {
+        ibm_ = ibm;
+        if (igrSolver_) igrSolver_->setIBM(ibm);
+    }
 
     RiemannSolver& riemannSolver() { return *riemannSolver_; }
     const EquationOfState& eos() const { return *eos_; }
@@ -47,6 +53,7 @@ private:
     Reconstructor reconstructor_;
 
     HaloExchange* halo_ = nullptr;
+    ImmersedBoundaryMethod* ibm_ = nullptr;
 
     // RHS storage (flux divergence per conservative variable)
     std::vector<double> rhsRho_;

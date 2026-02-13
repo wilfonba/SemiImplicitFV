@@ -109,7 +109,7 @@ int main(int argc, char** argv) {
 
     initializeTwoPhaseShockTube(mesh, state, config.multiPhaseParams);
 
-    VTKSession vtk(rt, "two_phase_shocktube", mesh);
+    VTKSession vtk(rt, "two_phase_shocktube", mesh, config);
 
     auto stepFn = [&](double targetDt) {
         return solver.step(config, mesh, state, targetDt);

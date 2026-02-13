@@ -9,6 +9,7 @@ namespace SemiImplicitFV {
 
 class RectilinearMesh;
 class SolutionState;
+struct SimulationConfig;
 
 /// VTK XML RectilinearGrid writer for ParaView visualization.
 ///
@@ -23,6 +24,7 @@ public:
     static void writeVTR(const std::string& filename,
                          const RectilinearMesh& mesh,
                          const SolutionState& state,
+                         const SimulationConfig& config,
                          const std::array<int,6>& pieceExtent = {},
                          int rank = -1);
 
@@ -33,7 +35,7 @@ public:
                           int globalNx, int globalNy, int globalNz,
                           const std::vector<std::array<int,6>>& pieceExtents,
                           const std::vector<std::string>& pieceFiles,
-                          int nPhases = 0);
+                          const SimulationConfig& config);
 
     /// Three-phase .pvd time-series file:
     ///   mode="w"     -- write header

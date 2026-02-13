@@ -8,6 +8,7 @@
 #include <string>
 
 namespace SemiImplicitFV { class HaloExchange; }
+namespace SemiImplicitFV { class ImmersedBoundaryMethod; }
 
 namespace SemiImplicitFV {
 
@@ -25,6 +26,7 @@ public:
     ~IGRSolver() = default;
 
     void setParameters(const IGRParams& params) { params_ = params; }
+    void setIBM(ImmersedBoundaryMethod* ibm) { ibm_ = ibm; }
     const IGRParams& parameters() const { return params_; }
 
     // Compute alpha from mesh spacing
@@ -63,6 +65,7 @@ public:
 
 private:
     IGRParams params_;
+    ImmersedBoundaryMethod* ibm_ = nullptr;
 };
 
 } // namespace SemiImplicitFV

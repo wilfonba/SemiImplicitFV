@@ -1,5 +1,6 @@
 #include "IGR.hpp"
 #include "HaloExchange.hpp"
+#include "ImmersedBoundary.hpp"
 #include <cmath>
 #include <algorithm>
 #include <iostream>
@@ -47,6 +48,7 @@ void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
             for (int j = 0; j < mesh.ny(); ++j) {
                 for (int i = 0; i < mesh.nx(); ++i) {
                     std::size_t idx = mesh.index(i, j, k);
+                    if (ibm_ && ibm_->isSolid(idx)) continue;
 
                     double rhs = computeIGRRhs(config, gradU[idx], alpha);
 
@@ -93,6 +95,7 @@ void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
             }
         }
         mesh.fillScalarGhosts(state.sigma);
+        if (ibm_) ibm_->applyScalarGhostCells(mesh, state.sigma);
     }
 }
 
@@ -109,6 +112,7 @@ void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
             for (int j = 0; j < mesh.ny(); ++j) {
                 for (int i = 0; i < mesh.nx(); ++i) {
                     std::size_t idx = mesh.index(i, j, k);
+                    if (ibm_ && ibm_->isSolid(idx)) continue;
 
                     double rhs = computeIGRRhs(config, gradU[idx], alpha);
 
@@ -149,6 +153,7 @@ void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
             }
         }
         mesh.fillScalarGhosts(state.sigma, halo);
+        if (ibm_) ibm_->applyScalarGhostCells(mesh, state.sigma);
     }
 }
 

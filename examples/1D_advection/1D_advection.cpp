@@ -161,7 +161,7 @@ int main(int argc, char** argv) {
     std::vector<double> velURef = state.velU;
     std::vector<double> presRef = state.pres;
 
-    VTKSession vtk(rt, "1D_advection", mesh);
+    VTKSession vtk(rt, "1D_advection", mesh, config);
     runTimeLoop(rt, config, mesh, state, vtk, stepFn,
                 {.endTime = endTime, .outputInterval = endTime / 100.0, .printInterval = 1});
 

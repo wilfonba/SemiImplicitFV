@@ -13,39 +13,45 @@ namespace SemiImplicitFV {
 
 class Runtime;
 class VTKSession;
+class ImmersedBoundaryMethod;
 
 // Advective time step: CFL based on material velocity only (no sound speed).
 // Used by the semi-implicit solver where pressure is handled implicitly.
 double computeAdvectiveTimeStep(const RectilinearMesh& mesh,
                                 const SolutionState& state,
-                                double cfl, double maxDt);
+                                double cfl, double maxDt,
+                                const ImmersedBoundaryMethod* ibm = nullptr);
 
 // Acoustic time step: CFL based on |u| + c (velocity + sound speed).
 // Used by the explicit solver.
 double computeAcousticTimeStep(const RectilinearMesh& mesh,
                                const SolutionState& state,
                                const EquationOfState& eos,
-                               double cfl, double maxDt);
+                               double cfl, double maxDt,
+                               const ImmersedBoundaryMethod* ibm = nullptr);
 
 // Acoustic time step with config for multi-phase sound speed via Wood's formula.
 double computeAcousticTimeStep(const RectilinearMesh& mesh,
                                const SolutionState& state,
                                const EquationOfState& eos,
                                const SimulationConfig& config,
-                               double cfl, double maxDt);
+                               double cfl, double maxDt,
+                               const ImmersedBoundaryMethod* ibm = nullptr);
 
 // MPI-aware advective time step with global reduction.
 double computeAdvectiveTimeStep(const RectilinearMesh& mesh,
                                 const SolutionState& state,
                                 double cfl, double maxDt,
-                                MPI_Comm comm);
+                                MPI_Comm comm,
+                                const ImmersedBoundaryMethod* ibm = nullptr);
 
 // MPI-aware acoustic time step with global reduction.
 double computeAcousticTimeStep(const RectilinearMesh& mesh,
                                const SolutionState& state,
                                const EquationOfState& eos,
                                double cfl, double maxDt,
-                               MPI_Comm comm);
+                               MPI_Comm comm,
+                               const ImmersedBoundaryMethod* ibm = nullptr);
 
 // MPI-aware acoustic time step with config for multi-phase.
 double computeAcousticTimeStep(const RectilinearMesh& mesh,
@@ -53,27 +59,32 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
                                const EquationOfState& eos,
                                const SimulationConfig& config,
                                double cfl, double maxDt,
-                               MPI_Comm comm);
+                               MPI_Comm comm,
+                               const ImmersedBoundaryMethod* ibm = nullptr);
 
 // Viscous time step: dt <= cfl * dx_min^2 / (2 * dim * nu), nu = mu/rho.
 double computeViscousDt(const RectilinearMesh& mesh,
                         const SolutionState& state,
-                        double mu, double cfl, double maxDt);
+                        double mu, double cfl, double maxDt,
+                        const ImmersedBoundaryMethod* ibm = nullptr);
 
 double computeViscousDt(const RectilinearMesh& mesh,
                         const SolutionState& state,
                         double mu, double cfl, double maxDt,
-                        MPI_Comm comm);
+                        MPI_Comm comm,
+                        const ImmersedBoundaryMethod* ibm = nullptr);
 
 // Capillary time step: dt <= cfl * sqrt(rho * dx_min^3 / sigma).
 double computeCapillaryDt(const RectilinearMesh& mesh,
                           const SolutionState& state,
-                          double sigma, double cfl, double maxDt);
+                          double sigma, double cfl, double maxDt,
+                          const ImmersedBoundaryMethod* ibm = nullptr);
 
 double computeCapillaryDt(const RectilinearMesh& mesh,
                           const SolutionState& state,
                           double sigma, double cfl, double maxDt,
-                          MPI_Comm comm);
+                          MPI_Comm comm,
+                          const ImmersedBoundaryMethod* ibm = nullptr);
 
 // ---- Time loop ----
 

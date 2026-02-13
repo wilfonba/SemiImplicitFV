@@ -189,7 +189,7 @@ int main(int argc, char** argv)
     }
 
     // ---- Run ----
-    VTKSession vtk(rt, "2D_channel_flow", mesh);
+    VTKSession vtk(rt, "2D_channel_flow", mesh, config);
 
     runTimeLoop(rt, config, mesh, state, vtk, stepFn,
                 {.endTime        = endTime,

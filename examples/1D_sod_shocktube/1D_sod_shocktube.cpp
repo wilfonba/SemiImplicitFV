@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
     initializeSodProblem(mesh, state, *eos, 0);
     rt.smoothFields(state, mesh, 10);
 
-    VTKSession vtk(rt, "1D_sod", mesh);
+    VTKSession vtk(rt, "1D_sod", mesh, config);
 
     auto stepFn = [&](double targetDt) {
         return solver.step(config, mesh, state, targetDt);

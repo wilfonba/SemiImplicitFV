@@ -2,6 +2,7 @@
 #include "MixtureEOS.hpp"
 #include "Runtime.hpp"
 #include "VTKSession.hpp"
+#include "ImmersedBoundary.hpp"
 #include <cmath>
 #include <algorithm>
 #include <limits>
@@ -13,7 +14,8 @@ namespace SemiImplicitFV {
 
 double computeAdvectiveTimeStep(const RectilinearMesh& mesh,
                                 const SolutionState& state,
-                                double cfl, double maxDt) {
+                                double cfl, double maxDt,
+                                const ImmersedBoundaryMethod* ibm) {
     double dt = maxDt;
     int dim = mesh.dim();
 
@@ -21,6 +23,8 @@ double computeAdvectiveTimeStep(const RectilinearMesh& mesh,
         for (int j = 0; j < mesh.ny(); ++j) {
             for (int i = 0; i < mesh.nx(); ++i) {
                 std::size_t idx = mesh.index(i, j, k);
+
+                if (ibm && ibm->isSolid(idx)) continue;
 
                 double dtCell = mesh.dx(i) / std::max(std::abs(state.velU[idx]), 1e-14);
                 if (dim >= 2)
@@ -39,7 +43,8 @@ double computeAdvectiveTimeStep(const RectilinearMesh& mesh,
 double computeAcousticTimeStep(const RectilinearMesh& mesh,
                                const SolutionState& state,
                                const EquationOfState& eos,
-                               double cfl, double maxDt) {
+                               double cfl, double maxDt,
+                               const ImmersedBoundaryMethod* ibm) {
     double dt = maxDt;
     int dim = mesh.dim();
 
@@ -47,6 +52,9 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
         for (int j = 0; j < mesh.ny(); ++j) {
             for (int i = 0; i < mesh.nx(); ++i) {
                 std::size_t idx = mesh.index(i, j, k);
+
+                if (ibm && ibm->isSolid(idx)) continue;
+
                 double c = eos.soundSpeed(state.getPrimitiveState(idx));
 
                 double dtCell = mesh.dx(i) / (std::abs(state.velU[idx]) + c);
@@ -67,9 +75,10 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
                                const SolutionState& state,
                                const EquationOfState& eos,
                                const SimulationConfig& config,
-                               double cfl, double maxDt) {
+                               double cfl, double maxDt,
+                               const ImmersedBoundaryMethod* ibm) {
     if (!config.isMultiPhase())
-        return computeAcousticTimeStep(mesh, state, eos, cfl, maxDt);
+        return computeAcousticTimeStep(mesh, state, eos, cfl, maxDt, ibm);
 
     double dt = maxDt;
     int dim = mesh.dim();
@@ -84,6 +93,8 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
         for (int j = 0; j < mesh.ny(); ++j) {
             for (int i = 0; i < mesh.nx(); ++i) {
                 std::size_t idx = mesh.index(i, j, k);
+
+                if (ibm && ibm->isSolid(idx)) continue;
 
                 for (int ph = 0; ph < nPhases - 1; ++ph)
                     alphas[ph] = state.alpha[ph][idx];
@@ -110,8 +121,9 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
 double computeAdvectiveTimeStep(const RectilinearMesh& mesh,
                                 const SolutionState& state,
                                 double cfl, double maxDt,
-                                MPI_Comm comm) {
-    double localDt = computeAdvectiveTimeStep(mesh, state, cfl, maxDt);
+                                MPI_Comm comm,
+                                const ImmersedBoundaryMethod* ibm) {
+    double localDt = computeAdvectiveTimeStep(mesh, state, cfl, maxDt, ibm);
     double globalDt;
     MPI_Allreduce(&localDt, &globalDt, 1, MPI_DOUBLE, MPI_MIN, comm);
     return globalDt;
@@ -121,8 +133,9 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
                                const SolutionState& state,
                                const EquationOfState& eos,
                                double cfl, double maxDt,
-                               MPI_Comm comm) {
-    double localDt = computeAcousticTimeStep(mesh, state, eos, cfl, maxDt);
+                               MPI_Comm comm,
+                               const ImmersedBoundaryMethod* ibm) {
+    double localDt = computeAcousticTimeStep(mesh, state, eos, cfl, maxDt, ibm);
     double globalDt;
     MPI_Allreduce(&localDt, &globalDt, 1, MPI_DOUBLE, MPI_MIN, comm);
     return globalDt;
@@ -133,8 +146,9 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
                                const EquationOfState& eos,
                                const SimulationConfig& config,
                                double cfl, double maxDt,
-                               MPI_Comm comm) {
-    double localDt = computeAcousticTimeStep(mesh, state, eos, config, cfl, maxDt);
+                               MPI_Comm comm,
+                               const ImmersedBoundaryMethod* ibm) {
+    double localDt = computeAcousticTimeStep(mesh, state, eos, config, cfl, maxDt, ibm);
     double globalDt;
     MPI_Allreduce(&localDt, &globalDt, 1, MPI_DOUBLE, MPI_MIN, comm);
     return globalDt;
@@ -142,7 +156,8 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
 
 double computeViscousDt(const RectilinearMesh& mesh,
                         const SolutionState& state,
-                        double mu, double cfl, double maxDt) {
+                        double mu, double cfl, double maxDt,
+                        const ImmersedBoundaryMethod* ibm) {
     double dt = maxDt;
     int dim = mesh.dim();
 
@@ -150,6 +165,8 @@ double computeViscousDt(const RectilinearMesh& mesh,
         for (int j = 0; j < mesh.ny(); ++j) {
             for (int i = 0; i < mesh.nx(); ++i) {
                 std::size_t idx = mesh.index(i, j, k);
+
+                if (ibm && ibm->isSolid(idx)) continue;
 
                 double dxMin = mesh.dx(i);
                 if (dim >= 2) dxMin = std::min(dxMin, mesh.dy(j));
@@ -169,8 +186,9 @@ double computeViscousDt(const RectilinearMesh& mesh,
 double computeViscousDt(const RectilinearMesh& mesh,
                         const SolutionState& state,
                         double mu, double cfl, double maxDt,
-                        MPI_Comm comm) {
-    double localDt = computeViscousDt(mesh, state, mu, cfl, maxDt);
+                        MPI_Comm comm,
+                        const ImmersedBoundaryMethod* ibm) {
+    double localDt = computeViscousDt(mesh, state, mu, cfl, maxDt, ibm);
     double globalDt;
     MPI_Allreduce(&localDt, &globalDt, 1, MPI_DOUBLE, MPI_MIN, comm);
     return globalDt;
@@ -178,7 +196,8 @@ double computeViscousDt(const RectilinearMesh& mesh,
 
 double computeCapillaryDt(const RectilinearMesh& mesh,
                           const SolutionState& state,
-                          double sigma, double cfl, double maxDt) {
+                          double sigma, double cfl, double maxDt,
+                          const ImmersedBoundaryMethod* ibm) {
     double dt = maxDt;
     int dim = mesh.dim();
 
@@ -186,6 +205,8 @@ double computeCapillaryDt(const RectilinearMesh& mesh,
         for (int j = 0; j < mesh.ny(); ++j) {
             for (int i = 0; i < mesh.nx(); ++i) {
                 std::size_t idx = mesh.index(i, j, k);
+
+                if (ibm && ibm->isSolid(idx)) continue;
 
                 double dxMin = mesh.dx(i);
                 if (dim >= 2) dxMin = std::min(dxMin, mesh.dy(j));
@@ -205,8 +226,9 @@ double computeCapillaryDt(const RectilinearMesh& mesh,
 double computeCapillaryDt(const RectilinearMesh& mesh,
                           const SolutionState& state,
                           double sigma, double cfl, double maxDt,
-                          MPI_Comm comm) {
-    double localDt = computeCapillaryDt(mesh, state, sigma, cfl, maxDt);
+                          MPI_Comm comm,
+                          const ImmersedBoundaryMethod* ibm) {
+    double localDt = computeCapillaryDt(mesh, state, sigma, cfl, maxDt, ibm);
     double globalDt;
     MPI_Allreduce(&localDt, &globalDt, 1, MPI_DOUBLE, MPI_MIN, comm);
     return globalDt;

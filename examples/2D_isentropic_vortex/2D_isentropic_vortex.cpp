@@ -233,7 +233,7 @@ int main(int argc, char** argv)
     }
 
     // ---- Run ----
-    VTKSession vtk(rt, "2D_isentropic_vortex", mesh);
+    VTKSession vtk(rt, "2D_isentropic_vortex", mesh, config);
 
     runTimeLoop(rt, config, mesh, state, vtk, stepFn,
                 {.endTime       = endTime,
