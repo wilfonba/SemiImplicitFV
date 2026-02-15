@@ -31,15 +31,15 @@ static constexpr bool useSemiImplicit = true;
 // ============================================================
 //  Problem parameters
 // ============================================================
-static constexpr double gamma  = 1.4;
+static constexpr double gammaGas  = 1.4;
 static constexpr double Rgas   = 1.0;         // non-dimensional EOS
 static constexpr double rhoInf = 1.0;         // background density
 static constexpr double uInf   = 1.0;         // background x-velocity
 static constexpr double vInf   = 1.0;         // background y-velocity (diagonal advection)
 static constexpr double Mref   = 0.1;         // reference Mach number
 // p_inf chosen so that c_inf = |V_inf| / Mref :
-//   c^2 = gamma * p / rho  =>  p = rho * (u^2+v^2) / (gamma * M^2)
-static constexpr double pInf   = 2.0 / (gamma * Mref * Mref);  // ~ 142.857
+//   c^2 = gammaGas * p / rho  =>  p = rho * (u^2+v^2) / (gammaGas * M^2)
+static constexpr double pInf   = 2.0 / (gammaGas * Mref * Mref);  // ~ 142.857
 static constexpr double beta   = 5.0;         // vortex strength
 static constexpr double L      = 10.0;        // domain side length
 static constexpr double xc0    = 5.0;         // initial vortex centre
@@ -58,7 +58,7 @@ static constexpr double endTime = L;
 //    f(r)  = exp((1 - r^2) / 2)
 //    du    = -beta / (2 pi) * (y - yc) * f
 //    dv    =  beta / (2 pi) * (x - xc) * f
-//    dT    = -(gamma-1) beta^2 / (8 gamma pi^2) * f^2
+//    dT    = -(gammaGas-1) beta^2 / (8 gammaGas pi^2) * f^2
 //
 //  Isentropic relations then give rho, p from T.
 // ============================================================
@@ -79,12 +79,12 @@ void vortexState(double x, double y, double xc, double yc,
 
     double du = -beta / (2.0 * M_PI) * dy * f;
     double dv =  beta / (2.0 * M_PI) * dx * f;
-    double dT = -(gamma - 1.0) * beta * beta
-                / (8.0 * gamma * M_PI * M_PI) * f2;
+    double dT = -(gammaGas - 1.0) * beta * beta
+                / (8.0 * gammaGas * M_PI * M_PI) * f2;
 
     double T   = TInf + dT;
-    double rho = rhoInf * std::pow(T / TInf, 1.0 / (gamma - 1.0));
-    double p   = pInf   * std::pow(T / TInf, gamma / (gamma - 1.0));
+    double rho = rhoInf * std::pow(T / TInf, 1.0 / (gammaGas - 1.0));
+    double p   = pInf   * std::pow(T / TInf, gammaGas / (gammaGas - 1.0));
 
     W.rho   = rho;
     W.u     = {uInf + du, vInf + dv, 0.0};
@@ -170,7 +170,7 @@ int main(int argc, char** argv)
     config.validate();
 
     // ---- Print setup ----
-    double cInf = std::sqrt(gamma * pInf / rhoInf);
+    double cInf = std::sqrt(gammaGas * pInf / rhoInf);
     double Mach = std::sqrt(uInf * uInf + vInf * vInf) / cInf;
 
     rt.print("=== 2D Isentropic Vortex Advection ===\n");
@@ -194,7 +194,7 @@ int main(int argc, char** argv)
     SolutionState state;
     state.allocate(mesh.totalCells(), config);
 
-    auto eos           = std::make_shared<IdealGasEOS>(gamma, Rgas, config);
+    auto eos           = std::make_shared<IdealGasEOS>(gammaGas, Rgas, config);
     auto riemannSolver = std::make_shared<HLLCSolver>(eos, config);
     auto igrSolver     = config.useIGR
                          ? std::make_shared<IGRSolver>(config.igrParams)
