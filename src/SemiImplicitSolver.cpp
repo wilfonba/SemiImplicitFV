@@ -43,6 +43,8 @@ SemiImplicitSolver::SemiImplicitSolver(
 
     reconstructor_.allocate(mesh);
 
+    divU_.resize(n);
+
     if (config.isMultiPhase()) {
         int nPhases = config.multiPhaseParams.nPhases;
         rhsAlphaRho_.resize(nPhases);
@@ -51,7 +53,6 @@ SemiImplicitSolver::SemiImplicitSolver(
         rhsAlpha_.resize(nPhases - 1);
         for (int ph = 0; ph < nPhases - 1; ++ph)
             rhsAlpha_[ph].resize(n);
-        divU_.resize(n);
     }
 
     if (igrSolver_) {
@@ -238,13 +239,14 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
     if (dim >= 2) std::fill(rhsRhoV_.begin(), rhsRhoV_.end(), 0.0);
     if (dim >= 3) std::fill(rhsRhoW_.begin(), rhsRhoW_.end(), 0.0);
     std::fill(rhsRhoE_.begin(), rhsRhoE_.end(), 0.0);
+    std::fill(rhsPadvected_.begin(), rhsPadvected_.end(), 0.0);
+    std::fill(divU_.begin(), divU_.end(), 0.0);
 
     if (multiPhase) {
         for (int ph = 0; ph < nPhases; ++ph)
             std::fill(rhsAlphaRho_[ph].begin(), rhsAlphaRho_[ph].end(), 0.0);
         for (int ph = 0; ph < nPhases - 1; ++ph)
             std::fill(rhsAlpha_[ph].begin(), rhsAlpha_[ph].end(), 0.0);
-        std::fill(divU_.begin(), divU_.end(), 0.0);
     }
 
     // --- X-direction fluxes ---
@@ -272,6 +274,8 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                     if (dim >= 2) rhsRhoV_[idxL] -= coeff * flux.momentumFlux[1];
                     if (dim >= 3) rhsRhoW_[idxL] -= coeff * flux.momentumFlux[2];
                     rhsRhoE_[idxL] -= coeff * flux.energyFlux;
+                    rhsPadvected_[idxL] -= coeff * flux.pressureFlux;
+                    divU_[idxL] += coeff * flux.faceVelocity;
 
                     if (multiPhase) {
                         double rhoUpw = std::max(state.rho[upwindIdx], 1e-14);
@@ -281,7 +285,6 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                         }
                         for (int ph = 0; ph < nPhases - 1; ++ph)
                             rhsAlpha_[ph][idxL] -= coeff * flux.alphaFlux[ph];
-                        divU_[idxL] += coeff * flux.faceVelocity;
                     }
                 }
 
@@ -293,6 +296,8 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                     if (dim >= 2) rhsRhoV_[idxR] += coeff * flux.momentumFlux[1];
                     if (dim >= 3) rhsRhoW_[idxR] += coeff * flux.momentumFlux[2];
                     rhsRhoE_[idxR] += coeff * flux.energyFlux;
+                    rhsPadvected_[idxR] += coeff * flux.pressureFlux;
+                    divU_[idxR] -= coeff * flux.faceVelocity;
 
                     if (multiPhase) {
                         double rhoUpw = std::max(state.rho[upwindIdx], 1e-14);
@@ -302,7 +307,6 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                         }
                         for (int ph = 0; ph < nPhases - 1; ++ph)
                             rhsAlpha_[ph][idxR] += coeff * flux.alphaFlux[ph];
-                        divU_[idxR] -= coeff * flux.faceVelocity;
                     }
                 }
             }
@@ -335,6 +339,8 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                         rhsRhoV_[idxL] -= coeff * flux.momentumFlux[1];
                         if (dim >= 3) rhsRhoW_[idxL] -= coeff * flux.momentumFlux[2];
                         rhsRhoE_[idxL] -= coeff * flux.energyFlux;
+                        rhsPadvected_[idxL] -= coeff * flux.pressureFlux;
+                        divU_[idxL] += coeff * flux.faceVelocity;
 
                         if (multiPhase) {
                             double rhoUpw = std::max(state.rho[upwindIdx], 1e-14);
@@ -344,7 +350,6 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                             }
                             for (int ph = 0; ph < nPhases - 1; ++ph)
                                 rhsAlpha_[ph][idxL] -= coeff * flux.alphaFlux[ph];
-                            divU_[idxL] += coeff * flux.faceVelocity;
                         }
                     }
 
@@ -356,6 +361,8 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                         rhsRhoV_[idxR] += coeff * flux.momentumFlux[1];
                         if (dim >= 3) rhsRhoW_[idxR] += coeff * flux.momentumFlux[2];
                         rhsRhoE_[idxR] += coeff * flux.energyFlux;
+                        rhsPadvected_[idxR] += coeff * flux.pressureFlux;
+                        divU_[idxR] -= coeff * flux.faceVelocity;
 
                         if (multiPhase) {
                             double rhoUpw = std::max(state.rho[upwindIdx], 1e-14);
@@ -365,7 +372,6 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                             }
                             for (int ph = 0; ph < nPhases - 1; ++ph)
                                 rhsAlpha_[ph][idxR] += coeff * flux.alphaFlux[ph];
-                            divU_[idxR] -= coeff * flux.faceVelocity;
                         }
                     }
                 }
@@ -399,6 +405,8 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                         rhsRhoV_[idxL] -= coeff * flux.momentumFlux[1];
                         rhsRhoW_[idxL] -= coeff * flux.momentumFlux[2];
                         rhsRhoE_[idxL] -= coeff * flux.energyFlux;
+                        rhsPadvected_[idxL] -= coeff * flux.pressureFlux;
+                        divU_[idxL] += coeff * flux.faceVelocity;
 
                         if (multiPhase) {
                             double rhoUpw = std::max(state.rho[upwindIdx], 1e-14);
@@ -408,7 +416,6 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                             }
                             for (int ph = 0; ph < nPhases - 1; ++ph)
                                 rhsAlpha_[ph][idxL] -= coeff * flux.alphaFlux[ph];
-                            divU_[idxL] += coeff * flux.faceVelocity;
                         }
                     }
 
@@ -420,6 +427,8 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                         rhsRhoV_[idxR] += coeff * flux.momentumFlux[1];
                         rhsRhoW_[idxR] += coeff * flux.momentumFlux[2];
                         rhsRhoE_[idxR] += coeff * flux.energyFlux;
+                        rhsPadvected_[idxR] += coeff * flux.pressureFlux;
+                        divU_[idxR] -= coeff * flux.faceVelocity;
 
                         if (multiPhase) {
                             double rhoUpw = std::max(state.rho[upwindIdx], 1e-14);
@@ -429,7 +438,6 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                             }
                             for (int ph = 0; ph < nPhases - 1; ++ph)
                                 rhsAlpha_[ph][idxR] += coeff * flux.alphaFlux[ph];
-                            divU_[idxR] -= coeff * flux.faceVelocity;
                         }
                     }
                 }
@@ -450,39 +458,14 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
         }
     }
 
-    // --- Pressure advection RHS: dp/dt = -u · ∇p (upwind) ---
+    // --- Pressure advection source term: dp/dt = -∇·(pu) + p∇·u ---
+    // The -∇·(pu) part was accumulated from flux.pressureFlux in the flux loops above.
+    // Now add the p∇·u source term.
     for (int k = 0; k < mesh.nz(); ++k) {
         for (int j = 0; j < mesh.ny(); ++j) {
             for (int i = 0; i < mesh.nx(); ++i) {
                 std::size_t idx = mesh.index(i, j, k);
-                double p = state.pres[idx];
-                double advection = 0.0;
-
-                {
-                    double u = state.velU[idx];
-                    double pxm = state.pres[mesh.index(i - 1, j, k)];
-                    double pxp = state.pres[mesh.index(i + 1, j, k)];
-                    if (u > 0) advection += u * (p - pxm) / mesh.dx(i);
-                    else       advection += u * (pxp - p) / mesh.dx(i);
-                }
-
-                if (dim >= 2) {
-                    double v = state.velV[idx];
-                    double pym = state.pres[mesh.index(i, j - 1, k)];
-                    double pyp = state.pres[mesh.index(i, j + 1, k)];
-                    if (v > 0) advection += v * (p - pym) / mesh.dy(j);
-                    else       advection += v * (pyp - p) / mesh.dy(j);
-                }
-
-                if (dim >= 3) {
-                    double w = state.velW[idx];
-                    double pzm = state.pres[mesh.index(i, j, k - 1)];
-                    double pzp = state.pres[mesh.index(i, j, k + 1)];
-                    if (w > 0) advection += w * (p - pzm) / mesh.dz(k);
-                    else       advection += w * (pzp - p) / mesh.dz(k);
-                }
-
-                rhsPadvected_[idx] = -advection;
+                rhsPadvected_[idx] += state.pres[idx] * divU_[idx];
             }
         }
     }

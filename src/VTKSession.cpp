@@ -16,7 +16,7 @@ VTKSession::VTKSession(Runtime& rt, const std::string& baseName,
     localExtent_ = rt_.mpiContext().localExtent();
 
     if (rt_.isRoot()) {
-        VTKWriter::writePVD(baseName_ + ".pvd", "w");
+        VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "w");
     }
 }
 
@@ -24,9 +24,12 @@ void VTKSession::write(const SolutionState& state, double time) {
     int rank = rt_.rank();
     int nprocs = rt_.size();
 
+    std::string snapshotDir = "snapshot_" + std::to_string(fileNum_);
+
     std::string vtrFile = baseName_ + "_" + std::to_string(fileNum_)
                         + "_r" + std::to_string(rank) + ".vtr";
-    VTKWriter::writeVTR(dir_ + "/" + vtrFile, mesh_, state, config_, localExtent_, rank);
+    VTKWriter::writeVTR(dir_ + "/" + snapshotDir + "/" + vtrFile,
+                        mesh_, state, config_, localExtent_, rank);
 
     // Gather all extents on rank 0
     std::vector<int> allExtBuf(nprocs * 6);
@@ -43,10 +46,11 @@ void VTKSession::write(const SolutionState& state, double time) {
                         + "_r" + std::to_string(r) + ".vtr";
         }
         std::string pvtrFile = baseName_ + "_" + std::to_string(fileNum_) + ".pvtr";
-        VTKWriter::writePVTR(dir_ + "/" + pvtrFile,
+        VTKWriter::writePVTR(dir_ + "/" + snapshotDir + "/" + pvtrFile,
                              rt_.globalNx(), rt_.globalNy(), rt_.globalNz(),
                              allExtents, allFiles, config_);
-        VTKWriter::writePVD(baseName_ + ".pvd", "a", time, dir_ + "/" + pvtrFile);
+        VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "a",
+                            time, snapshotDir + "/" + pvtrFile);
     }
 
     fileNum_++;
@@ -54,7 +58,7 @@ void VTKSession::write(const SolutionState& state, double time) {
 
 void VTKSession::finalize() {
     if (rt_.isRoot()) {
-        VTKWriter::writePVD(baseName_ + ".pvd", "close");
+        VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "close");
     }
 }
 
