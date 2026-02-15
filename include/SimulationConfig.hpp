@@ -1,6 +1,7 @@
 #ifndef SIMULATION_CONFIG_HPP
 #define SIMULATION_CONFIG_HPP
 
+#include <mpi.h>
 #include <array>
 #include <cmath>
 #include <stdexcept>
@@ -120,6 +121,14 @@ struct SimulationConfig {
     }
 
     void validate() const {
+        int mpiInitialized = 0;
+        MPI_Initialized(&mpiInitialized);
+        if (mpiInitialized) {
+            int rank = 0;
+            MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+            if (rank != 0) return;
+        }
+
         if (dim < 1 || dim > 3)
             throw std::invalid_argument("dim must be 1, 2, or 3 (got " + std::to_string(dim) + ")");
 
