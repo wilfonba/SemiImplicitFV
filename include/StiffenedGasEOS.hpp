@@ -22,6 +22,9 @@ public:
 
     std::string name() const override { return "StiffenedGas"; }
 
+    double gamma() const override { return gamma_; }
+    double pInf() const override { return pInf_; }
+
 private:
     double gamma_;
     double pInf_;   // Stiffness pressure

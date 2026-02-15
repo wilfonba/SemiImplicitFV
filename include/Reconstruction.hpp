@@ -15,7 +15,8 @@ namespace SemiImplicitFV {
 class Reconstructor {
 public:
     explicit Reconstructor(ReconstructionOrder order = ReconstructionOrder::WENO1,
-                           double wenoEps = 1e-6);
+                           double wenoEps = 1e-6,
+                           double gamma = 1.4, double pInf = 0.0);
 
     /// Allocate face arrays for the given mesh dimensions.
     void allocate(const RectilinearMesh& mesh);
@@ -58,6 +59,8 @@ public:
 private:
     ReconstructionOrder order_;
     double wenoEps_;
+    double gamma_;  // Single-phase EOS gamma (used to set gammaEff on face states)
+    double pInf_;   // Single-phase EOS pInf (used to set piInfEff on face states)
     int dim_ = 0;
     int nx_ = 0, ny_ = 0, nz_ = 0;
     std::size_t numXFaces_ = 0, numYFaces_ = 0, numZFaces_ = 0;

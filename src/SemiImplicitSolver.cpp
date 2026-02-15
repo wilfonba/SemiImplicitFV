@@ -25,8 +25,23 @@ SemiImplicitSolver::SemiImplicitSolver(
     , igrSolver_(std::move(igrSolver))
     , params_(config.semiImplicitParams)
     , lastPressureIters_(0)
-    , reconstructor_(config.reconOrder, config.wenoEps)
+    , reconstructor_(config.reconOrder, config.wenoEps,
+                     eos_->gamma(), eos_->pInf())
 {
+    // Determine solver type for non-virtual dispatch
+    const std::string& sname = riemannSolver_->name();
+    if (sname == "HLLC") solverType_ = RiemannSolverType::HLLC;
+    else if (sname == "Rusanov") solverType_ = RiemannSolverType::Rusanov;
+    else solverType_ = RiemannSolverType::LF;
+
+    fluxConfig_.dim = config.dim;
+    fluxConfig_.includePressure = !config.semiImplicit;
+    fluxConfig_.useIGR = config.useIGR;
+    fluxConfig_.nPhases = config.isMultiPhase() ? config.multiPhaseParams.nPhases : 0;
+
+    gamma_ = eos_->gamma();
+    pInf_ = eos_->pInf();
+
     std::size_t n = mesh.totalCells();
     int dim = mesh.dim();
 
@@ -53,6 +68,8 @@ SemiImplicitSolver::SemiImplicitSolver(
         rhsAlpha_.resize(nPhases);
         for (int ph = 0; ph < nPhases; ++ph)
             rhsAlpha_[ph].resize(n);
+        scratchAlphas_.resize(nPhases);
+        scratchAlphaRhos_.resize(nPhases);
     }
 
     if (igrSolver_) {
@@ -72,17 +89,14 @@ void SemiImplicitSolver::writeStarToState(const RectilinearMesh& mesh, SolutionS
                 if (dim >= 3) state.rhoW[idx] = state.rhoWStar[idx];
                 state.rhoE[idx] = state.rhoEstar[idx];
 
-                ConservativeState U;
-                U.rho = state.rho[idx];
-                U.rhoU = {state.rhoUStar[idx],
-                          (dim >= 2) ? state.rhoVStar[idx] : 0.0,
-                          (dim >= 3) ? state.rhoWStar[idx] : 0.0};
-                U.rhoE = state.rhoEstar[idx];
-                PrimitiveState W = eos_->toPrimitive(U);
-                state.velU[idx] = W.u[0];
-                if (dim >= 2) state.velV[idx] = W.u[1];
-                if (dim >= 3) state.velW[idx] = W.u[2];
-                state.pres[idx] = W.p;
+                double rhoSafe = std::max(state.rho[idx], 1e-14);
+                state.velU[idx] = state.rhoUStar[idx] / rhoSafe;
+                if (dim >= 2) state.velV[idx] = state.rhoVStar[idx] / rhoSafe;
+                if (dim >= 3) state.velW[idx] = state.rhoWStar[idx] / rhoSafe;
+                double ke = 0.5 * rhoSafe * state.velU[idx] * state.velU[idx];
+                if (dim >= 2) ke += 0.5 * rhoSafe * state.velV[idx] * state.velV[idx];
+                if (dim >= 3) ke += 0.5 * rhoSafe * state.velW[idx] * state.velW[idx];
+                state.pres[idx] = (gamma_ - 1.0) * (state.rhoEstar[idx] - ke) - gamma_ * pInf_;
             }
         }
     }
@@ -254,8 +268,8 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                 const PrimitiveState& left  = reconstructor_.xFaceLeft(f);
                 const PrimitiveState& right = reconstructor_.xFaceRight(f);
 
-                RiemannFlux flux = riemannSolver_->computeFlux(
-                    left, right, {1.0, 0.0, 0.0});
+                RiemannFlux flux = computeFluxDirect(solverType_,
+                    left, right, {1.0, 0.0, 0.0}, fluxConfig_);
 
                 double area = mesh.faceAreaX(j, k);
 
@@ -319,8 +333,8 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                     const PrimitiveState& left  = reconstructor_.yFaceLeft(f);
                     const PrimitiveState& right = reconstructor_.yFaceRight(f);
 
-                    RiemannFlux flux = riemannSolver_->computeFlux(
-                        left, right, {0.0, 1.0, 0.0});
+                    RiemannFlux flux = computeFluxDirect(solverType_,
+                        left, right, {0.0, 1.0, 0.0}, fluxConfig_);
 
                     double area = mesh.faceAreaY(i, k);
 
@@ -385,8 +399,8 @@ void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
                     const PrimitiveState& left  = reconstructor_.zFaceLeft(f);
                     const PrimitiveState& right = reconstructor_.zFaceRight(f);
 
-                    RiemannFlux flux = riemannSolver_->computeFlux(
-                        left, right, {0.0, 0.0, 1.0});
+                    RiemannFlux flux = computeFluxDirect(solverType_,
+                        left, right, {0.0, 0.0, 1.0}, fluxConfig_);
 
                     double area = mesh.faceAreaZ(i, j);
 
@@ -526,18 +540,18 @@ void SemiImplicitSolver::solvePressure(const SimulationConfig& config, const Rec
             for (int i = 0; i < mesh.nx(); ++i) {
                 std::size_t idx = mesh.index(i, j, k);
                 if (multiPhase) {
-                    std::vector<double> alphas(nPhases);
                     for (int ph = 0; ph < nPhases; ++ph)
-                        alphas[ph] = state.alpha[ph][idx];
-                    std::vector<double> alphaRhos(nPhases);
+                        scratchAlphas_[ph] = state.alpha[ph][idx];
                     for (int ph = 0; ph < nPhases; ++ph)
-                        alphaRhos[ph] = state.alphaRho[ph][idx];
+                        scratchAlphaRhos_[ph] = state.alphaRho[ph][idx];
                     double c = MixtureEOS::mixtureSoundSpeed(
-                        state.rho[idx], state.pres[idx], alphas, alphaRhos, mp);
+                        state.rho[idx], state.pres[idx],
+                        scratchAlphas_.data(), scratchAlphaRhos_.data(),
+                        nPhases, mp.phases.data());
                     state.rhoc2[idx] = state.rho[idx] * c * c;
                 } else {
-                    PrimitiveState W = state.getPrimitiveState(idx);
-                    double c = eos_->soundSpeed(W);
+                    double c = std::sqrt(gamma_ * std::max(state.pres[idx] + pInf_, 1e-14)
+                                         / std::max(state.rho[idx], 1e-14));
                     state.rhoc2[idx] = state.rho[idx] * c * c;
                 }
             }
@@ -618,16 +632,10 @@ void SemiImplicitSolver::correctionStep(const SimulationConfig& config, const Re
         for (int j = 0; j < mesh.ny(); ++j) {
             for (int i = 0; i < mesh.nx(); ++i) {
                 std::size_t idx = mesh.index(i, j, k);
-                ConservativeState U;
-                U.rho = state.rho[idx];
-                U.rhoU = {state.rhoU[idx],
-                          (dim >= 2) ? state.rhoV[idx] : 0.0,
-                          (dim >= 3) ? state.rhoW[idx] : 0.0};
-                U.rhoE = state.rhoE[idx];
-                PrimitiveState W = eos_->toPrimitive(U);
-                state.velU[idx] = W.u[0];
-                if (dim >= 2) state.velV[idx] = W.u[1];
-                if (dim >= 3) state.velW[idx] = W.u[2];
+                double rhoSafe = std::max(state.rho[idx], 1e-14);
+                state.velU[idx] = state.rhoU[idx] / rhoSafe;
+                if (dim >= 2) state.velV[idx] = state.rhoV[idx] / rhoSafe;
+                if (dim >= 3) state.velW[idx] = state.rhoW[idx] / rhoSafe;
             }
         }
     }
@@ -651,23 +659,18 @@ void SemiImplicitSolver::correctionStep(const SimulationConfig& config, const Re
                     if (dim >= 2) ke += 0.5 * rho * state.velV[idx] * state.velV[idx];
                     if (dim >= 3) ke += 0.5 * rho * state.velW[idx] * state.velW[idx];
 
-                    std::vector<double> alphas(nPhases);
                     for (int ph = 0; ph < nPhases; ++ph)
-                        alphas[ph] = state.alpha[ph][idx];
+                        scratchAlphas_[ph] = state.alpha[ph][idx];
 
                     state.rhoE[idx] = MixtureEOS::mixtureTotalEnergy(
-                        rho, pressure_[idx], alphas, ke, mp);
+                        rho, pressure_[idx], scratchAlphas_.data(),
+                        nPhases, ke, mp.phases.data());
                 } else {
-                    PrimitiveState W;
-                    W.rho   = state.rho[idx];
-                    W.u[0]  = state.velU[idx];
-                    if (dim >= 2) W.u[1] = state.velV[idx];
-                    if (dim >= 3) W.u[2] = state.velW[idx];
-                    W.p     = pressure_[idx];
-                    W.sigma = state.sigma[idx];
-
-                    ConservativeState U = eos_->toConservative(W);
-                    state.rhoE[idx] = U.rhoE;
+                    double rho = state.rho[idx];
+                    double ke = 0.5 * rho * state.velU[idx] * state.velU[idx];
+                    if (dim >= 2) ke += 0.5 * rho * state.velV[idx] * state.velV[idx];
+                    if (dim >= 3) ke += 0.5 * rho * state.velW[idx] * state.velW[idx];
+                    state.rhoE[idx] = (pressure_[idx] + gamma_ * pInf_) / (gamma_ - 1.0) + ke;
                 }
             }
         }

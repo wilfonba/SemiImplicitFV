@@ -30,54 +30,70 @@ void effectiveGammaAndPiInf(const double* alphas, int nAlphas,
     piInfEff = (gammaEff - 1.0) / gammaEff * sumPiInfTerm;
 }
 
-double mixturePressure(double rhoE_internal,
-                       const std::vector<double>& alphas,
-                       const MultiPhaseParams& mp) {
-    int nPhases = mp.nPhases;
+// ---- Raw-pointer implementations (GPU-ready) ----
 
+double mixturePressure(double rhoE_internal,
+                       const double* alphas, int nPhases,
+                       const PhaseEOS* phases) {
     double sumInvGm1 = 0.0;
     double sumPInfTerm = 0.0;
     for (int ph = 0; ph < nPhases; ++ph) {
-        double gm1 = mp.phases[ph].gamma - 1.0;
+        double gm1 = phases[ph].gamma - 1.0;
         sumInvGm1 += alphas[ph] / gm1;
-        sumPInfTerm += alphas[ph] * mp.phases[ph].gamma * mp.phases[ph].pInf / gm1;
+        sumPInfTerm += alphas[ph] * phases[ph].gamma * phases[ph].pInf / gm1;
     }
-
     return (rhoE_internal - sumPInfTerm) / sumInvGm1;
+}
+
+double mixtureSoundSpeed(double rho, double p,
+                         const double* alphas,
+                         const double* alphaRhos,
+                         int nPhases, const PhaseEOS* phases) {
+    double sumInvRhoc2 = 0.0;
+    for (int ph = 0; ph < nPhases; ++ph) {
+        double a = alphas[ph];
+        double rho_k = std::max(alphaRhos[ph], 1e-14) / std::max(a, 1e-14);
+        double gk = phases[ph].gamma;
+        double pInfk = phases[ph].pInf;
+        double ck2 = gk * (p + pInfk) / rho_k;
+        sumInvRhoc2 += a / (rho_k * std::max(ck2, 1e-14));
+    }
+    double c2 = 1.0 / (rho * std::max(sumInvRhoc2, 1e-30));
+    return std::sqrt(std::max(c2, 0.0));
+}
+
+double mixtureTotalEnergy(double /*rho*/, double p,
+                          const double* alphas, int nPhases,
+                          double ke, const PhaseEOS* phases) {
+    double result = ke;
+    for (int ph = 0; ph < nPhases; ++ph) {
+        double gm1 = phases[ph].gamma - 1.0;
+        result += alphas[ph] * (p + phases[ph].gamma * phases[ph].pInf) / gm1;
+    }
+    return result;
+}
+
+// ---- std::vector wrappers ----
+
+double mixturePressure(double rhoE_internal,
+                       const std::vector<double>& alphas,
+                       const MultiPhaseParams& mp) {
+    return mixturePressure(rhoE_internal, alphas.data(), mp.nPhases, mp.phases.data());
 }
 
 double mixtureSoundSpeed(double rho, double p,
                          const std::vector<double>& alphas,
                          const std::vector<double>& alphaRhos,
                          const MultiPhaseParams& mp) {
-    int nPhases = mp.nPhases;
-
-    double sumInvRhoc2 = 0.0;
-    for (int ph = 0; ph < nPhases; ++ph) {
-        double a = alphas[ph];
-        double rho_k = std::max(alphaRhos[ph], 1e-14) / std::max(a, 1e-14);
-        double gk = mp.phases[ph].gamma;
-        double pInfk = mp.phases[ph].pInf;
-        double ck2 = gk * (p + pInfk) / rho_k;
-        sumInvRhoc2 += a / (rho_k * std::max(ck2, 1e-14));
-    }
-
-    double c2 = 1.0 / (rho * std::max(sumInvRhoc2, 1e-30));
-    return std::sqrt(std::max(c2, 0.0));
+    return mixtureSoundSpeed(rho, p, alphas.data(), alphaRhos.data(),
+                             mp.nPhases, mp.phases.data());
 }
 
-double mixtureTotalEnergy(double /*rho*/, double p,
+double mixtureTotalEnergy(double rho, double p,
                           const std::vector<double>& alphas,
                           double ke,
                           const MultiPhaseParams& mp) {
-    int nPhases = mp.nPhases;
-
-    double result = ke;
-    for (int ph = 0; ph < nPhases; ++ph) {
-        double gm1 = mp.phases[ph].gamma - 1.0;
-        result += alphas[ph] * (p + mp.phases[ph].gamma * mp.phases[ph].pInf) / gm1;
-    }
-    return result;
+    return mixtureTotalEnergy(rho, p, alphas.data(), mp.nPhases, ke, mp.phases.data());
 }
 
 void convertConservativeToPrimitive(const RectilinearMesh& mesh,

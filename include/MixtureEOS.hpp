@@ -28,6 +28,11 @@ double mixturePressure(double rhoE_internal,
                        const std::vector<double>& alphas,
                        const MultiPhaseParams& mp);
 
+// Raw-pointer overload (GPU-ready, no STL)
+double mixturePressure(double rhoE_internal,
+                       const double* alphas, int nPhases,
+                       const PhaseEOS* phases);
+
 // Wood's mixture sound speed:
 //   1/(rho*c^2) = sum(alpha_k / (rho_k * c_k^2))
 double mixtureSoundSpeed(double rho, double p,
@@ -35,12 +40,23 @@ double mixtureSoundSpeed(double rho, double p,
                          const std::vector<double>& alphaRhos,
                          const MultiPhaseParams& mp);
 
+// Raw-pointer overload (GPU-ready, no STL)
+double mixtureSoundSpeed(double rho, double p,
+                         const double* alphas,
+                         const double* alphaRhos,
+                         int nPhases, const PhaseEOS* phases);
+
 // Mixture total energy from pressure:
 //   rhoE = sum(alpha_k * (p + g_k * pInf_k) / (g_k - 1)) + ke
 double mixtureTotalEnergy(double rho, double p,
                           const std::vector<double>& alphas,
                           double ke,
                           const MultiPhaseParams& mp);
+
+// Raw-pointer overload (GPU-ready, no STL)
+double mixtureTotalEnergy(double rho, double p,
+                          const double* alphas, int nPhases,
+                          double ke, const PhaseEOS* phases);
 
 // Full mesh loop: conservative -> primitive for multi-phase
 void convertConservativeToPrimitive(const RectilinearMesh& mesh,

@@ -24,8 +24,20 @@ ExplicitSolver::ExplicitSolver(
     , eos_(std::move(eos))
     , igrSolver_(std::move(igrSolver))
     , params_(config.explicitParams)
-    , reconstructor_(config.reconOrder, config.wenoEps)
+    , reconstructor_(config.reconOrder, config.wenoEps,
+                     eos_->gamma(), eos_->pInf())
 {
+    // Determine solver type for non-virtual dispatch
+    const std::string& sname = riemannSolver_->name();
+    if (sname == "HLLC") solverType_ = RiemannSolverType::HLLC;
+    else if (sname == "Rusanov") solverType_ = RiemannSolverType::Rusanov;
+    else solverType_ = RiemannSolverType::LF;
+
+    fluxConfig_.dim = config.dim;
+    fluxConfig_.includePressure = !config.semiImplicit;
+    fluxConfig_.useIGR = config.useIGR;
+    fluxConfig_.nPhases = config.isMultiPhase() ? config.multiPhaseParams.nPhases : 0;
+
     std::size_t n = mesh.totalCells();
     int dim = mesh.dim();
 
@@ -287,8 +299,8 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                 const PrimitiveState& left  = reconstructor_.xFaceLeft(f);
                 const PrimitiveState& right = reconstructor_.xFaceRight(f);
 
-                RiemannFlux flux = riemannSolver_->computeFlux(
-                    left, right, {1.0, 0.0, 0.0});
+                RiemannFlux flux = computeFluxDirect(solverType_,
+                    left, right, {1.0, 0.0, 0.0}, fluxConfig_);
 
                 double area = mesh.faceAreaX(j, k);
 
@@ -351,8 +363,8 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                     const PrimitiveState& left  = reconstructor_.yFaceLeft(f);
                     const PrimitiveState& right = reconstructor_.yFaceRight(f);
 
-                    RiemannFlux flux = riemannSolver_->computeFlux(
-                        left, right, {0.0, 1.0, 0.0});
+                    RiemannFlux flux = computeFluxDirect(solverType_,
+                        left, right, {0.0, 1.0, 0.0}, fluxConfig_);
 
                     double area = mesh.faceAreaY(i, k);
 
@@ -415,8 +427,8 @@ void ExplicitSolver::computeRHS(const SimulationConfig& config,
                     const PrimitiveState& left  = reconstructor_.zFaceLeft(f);
                     const PrimitiveState& right = reconstructor_.zFaceRight(f);
 
-                    RiemannFlux flux = riemannSolver_->computeFlux(
-                        left, right, {0.0, 0.0, 1.0});
+                    RiemannFlux flux = computeFluxDirect(solverType_,
+                        left, right, {0.0, 0.0, 1.0}, fluxConfig_);
 
                     double area = mesh.faceAreaZ(i, j);
 

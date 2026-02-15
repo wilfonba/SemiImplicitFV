@@ -39,6 +39,11 @@ public:
 
     virtual std::string name() const = 0;
 
+    // Scalar EOS parameters for inline computation (no virtual dispatch needed).
+    // Both IdealGas and StiffenedGas use gamma; pInf is 0 for ideal gas.
+    virtual double gamma() const = 0;
+    virtual double pInf() const { return 0.0; }
+
 protected:
     SimulationConfig config_;
 };

@@ -51,6 +51,8 @@ private:
     std::shared_ptr<IGRSolver> igrSolver_;
     ExplicitParams params_;
     Reconstructor reconstructor_;
+    RiemannSolverType solverType_;
+    FluxConfig fluxConfig_;
 
     HaloExchange* halo_ = nullptr;
     ImmersedBoundaryMethod* ibm_ = nullptr;

@@ -2,6 +2,26 @@
 
 namespace SemiImplicitFV {
 
+namespace {
+// Compute face viscosity from the two neighboring cells.
+// Arithmetic mixture rule: mu_cell = sum_k(alpha_k * mu_k),
+// then face value = average of left and right cells.
+inline double computeFaceMu(
+    std::size_t idxL, std::size_t idxR,
+    bool perPhase, double muConst,
+    const SolutionState& state,
+    const std::vector<double>& phaseMu, int nPhases)
+{
+    if (!perPhase) return muConst;
+    double muL = 0.0, muR = 0.0;
+    for (int ph = 0; ph < nPhases; ++ph) {
+        muL += state.alpha[ph][idxL] * phaseMu[ph];
+        muR += state.alpha[ph][idxR] * phaseMu[ph];
+    }
+    return 0.5 * (muL + muR);
+}
+} // anonymous namespace
+
 void addViscousFluxes(
     const SimulationConfig& config,
     const RectilinearMesh& mesh,
@@ -16,18 +36,8 @@ void addViscousFluxes(
     const auto& mp = config.multiPhaseParams;
     const bool perPhase = !vp.phaseMu.empty();
 
-    // Compute face viscosity from the two neighboring cells.
-    // Arithmetic mixture rule: mu_cell = sum_k(alpha_k * mu_k),
-    // then face value = average of left and right cells.
-    auto faceMu = [&](std::size_t idxL, std::size_t idxR) -> double {
-        if (!perPhase) return vp.mu;
-        double muL = 0.0, muR = 0.0;
-        for (int ph = 0; ph < mp.nPhases; ++ph) {
-            muL += state.alpha[ph][idxL] * vp.phaseMu[ph];
-            muR += state.alpha[ph][idxR] * vp.phaseMu[ph];
-        }
-        return 0.5 * (muL + muR);
-    };
+    // faceMu is computed inline below at each call site
+    // (replaced lambda capture to enable future OpenACC porting)
 
     // --- X-direction faces ---
     for (int k = 0; k < mesh.nz(); ++k) {
@@ -85,7 +95,7 @@ void addViscousFluxes(
                 double divU = dudx + dvdy + dwdz;
 
                 // Viscous stress components (x-face normal = x)
-                double muF = faceMu(idxL, idxR);
+                double muF = computeFaceMu(idxL, idxR, perPhase, vp.mu, state, vp.phaseMu, mp.nPhases);
                 double tau_xx = muF * (2.0 * dudx - (2.0 / 3.0) * divU);
                 double tau_xy = muF * (dvdx + dudy);
                 double tau_xz = muF * (dwdx + dudz);
@@ -174,7 +184,7 @@ void addViscousFluxes(
                     double divU = dudx + dvdy + dwdz;
 
                     // Viscous stress components (y-face normal = y)
-                    double muF = faceMu(idxL, idxR);
+                    double muF = computeFaceMu(idxL, idxR, perPhase, vp.mu, state, vp.phaseMu, mp.nPhases);
                     double tau_yx = muF * (dudy + dvdx);
                     double tau_yy = muF * (2.0 * dvdy - (2.0 / 3.0) * divU);
                     double tau_yz = muF * (dwdy + dvdz);
@@ -257,7 +267,7 @@ void addViscousFluxes(
                     double divU = dudx + dvdy + dwdz;
 
                     // Viscous stress components (z-face normal = z)
-                    double muF = faceMu(idxL, idxR);
+                    double muF = computeFaceMu(idxL, idxR, perPhase, vp.mu, state, vp.phaseMu, mp.nPhases);
                     double tau_zx = muF * (dudz + dwdx);
                     double tau_zy = muF * (dvdz + dwdy);
                     double tau_zz = muF * (2.0 * dwdz - (2.0 / 3.0) * divU);

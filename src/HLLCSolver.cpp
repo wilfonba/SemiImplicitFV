@@ -4,40 +4,30 @@
 
 namespace SemiImplicitFV {
 
-RiemannFlux HLLCSolver::computeFlux(
+RiemannFlux computeHLLCFlux(
     const PrimitiveState& left,
     const PrimitiveState& right,
-    const std::array<double, 3>& normal
-) const {
+    const std::array<double, 3>& normal,
+    const FluxConfig& fc
+) {
     RiemannFlux flux;
-    const int dim_ = config_.dim;
-    const bool includePressure_ = !config_.semiImplicit;
+    const int dim = fc.dim;
+    const bool includePressure = fc.includePressure;
 
-    double uL = normalVelocity(left, normal, dim_);
-    double uR = normalVelocity(right, normal, dim_);
+    double uL = normalVelocity(left, normal, dim);
+    double uR = normalVelocity(right, normal, dim);
 
     // Conservative total energies (per unit volume)
-    double rhoEL, rhoER;
-    if (left.gammaEff > 0.0) {
-        double keL = 0.5 * left.rho * (left.u[0]*left.u[0] + left.u[1]*left.u[1] + left.u[2]*left.u[2]);
-        rhoEL = (left.p + left.gammaEff * left.piInfEff) / (left.gammaEff - 1.0) + keL;
-    } else {
-        rhoEL = left.rho * eos_->totalEnergy(left);
-    }
-    if (right.gammaEff > 0.0) {
-        double keR = 0.5 * right.rho * (right.u[0]*right.u[0] + right.u[1]*right.u[1] + right.u[2]*right.u[2]);
-        rhoER = (right.p + right.gammaEff * right.piInfEff) / (right.gammaEff - 1.0) + keR;
-    } else {
-        rhoER = right.rho * eos_->totalEnergy(right);
-    }
+    double rhoEL = rhoEFromState(left);
+    double rhoER = rhoEFromState(right);
 
     // Wave speed estimates
     double sL, sR, sStar;
 
-    if (includePressure_) {
+    if (includePressure) {
         // Full Euler: use Davis estimates with sound speed
-        double cL = soundSpeedFromState(left, *eos_);
-        double cR = soundSpeedFromState(right, *eos_);
+        double cL = soundSpeedDirect(left);
+        double cR = soundSpeedDirect(right);
         sL = std::min(uL - cL, uR - cR);
         sR = std::max(uL + cL, uR + cR);
 
@@ -56,13 +46,13 @@ RiemannFlux HLLCSolver::computeFlux(
     if (sL >= 0) {
         // Left state flux
         flux.massFlux = left.rho * uL;
-        for (int i = 0; i < dim_; ++i) {
+        for (int i = 0; i < dim; ++i) {
             flux.momentumFlux[i] = left.rho * left.u[i] * uL;
         }
         flux.energyFlux = rhoEL * uL;
 
-        if (includePressure_) {
-            for (int i = 0; i < dim_; ++i) {
+        if (includePressure) {
+            for (int i = 0; i < dim; ++i) {
                 flux.momentumFlux[i] += left.p * normal[i];
             }
             flux.energyFlux += left.p * uL;
@@ -71,13 +61,13 @@ RiemannFlux HLLCSolver::computeFlux(
     else if (sR <= 0) {
         // Right state flux
         flux.massFlux = right.rho * uR;
-        for (int i = 0; i < dim_; ++i) {
+        for (int i = 0; i < dim; ++i) {
             flux.momentumFlux[i] = right.rho * right.u[i] * uR;
         }
         flux.energyFlux = rhoER * uR;
 
-        if (includePressure_) {
-            for (int i = 0; i < dim_; ++i) {
+        if (includePressure) {
+            for (int i = 0; i < dim; ++i) {
                 flux.momentumFlux[i] += right.p * normal[i];
             }
             flux.energyFlux += right.p * uR;
@@ -89,8 +79,8 @@ RiemannFlux HLLCSolver::computeFlux(
 
         flux.massFlux = left.rho * uL + sL * (rhoStarL - left.rho);
 
-        if (includePressure_) {
-            for (int i = 0; i < dim_; ++i) {
+        if (includePressure) {
+            for (int i = 0; i < dim; ++i) {
                 double rhoUStarL = rhoStarL * (left.u[i] + (sStar - uL) * normal[i]);
                 flux.momentumFlux[i] = left.rho * left.u[i] * uL + left.p * normal[i]
                     + sL * (rhoUStarL - left.rho * left.u[i]);
@@ -100,7 +90,7 @@ RiemannFlux HLLCSolver::computeFlux(
             double EStarL = rhoStarL * (eL + (sStar - uL) * (sStar + left.p / (left.rho * (sL - uL))));
             flux.energyFlux = (rhoEL + left.p) * uL + sL * (EStarL - rhoEL);
         } else {
-            for (int i = 0; i < dim_; ++i) {
+            for (int i = 0; i < dim; ++i) {
                 double rhoUStarL = rhoStarL * (left.u[i] + (sStar - uL) * normal[i]);
                 flux.momentumFlux[i] = left.rho * left.u[i] * uL
                     + sL * (rhoUStarL - left.rho * left.u[i]);
@@ -117,8 +107,8 @@ RiemannFlux HLLCSolver::computeFlux(
 
         flux.massFlux = right.rho * uR + sR * (rhoStarR - right.rho);
 
-        if (includePressure_) {
-            for (int i = 0; i < dim_; ++i) {
+        if (includePressure) {
+            for (int i = 0; i < dim; ++i) {
                 double rhoUStarR = rhoStarR * (right.u[i] + (sStar - uR) * normal[i]);
                 flux.momentumFlux[i] = right.rho * right.u[i] * uR + right.p * normal[i]
                     + sR * (rhoUStarR - right.rho * right.u[i]);
@@ -128,7 +118,7 @@ RiemannFlux HLLCSolver::computeFlux(
             double EStarR = rhoStarR * (eR + (sStar - uR) * (sStar + right.p / (right.rho * (sR - uR))));
             flux.energyFlux = (rhoER + right.p) * uR + sR * (EStarR - rhoER);
         } else {
-            for (int i = 0; i < dim_; ++i) {
+            for (int i = 0; i < dim; ++i) {
                 double rhoUStarR = rhoStarR * (right.u[i] + (sStar - uR) * normal[i]);
                 flux.momentumFlux[i] = right.rho * right.u[i] * uR
                     + sR * (rhoUStarR - right.rho * right.u[i]);
@@ -141,34 +131,47 @@ RiemannFlux HLLCSolver::computeFlux(
     }
 
     // Alpha and pressure fluxes: contact-type quantities (constant across acoustic waves)
-    int nAlphas = config_.isMultiPhase() ? config_.multiPhaseParams.nPhases : 0;
     if (sL >= 0) {
         // Pure left state
         flux.faceVelocity = uL;
         flux.pressureFlux = left.p * uL;
-        for (int ph = 0; ph < nAlphas; ++ph)
+        for (int ph = 0; ph < fc.nPhases; ++ph)
             flux.alphaFlux[ph] = left.alpha[ph] * uL;
     } else if (sR <= 0) {
         // Pure right state
         flux.faceVelocity = uR;
         flux.pressureFlux = right.p * uR;
-        for (int ph = 0; ph < nAlphas; ++ph)
+        for (int ph = 0; ph < fc.nPhases; ++ph)
             flux.alphaFlux[ph] = right.alpha[ph] * uR;
     } else {
         // Star region: face velocity is S*, upwind on S*
         flux.faceVelocity = sStar;
         if (sStar >= 0) {
             flux.pressureFlux = left.p * sStar;
-            for (int ph = 0; ph < nAlphas; ++ph)
+            for (int ph = 0; ph < fc.nPhases; ++ph)
                 flux.alphaFlux[ph] = left.alpha[ph] * sStar;
         } else {
             flux.pressureFlux = right.p * sStar;
-            for (int ph = 0; ph < nAlphas; ++ph)
+            for (int ph = 0; ph < fc.nPhases; ++ph)
                 flux.alphaFlux[ph] = right.alpha[ph] * sStar;
         }
     }
 
     return flux;
+}
+
+// Virtual method wrapper for backward compatibility
+RiemannFlux HLLCSolver::computeFlux(
+    const PrimitiveState& left,
+    const PrimitiveState& right,
+    const std::array<double, 3>& normal
+) const {
+    FluxConfig fc;
+    fc.dim = config_.dim;
+    fc.includePressure = !config_.semiImplicit;
+    fc.useIGR = config_.useIGR;
+    fc.nPhases = config_.isMultiPhase() ? config_.multiPhaseParams.nPhases : 0;
+    return computeHLLCFlux(left, right, normal, fc);
 }
 
 double HLLCSolver::maxWaveSpeed(

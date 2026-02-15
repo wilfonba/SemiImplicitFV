@@ -28,8 +28,9 @@ namespace {
     }
 } // anonymous namespace
 
-Reconstructor::Reconstructor(ReconstructionOrder order, double wenoEps)
-    : order_(order), wenoEps_(wenoEps)
+Reconstructor::Reconstructor(ReconstructionOrder order, double wenoEps,
+                             double gamma, double pInf)
+    : order_(order), wenoEps_(wenoEps), gamma_(gamma), pInf_(pInf)
 {}
 
 void Reconstructor::allocate(const RectilinearMesh& mesh) {
@@ -251,6 +252,9 @@ void Reconstructor::reconstructX(const SimulationConfig& config, const Rectiline
                         }
                         MixtureEOS::effectiveGammaAndPiInf(left.alpha, nAlphas, mp, left.gammaEff, left.piInfEff);
                         MixtureEOS::effectiveGammaAndPiInf(right.alpha, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    } else {
+                        left.gammaEff = gamma_;   left.piInfEff = pInf_;
+                        right.gammaEff = gamma_;  right.piInfEff = pInf_;
                     }
                 }
                 else if (order_ == ReconstructionOrder::WENO3 || order_ == ReconstructionOrder::UPWIND3) {
@@ -275,6 +279,9 @@ void Reconstructor::reconstructX(const SimulationConfig& config, const Rectiline
                             reconstructScalar(state.alpha[ph].data(), c, 3, lFn, rFn, wenoEps_, left.alpha[ph], right.alpha[ph]);
                         MixtureEOS::effectiveGammaAndPiInf(left.alpha, nAlphas, mp, left.gammaEff, left.piInfEff);
                         MixtureEOS::effectiveGammaAndPiInf(right.alpha, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    } else {
+                        left.gammaEff = gamma_;   left.piInfEff = pInf_;
+                        right.gammaEff = gamma_;  right.piInfEff = pInf_;
                     }
                 }
                 else { // WENO5 or UPWIND5
@@ -301,6 +308,9 @@ void Reconstructor::reconstructX(const SimulationConfig& config, const Rectiline
                             reconstructScalar(state.alpha[ph].data(), c, 5, lFn, rFn, wenoEps_, left.alpha[ph], right.alpha[ph]);
                         MixtureEOS::effectiveGammaAndPiInf(left.alpha, nAlphas, mp, left.gammaEff, left.piInfEff);
                         MixtureEOS::effectiveGammaAndPiInf(right.alpha, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    } else {
+                        left.gammaEff = gamma_;   left.piInfEff = pInf_;
+                        right.gammaEff = gamma_;  right.piInfEff = pInf_;
                     }
                 }
             }
@@ -357,6 +367,9 @@ void Reconstructor::reconstructY(const SimulationConfig& config, const Rectiline
                         }
                         MixtureEOS::effectiveGammaAndPiInf(left.alpha, nAlphas, mp, left.gammaEff, left.piInfEff);
                         MixtureEOS::effectiveGammaAndPiInf(right.alpha, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    } else {
+                        left.gammaEff = gamma_;   left.piInfEff = pInf_;
+                        right.gammaEff = gamma_;  right.piInfEff = pInf_;
                     }
                 }
                 else if (order_ == ReconstructionOrder::WENO3 || order_ == ReconstructionOrder::UPWIND3) {
@@ -380,6 +393,9 @@ void Reconstructor::reconstructY(const SimulationConfig& config, const Rectiline
                             reconstructScalar(state.alpha[ph].data(), c, 3, lFn, rFn, wenoEps_, left.alpha[ph], right.alpha[ph]);
                         MixtureEOS::effectiveGammaAndPiInf(left.alpha, nAlphas, mp, left.gammaEff, left.piInfEff);
                         MixtureEOS::effectiveGammaAndPiInf(right.alpha, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    } else {
+                        left.gammaEff = gamma_;   left.piInfEff = pInf_;
+                        right.gammaEff = gamma_;  right.piInfEff = pInf_;
                     }
                 }
                 else { // WENO5 or UPWIND5
@@ -405,6 +421,9 @@ void Reconstructor::reconstructY(const SimulationConfig& config, const Rectiline
                             reconstructScalar(state.alpha[ph].data(), c, 5, lFn, rFn, wenoEps_, left.alpha[ph], right.alpha[ph]);
                         MixtureEOS::effectiveGammaAndPiInf(left.alpha, nAlphas, mp, left.gammaEff, left.piInfEff);
                         MixtureEOS::effectiveGammaAndPiInf(right.alpha, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    } else {
+                        left.gammaEff = gamma_;   left.piInfEff = pInf_;
+                        right.gammaEff = gamma_;  right.piInfEff = pInf_;
                     }
                 }
             }
@@ -459,6 +478,9 @@ void Reconstructor::reconstructZ(const SimulationConfig& config, const Rectiline
                         }
                         MixtureEOS::effectiveGammaAndPiInf(left.alpha, nAlphas, mp, left.gammaEff, left.piInfEff);
                         MixtureEOS::effectiveGammaAndPiInf(right.alpha, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    } else {
+                        left.gammaEff = gamma_;   left.piInfEff = pInf_;
+                        right.gammaEff = gamma_;  right.piInfEff = pInf_;
                     }
                 }
                 else if (order_ == ReconstructionOrder::WENO3 || order_ == ReconstructionOrder::UPWIND3) {
@@ -481,6 +503,9 @@ void Reconstructor::reconstructZ(const SimulationConfig& config, const Rectiline
                             reconstructScalar(state.alpha[ph].data(), c, 3, lFn, rFn, wenoEps_, left.alpha[ph], right.alpha[ph]);
                         MixtureEOS::effectiveGammaAndPiInf(left.alpha, nAlphas, mp, left.gammaEff, left.piInfEff);
                         MixtureEOS::effectiveGammaAndPiInf(right.alpha, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    } else {
+                        left.gammaEff = gamma_;   left.piInfEff = pInf_;
+                        right.gammaEff = gamma_;  right.piInfEff = pInf_;
                     }
                 }
                 else { // WENO5 or UPWIND5
@@ -505,6 +530,9 @@ void Reconstructor::reconstructZ(const SimulationConfig& config, const Rectiline
                             reconstructScalar(state.alpha[ph].data(), c, 5, lFn, rFn, wenoEps_, left.alpha[ph], right.alpha[ph]);
                         MixtureEOS::effectiveGammaAndPiInf(left.alpha, nAlphas, mp, left.gammaEff, left.piInfEff);
                         MixtureEOS::effectiveGammaAndPiInf(right.alpha, nAlphas, mp, right.gammaEff, right.piInfEff);
+                    } else {
+                        left.gammaEff = gamma_;   left.piInfEff = pInf_;
+                        right.gammaEff = gamma_;  right.piInfEff = pInf_;
                     }
                 }
             }

@@ -51,6 +51,10 @@ private:
     std::shared_ptr<EquationOfState> eos_;
     std::shared_ptr<IGRSolver> igrSolver_;
     SemiImplicitParams params_;
+    RiemannSolverType solverType_;
+    FluxConfig fluxConfig_;
+    double gamma_;   // Scalar EOS gamma (extracted at construction)
+    double pInf_;    // Scalar EOS pInf (extracted at construction)
 
     int lastPressureIters_;
     Reconstructor reconstructor_;
@@ -76,6 +80,11 @@ private:
 
     // Scratch array for velocity divergence (pressure and alpha source terms)
     std::vector<double> divU_;
+
+    // Pre-allocated scratch arrays for multi-phase per-cell operations
+    // (avoids heap allocations in solvePressure/correctionStep hot loops)
+    std::vector<double> scratchAlphas_;
+    std::vector<double> scratchAlphaRhos_;
 
     void computeRHS(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state);
     void solveIGR(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state);

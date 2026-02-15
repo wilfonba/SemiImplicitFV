@@ -23,7 +23,8 @@ public:
     std::string name() const override { return "IdealGas"; }
 
     // Accessors
-    double gamma() const { return gamma_; }
+    double gamma() const override { return gamma_; }
+    double pInf() const override { return 0.0; }
     double R() const { return R_; }
 
 private:

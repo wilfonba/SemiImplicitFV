@@ -6,7 +6,7 @@ A finite volume solver for the compressible Euler equations on rectilinear meshe
 
 - **Explicit and semi-implicit time integration** — SSP-RK1/2/3 for explicit; advective CFL with implicit pressure correction for semi-implicit (Kwatra et al.)
 - **High-order spatial reconstruction** — WENO and upwind schemes at 1st, 3rd, and 5th order
-- **Riemann solvers** — Lax-Friedrichs, Rusanov, and HLLC
+- **Riemann solvers** — Lax-Friedrichs, Rusanov, and HLLC (devirtualized via enum dispatch for GPU readiness)
 - **Equations of state** — Ideal gas and stiffened gas
 - **N-phase compressible flow** — Volume-fraction-based multi-phase model with per-phase stiffened gas EOS, Wood's mixture sound speed, and mixture Riemann solvers
 - **Viscosity** — Newtonian viscous stress tensor with Stokes hypothesis; per-phase viscosity via arithmetic mixture rule for multi-phase flows
@@ -431,7 +431,7 @@ SemiImplicitFV/
 │   ├── RectilinearMesh.hpp    Mesh with ghost cells
 │   ├── ExplicitSolver.hpp     SSP-RK explicit solver
 │   ├── SemiImplicitSolver.hpp Pressure-split semi-implicit solver
-│   ├── RiemannSolver.hpp      Abstract Riemann solver interface
+│   ├── RiemannSolver.hpp      Riemann solver interface + free flux functions
 │   ├── LFSolver.hpp           Lax-Friedrichs
 │   ├── RusanovSolver.hpp      Rusanov
 │   ├── HLLCSolver.hpp         HLLC
@@ -440,7 +440,7 @@ SemiImplicitFV/
 │   ├── EquationOfState.hpp    Abstract EOS interface
 │   ├── IdealGasEOS.hpp        Ideal gas EOS
 │   ├── StiffenedGasEOS.hpp    Stiffened gas EOS
-│   ├── MixtureEOS.hpp         N-phase mixture EOS routines
+│   ├── MixtureEOS.hpp         N-phase mixture EOS routines (with raw-pointer overloads)
 │   ├── ViscousFlux.hpp        Newtonian viscous stress
 │   ├── SurfaceTension.hpp     Capillary stress tensor
 │   ├── PressureSolver.hpp     Abstract pressure solver
@@ -475,6 +475,19 @@ Output files are VTK XML RectilinearGrid format, viewable in [ParaView](https://
 3. Use the animation controls to step through time
 
 Fields written per cell: density, velocity (u, v, w), momentum, pressure, temperature, total energy, and entropic pressure (sigma). Multi-phase simulations additionally write per-phase volume fractions (`Alpha_0`, `Alpha_1`, ...) and partial densities (`AlphaRho_0`, `AlphaRho_1`, ...).
+
+## GPU Readiness
+
+The compute-path code has been refactored to eliminate patterns incompatible with OpenACC GPU offloading, while preserving identical numerical behavior on CPU:
+
+- **Devirtualized Riemann solvers** — Flux computation in all hot loops uses free functions (`computeLFFlux`, `computeRusanovFlux`, `computeHLLCFlux`) dispatched via a `RiemannSolverType` enum + switch (`computeFluxDirect()`). The virtual `computeFlux()` methods remain as backward-compatible wrappers but are not called in solver loops.
+- **Devirtualized EOS** — Sound speed, primitive-to-conservative, and conservative-to-primitive conversions in time stepping, pressure solve, and correction step use inline arithmetic with scalar gamma/pInf instead of virtual method calls.
+- **No per-cell heap allocations** — All `std::vector` scratch arrays in `solvePressure()` and `correctionStep()` are pre-allocated at solver construction.
+- **No lambda captures in compute paths** — Viscous flux computation uses a static helper function.
+- **Raw-pointer MixtureEOS overloads** — `mixturePressure`, `mixtureSoundSpeed`, and `mixtureTotalEnergy` have `const double*`/`const PhaseEOS*` overloads suitable for device code, with `std::vector` convenience wrappers on top.
+- **Face states always carry EOS parameters** — `gammaEff`/`piInfEff` are set on every reconstructed face state (single-phase and multi-phase), so Riemann solvers never fall back to virtual EOS lookups.
+
+These changes have no effect on case setup or the public API. All existing examples and configurations work without modification.
 
 ## License
 

@@ -4,40 +4,39 @@
 
 namespace SemiImplicitFV {
 
-RiemannFlux RusanovSolver::computeFlux(
+RiemannFlux computeRusanovFlux(
     const PrimitiveState& left,
     const PrimitiveState& right,
-    const std::array<double, 3>& normal
-) const {
+    const std::array<double, 3>& normal,
+    const FluxConfig& fc
+) {
     RiemannFlux flux;
-    const int dim_ = config_.dim;
-    const bool includePressure_ = !config_.semiImplicit;
+    const int dim = fc.dim;
+    const bool includePressure = fc.includePressure;
 
-    double uL = normalVelocity(left, normal, dim_);
-    double uR = normalVelocity(right, normal, dim_);
+    double uL = normalVelocity(left, normal, dim);
+    double uR = normalVelocity(right, normal, dim);
 
-    // Maximum wave speed
-    double sMax = maxWaveSpeed(left, right, normal);
-
-    // Conservative total energies (per unit volume)
-    double rhoEL, rhoER;
-    if (left.gammaEff > 0.0) {
-        double keL = 0.5 * left.rho * (left.u[0]*left.u[0] + left.u[1]*left.u[1] + left.u[2]*left.u[2]);
-        rhoEL = (left.p + left.gammaEff * left.piInfEff) / (left.gammaEff - 1.0) + keL;
+    // Maximum wave speed (Rusanov uses normal velocity + sound speed)
+    double absUL = std::abs(normalVelocity(left, normal, dim));
+    double absUR = std::abs(normalVelocity(right, normal, dim));
+    double sMax;
+    if (includePressure) {
+        double cL = soundSpeedDirect(left);
+        double cR = soundSpeedDirect(right);
+        sMax = std::max(absUL + cL, absUR + cR);
     } else {
-        rhoEL = left.rho * eos_->totalEnergy(left);
+        sMax = std::max(absUL, absUR);
     }
-    if (right.gammaEff > 0.0) {
-        double keR = 0.5 * right.rho * (right.u[0]*right.u[0] + right.u[1]*right.u[1] + right.u[2]*right.u[2]);
-        rhoER = (right.p + right.gammaEff * right.piInfEff) / (right.gammaEff - 1.0) + keR;
-    } else {
-        rhoER = right.rho * eos_->totalEnergy(right);
-    }
+
+    // Conservative total energies
+    double rhoEL = rhoEFromState(left);
+    double rhoER = rhoEFromState(right);
 
     // Left flux
     double massFluxL = left.rho * uL;
     std::array<double, 3> momFluxL{};
-    for (int i = 0; i < dim_; ++i) {
+    for (int i = 0; i < dim; ++i) {
         momFluxL[i] = left.rho * left.u[i] * uL;
     }
     double energyFluxL = rhoEL * uL;
@@ -45,13 +44,13 @@ RiemannFlux RusanovSolver::computeFlux(
     // Right flux
     double massFluxR = right.rho * uR;
     std::array<double, 3> momFluxR{};
-    for (int i = 0; i < dim_; ++i) {
+    for (int i = 0; i < dim; ++i) {
         momFluxR[i] = right.rho * right.u[i] * uR;
     }
     double energyFluxR = rhoER * uR;
 
-    if (includePressure_) {
-        for (int i = 0; i < dim_; ++i) {
+    if (includePressure) {
+        for (int i = 0; i < dim; ++i) {
             momFluxL[i] += left.p * normal[i];
             momFluxR[i] += right.p * normal[i];
         }
@@ -63,7 +62,7 @@ RiemannFlux RusanovSolver::computeFlux(
     flux.massFlux = 0.5 * (massFluxL + massFluxR)
                   - 0.5 * sMax * (right.rho - left.rho);
 
-    for (int i = 0; i < dim_; ++i) {
+    for (int i = 0; i < dim; ++i) {
         flux.momentumFlux[i] = 0.5 * (momFluxL[i] + momFluxR[i])
             - 0.5 * sMax * (right.rho * right.u[i] - left.rho * left.u[i]);
     }
@@ -75,13 +74,26 @@ RiemannFlux RusanovSolver::computeFlux(
     flux.faceVelocity = 0.5 * (uL + uR);
     flux.pressureFlux = 0.5 * (left.p * uL + right.p * uR)
                       - 0.5 * sMax * (right.p - left.p);
-    int nAlphas = config_.isMultiPhase() ? config_.multiPhaseParams.nPhases : 0;
-    for (int ph = 0; ph < nAlphas; ++ph) {
+    for (int ph = 0; ph < fc.nPhases; ++ph) {
         flux.alphaFlux[ph] = 0.5 * (left.alpha[ph] * uL + right.alpha[ph] * uR)
                            - 0.5 * sMax * (right.alpha[ph] - left.alpha[ph]);
     }
 
     return flux;
+}
+
+// Virtual method wrapper for backward compatibility
+RiemannFlux RusanovSolver::computeFlux(
+    const PrimitiveState& left,
+    const PrimitiveState& right,
+    const std::array<double, 3>& normal
+) const {
+    FluxConfig fc;
+    fc.dim = config_.dim;
+    fc.includePressure = !config_.semiImplicit;
+    fc.useIGR = config_.useIGR;
+    fc.nPhases = config_.isMultiPhase() ? config_.multiPhaseParams.nPhases : 0;
+    return computeRusanovFlux(left, right, normal, fc);
 }
 
 double RusanovSolver::maxWaveSpeed(

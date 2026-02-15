@@ -47,6 +47,9 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
                                const ImmersedBoundaryMethod* ibm) {
     double dt = maxDt;
     int dim = mesh.dim();
+    // Extract scalar EOS params once to avoid per-cell virtual calls
+    const double gamma = eos.gamma();
+    const double pInf = eos.pInf();
 
     for (int k = 0; k < mesh.nz(); ++k) {
         for (int j = 0; j < mesh.ny(); ++j) {
@@ -55,7 +58,8 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
 
                 if (ibm && ibm->isSolid(idx)) continue;
 
-                double c = eos.soundSpeed(state.getPrimitiveState(idx));
+                double c = std::sqrt(gamma * std::max(state.pres[idx] + pInf, 1e-14)
+                                     / std::max(state.rho[idx], 1e-14));
 
                 double dtCell = mesh.dx(i) / (std::abs(state.velU[idx]) + c);
                 if (dim >= 2)
