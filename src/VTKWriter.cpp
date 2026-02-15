@@ -230,7 +230,7 @@ void VTKWriter::writePVTR(const std::string& filename,
     for (int ph = 0; ph < nPhases; ++ph) {
         file << "      <PDataArray type=\"Float64\" Name=\"AlphaRho_" << ph << "\"/>\n";
     }
-    for (int ph = 0; ph < nPhases - 1; ++ph) {
+    for (int ph = 0; ph < nPhases; ++ph) {
         file << "      <PDataArray type=\"Float64\" Name=\"Alpha_" << ph << "\"/>\n";
     }
     file << "      <PDataArray type=\"Int32\" Name=\"Rank\"/>\n";

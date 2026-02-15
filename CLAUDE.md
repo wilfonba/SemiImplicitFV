@@ -32,7 +32,7 @@ CMake options:
 
 **EOS**: `IdealGasEOS` and `StiffenedGasEOS`, both inherit from `EquationOfState`.
 
-**Multi-phase**: `MixtureEOS` namespace (`MixtureEOS.hpp` / `MixtureEOS.cpp`) provides N-phase mixture routines — effective gamma/piInf from volume fractions, Wood's mixture sound speed, mixture pressure, and mixture total energy. Enabled by setting `config.multiPhaseParams.nPhases >= 2` with per-phase `{gamma, pInf}` in `PhaseEOS`. Volume fractions (`alpha[k]` for k=0..nPhases-2) and partial densities (`alphaRho[k]` for k=0..nPhases-1) are stored in `SolutionState` and reconstructed to faces. At faces, `gammaEff` and `piInfEff` are computed from reconstructed alphas via `MixtureEOS::effectiveGammaAndPiInf()`. Cell-center sound speed uses the full Wood's formula.
+**Multi-phase**: `MixtureEOS` namespace (`MixtureEOS.hpp` / `MixtureEOS.cpp`) provides N-phase mixture routines — effective gamma/piInf from volume fractions, Wood's mixture sound speed, mixture pressure, and mixture total energy. Enabled by setting `config.multiPhaseParams.nPhases >= 2` with per-phase `{gamma, pInf}` in `PhaseEOS`. All N volume fractions (`alpha[k]` for k=0..nPhases-1) and N partial densities (`alphaRho[k]` for k=0..nPhases-1) are stored and advected in `SolutionState`. After each RK stage, alphas are clamped to `alphaMin` and normalized so `sum(alpha) = 1`. At faces, `gammaEff` and `piInfEff` are computed from reconstructed alphas via `MixtureEOS::effectiveGammaAndPiInf()`. Cell-center sound speed uses the full Wood's formula.
 
 **IGR**: `IGRSolver` computes entropic pressure via Gauss-Seidel iteration on the elliptic equation. Controlled by `SimulationConfig::useIGR` and `IGRParams`.
 

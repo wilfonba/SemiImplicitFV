@@ -92,6 +92,7 @@ static void initializeBubble(const RectilinearMesh& mesh,
             state.alphaRho[0][idx] = alphaHeavy * rhoHeavy;
             state.alphaRho[1][idx] = alphaLight * rhoLight;
             state.alpha[0][idx]    = alphaHeavy;
+            state.alpha[1][idx]    = alphaLight;
 
             double rho = state.alphaRho[0][idx] + state.alphaRho[1][idx];
             state.rho[idx] = rho;
@@ -107,7 +108,7 @@ static void initializeBubble(const RectilinearMesh& mesh,
             state.pres[idx] = p;
 
             // Total energy from mixture EOS
-            std::vector<double> alphas = {alphaHeavy};
+            std::vector<double> alphas = {alphaHeavy, alphaLight};
             double ke = 0.0;
             state.rhoE[idx] = MixtureEOS::mixtureTotalEnergy(rho, p, alphas, ke, mp);
         }

@@ -15,7 +15,7 @@ double effectiveGamma(const std::vector<double>& alphas,
                       const MultiPhaseParams& mp);
 
 // Allocation-free version: compute both gammaEff and piInfEff from raw alpha array.
-// alphas has nAlphas = nPhases-1 entries; the last phase alpha is 1 - sum(alphas).
+// alphas has nAlphas = nPhases entries (all N volume fractions).
 // Math: 1/(g_mix-1) = sum(alpha_k/(g_k-1))
 //       piInf_mix = (g_mix-1)/g_mix * sum(alpha_k * g_k * pInf_k / (g_k-1))
 void effectiveGammaAndPiInf(const double* alphas, int nAlphas,

@@ -64,7 +64,7 @@ private:
 
     // Multi-phase RHS storage
     std::vector<std::vector<double>> rhsAlphaRho_;  // N arrays
-    std::vector<std::vector<double>> rhsAlpha_;      // N-1 arrays
+    std::vector<std::vector<double>> rhsAlpha_;      // N arrays
 
     // Scratch array for velocity divergence (alpha source term)
     std::vector<double> divU_;

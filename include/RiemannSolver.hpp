@@ -15,7 +15,7 @@ struct RiemannFlux {
     double massFlux;
     std::array<double, 3> momentumFlux;
     double energyFlux;
-    double alphaFlux[8];   // volume fraction fluxes (nPhases-1 entries)
+    double alphaFlux[8];   // volume fraction fluxes (nPhases entries)
     double pressureFlux;   // upwind pressure flux p*u_n (for conservative p advection)
     double faceVelocity;   // normal velocity at face (for div(u) source term)
 

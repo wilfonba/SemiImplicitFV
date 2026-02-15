@@ -22,15 +22,10 @@ void addViscousFluxes(
     auto faceMu = [&](std::size_t idxL, std::size_t idxR) -> double {
         if (!perPhase) return vp.mu;
         double muL = 0.0, muR = 0.0;
-        double alphaLastL = 1.0, alphaLastR = 1.0;
-        for (int ph = 0; ph < mp.nPhases - 1; ++ph) {
+        for (int ph = 0; ph < mp.nPhases; ++ph) {
             muL += state.alpha[ph][idxL] * vp.phaseMu[ph];
             muR += state.alpha[ph][idxR] * vp.phaseMu[ph];
-            alphaLastL -= state.alpha[ph][idxL];
-            alphaLastR -= state.alpha[ph][idxR];
         }
-        muL += alphaLastL * vp.phaseMu[mp.nPhases - 1];
-        muR += alphaLastR * vp.phaseMu[mp.nPhases - 1];
         return 0.5 * (muL + muR);
     };
 

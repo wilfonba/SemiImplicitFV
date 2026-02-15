@@ -75,7 +75,7 @@ RiemannFlux RusanovSolver::computeFlux(
     flux.faceVelocity = 0.5 * (uL + uR);
     flux.pressureFlux = 0.5 * (left.p * uL + right.p * uR)
                       - 0.5 * sMax * (right.p - left.p);
-    int nAlphas = config_.isMultiPhase() ? config_.multiPhaseParams.nPhases - 1 : 0;
+    int nAlphas = config_.isMultiPhase() ? config_.multiPhaseParams.nPhases : 0;
     for (int ph = 0; ph < nAlphas; ++ph) {
         flux.alphaFlux[ph] = 0.5 * (left.alpha[ph] * uL + right.alpha[ph] * uR)
                            - 0.5 * sMax * (right.alpha[ph] - left.alpha[ph]);

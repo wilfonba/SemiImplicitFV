@@ -141,7 +141,7 @@ RiemannFlux HLLCSolver::computeFlux(
     }
 
     // Alpha and pressure fluxes: contact-type quantities (constant across acoustic waves)
-    int nAlphas = config_.isMultiPhase() ? config_.multiPhaseParams.nPhases - 1 : 0;
+    int nAlphas = config_.isMultiPhase() ? config_.multiPhaseParams.nPhases : 0;
     if (sL >= 0) {
         // Pure left state
         flux.faceVelocity = uL;

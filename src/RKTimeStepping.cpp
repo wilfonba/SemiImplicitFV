@@ -86,7 +86,7 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
     int nPhases = mp.nPhases;
 
     // Pre-allocate outside the loop to avoid per-cell heap allocations
-    std::vector<double> alphas(nPhases - 1);
+    std::vector<double> alphas(nPhases);
     std::vector<double> alphaRhos(nPhases);
 
     for (int k = 0; k < mesh.nz(); ++k) {
@@ -96,7 +96,7 @@ double computeAcousticTimeStep(const RectilinearMesh& mesh,
 
                 if (ibm && ibm->isSolid(idx)) continue;
 
-                for (int ph = 0; ph < nPhases - 1; ++ph)
+                for (int ph = 0; ph < nPhases; ++ph)
                     alphas[ph] = state.alpha[ph][idx];
                 for (int ph = 0; ph < nPhases; ++ph)
                     alphaRhos[ph] = state.alphaRho[ph][idx];

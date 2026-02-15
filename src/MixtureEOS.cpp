@@ -10,9 +10,7 @@ double effectiveGamma(const std::vector<double>& alphas,
     int nPhases = mp.nPhases;
     double sumInvGm1 = 0.0;
     for (int ph = 0; ph < nPhases; ++ph) {
-        double a = (ph < nPhases - 1) ? alphas[ph]
-                 : 1.0 - [&]() { double s = 0.0; for (int q = 0; q < nPhases - 1; ++q) s += alphas[q]; return s; }();
-        sumInvGm1 += a / (mp.phases[ph].gamma - 1.0);
+        sumInvGm1 += alphas[ph] / (mp.phases[ph].gamma - 1.0);
     }
     return 1.0 + 1.0 / sumInvGm1;
 }
@@ -20,23 +18,15 @@ double effectiveGamma(const std::vector<double>& alphas,
 void effectiveGammaAndPiInf(const double* alphas, int nAlphas,
                              const MultiPhaseParams& mp,
                              double& gammaEff, double& piInfEff) {
-    int nPhases = mp.nPhases;
-    double alphaSum = 0.0;
-    for (int ph = 0; ph < nAlphas; ++ph)
-        alphaSum += alphas[ph];
-    double alphaN = 1.0 - alphaSum;
-
     double sumInvGm1 = 0.0;
     double sumPiInfTerm = 0.0;
-    for (int ph = 0; ph < nPhases; ++ph) {
-        double a = (ph < nAlphas) ? alphas[ph] : alphaN;
+    for (int ph = 0; ph < nAlphas; ++ph) {
         double gk = mp.phases[ph].gamma;
         double gm1 = gk - 1.0;
-        sumInvGm1 += a / gm1;
-        sumPiInfTerm += a * gk * mp.phases[ph].pInf / gm1;
+        sumInvGm1 += alphas[ph] / gm1;
+        sumPiInfTerm += alphas[ph] * gk * mp.phases[ph].pInf / gm1;
     }
     gammaEff = 1.0 + 1.0 / sumInvGm1;
-    // piInf_mix = (g_mix-1)/g_mix * sum(alpha_k * g_k * pInf_k / (g_k-1))
     piInfEff = (gammaEff - 1.0) / gammaEff * sumPiInfTerm;
 }
 
@@ -45,19 +35,12 @@ double mixturePressure(double rhoE_internal,
                        const MultiPhaseParams& mp) {
     int nPhases = mp.nPhases;
 
-    // Compute alpha_N from constraint
-    double alphaSum = 0.0;
-    for (int ph = 0; ph < nPhases - 1; ++ph)
-        alphaSum += alphas[ph];
-    double alphaN = 1.0 - alphaSum;
-
     double sumInvGm1 = 0.0;
     double sumPInfTerm = 0.0;
     for (int ph = 0; ph < nPhases; ++ph) {
-        double a = (ph < nPhases - 1) ? alphas[ph] : alphaN;
         double gm1 = mp.phases[ph].gamma - 1.0;
-        sumInvGm1 += a / gm1;
-        sumPInfTerm += a * mp.phases[ph].gamma * mp.phases[ph].pInf / gm1;
+        sumInvGm1 += alphas[ph] / gm1;
+        sumPInfTerm += alphas[ph] * mp.phases[ph].gamma * mp.phases[ph].pInf / gm1;
     }
 
     return (rhoE_internal - sumPInfTerm) / sumInvGm1;
@@ -69,14 +52,9 @@ double mixtureSoundSpeed(double rho, double p,
                          const MultiPhaseParams& mp) {
     int nPhases = mp.nPhases;
 
-    double alphaSum = 0.0;
-    for (int ph = 0; ph < nPhases - 1; ++ph)
-        alphaSum += alphas[ph];
-    double alphaN = 1.0 - alphaSum;
-
     double sumInvRhoc2 = 0.0;
     for (int ph = 0; ph < nPhases; ++ph) {
-        double a = (ph < nPhases - 1) ? alphas[ph] : alphaN;
+        double a = alphas[ph];
         double rho_k = std::max(alphaRhos[ph], 1e-14) / std::max(a, 1e-14);
         double gk = mp.phases[ph].gamma;
         double pInfk = mp.phases[ph].pInf;
@@ -94,16 +72,10 @@ double mixtureTotalEnergy(double /*rho*/, double p,
                           const MultiPhaseParams& mp) {
     int nPhases = mp.nPhases;
 
-    double alphaSum = 0.0;
-    for (int ph = 0; ph < nPhases - 1; ++ph)
-        alphaSum += alphas[ph];
-    double alphaN = 1.0 - alphaSum;
-
     double result = ke;
     for (int ph = 0; ph < nPhases; ++ph) {
-        double a = (ph < nPhases - 1) ? alphas[ph] : alphaN;
         double gm1 = mp.phases[ph].gamma - 1.0;
-        result += a * (p + mp.phases[ph].gamma * mp.phases[ph].pInf) / gm1;
+        result += alphas[ph] * (p + mp.phases[ph].gamma * mp.phases[ph].pInf) / gm1;
     }
     return result;
 }
@@ -115,7 +87,7 @@ void convertConservativeToPrimitive(const RectilinearMesh& mesh,
     int nPhases = mp.nPhases;
 
     // Pre-allocate outside the loop to avoid per-cell heap allocations
-    std::vector<double> alphas(nPhases - 1);
+    std::vector<double> alphas(nPhases);
 
     for (int k = 0; k < mesh.nz(); ++k) {
         for (int j = 0; j < mesh.ny(); ++j) {
@@ -140,7 +112,7 @@ void convertConservativeToPrimitive(const RectilinearMesh& mesh,
                 if (dim >= 3) ke += 0.5 * rhoSafe * state.velW[idx] * state.velW[idx];
 
                 // Gather volume fractions
-                for (int ph = 0; ph < nPhases - 1; ++ph)
+                for (int ph = 0; ph < nPhases; ++ph)
                     alphas[ph] = state.alpha[ph][idx];
 
                 // Internal energy
@@ -161,7 +133,7 @@ void convertPrimitiveToConservative(const RectilinearMesh& mesh,
     int nPhases = mp.nPhases;
 
     // Pre-allocate outside the loop to avoid per-cell heap allocations
-    std::vector<double> alphas(nPhases - 1);
+    std::vector<double> alphas(nPhases);
 
     for (int k = 0; k < mesh.nz(); ++k) {
         for (int j = 0; j < mesh.ny(); ++j) {
@@ -177,7 +149,7 @@ void convertPrimitiveToConservative(const RectilinearMesh& mesh,
                 if (dim >= 2) ke += 0.5 * rho * state.velV[idx] * state.velV[idx];
                 if (dim >= 3) ke += 0.5 * rho * state.velW[idx] * state.velW[idx];
 
-                for (int ph = 0; ph < nPhases - 1; ++ph)
+                for (int ph = 0; ph < nPhases; ++ph)
                     alphas[ph] = state.alpha[ph][idx];
 
                 state.rhoE[idx] = mixtureTotalEnergy(rho, state.pres[idx],

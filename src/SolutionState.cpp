@@ -50,8 +50,8 @@ void SolutionState::allocate(std::size_t totalCells, const SimulationConfig& con
         alphaRho.resize(nPhases);
         for (int ph = 0; ph < nPhases; ++ph)
             alphaRho[ph].assign(totalCells, 0.0);
-        alpha.resize(nPhases - 1);
-        for (int ph = 0; ph < nPhases - 1; ++ph)
+        alpha.resize(nPhases);
+        for (int ph = 0; ph < nPhases; ++ph)
             alpha[ph].assign(totalCells, 0.0);
     }
 
@@ -69,8 +69,8 @@ void SolutionState::allocate(std::size_t totalCells, const SimulationConfig& con
             alphaRho0.resize(nPhases);
             for (int ph = 0; ph < nPhases; ++ph)
                 alphaRho0[ph].assign(totalCells, 0.0);
-            alpha0.resize(nPhases - 1);
-            for (int ph = 0; ph < nPhases - 1; ++ph)
+            alpha0.resize(nPhases);
+            for (int ph = 0; ph < nPhases; ++ph)
                 alpha0[ph].assign(totalCells, 0.0);
         }
     }

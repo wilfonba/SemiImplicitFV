@@ -213,7 +213,7 @@ void Reconstructor::reconstructX(const SimulationConfig& config, const Rectiline
     const double* velW = (dim_ >= 3) ? state.velW.data() : nullptr;
 
     const bool multiPhase = config.isMultiPhase();
-    const int nAlphas = multiPhase ? config.multiPhaseParams.nPhases - 1 : 0;
+    const int nAlphas = multiPhase ? config.multiPhaseParams.nPhases : 0;
     const MultiPhaseParams& mp = config.multiPhaseParams;
 
     for (int k = 0; k < nz; ++k) {
@@ -321,7 +321,7 @@ void Reconstructor::reconstructY(const SimulationConfig& config, const Rectiline
     const double* velW = (dim_ >= 3) ? state.velW.data() : nullptr;
 
     const bool multiPhase = config.isMultiPhase();
-    const int nAlphas = multiPhase ? config.multiPhaseParams.nPhases - 1 : 0;
+    const int nAlphas = multiPhase ? config.multiPhaseParams.nPhases : 0;
     const MultiPhaseParams& mp = config.multiPhaseParams;
 
     for (int k = 0; k < nz; ++k) {
@@ -425,7 +425,7 @@ void Reconstructor::reconstructZ(const SimulationConfig& config, const Rectiline
     const double* sig  = state.sigma.data();
 
     const bool multiPhase = config.isMultiPhase();
-    const int nAlphas = multiPhase ? config.multiPhaseParams.nPhases - 1 : 0;
+    const int nAlphas = multiPhase ? config.multiPhaseParams.nPhases : 0;
     const MultiPhaseParams& mp = config.multiPhaseParams;
 
     for (int k = 0; k <= nz; ++k) {

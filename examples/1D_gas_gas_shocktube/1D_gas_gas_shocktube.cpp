@@ -54,6 +54,7 @@ void initializeTwoPhaseShockTube(const RectilinearMesh& mesh,
         state.alphaRho[0][idx] = alpha1 * rho1;
         state.alphaRho[1][idx] = alpha2 * rho2;
         state.alpha[0][idx] = alpha1;
+        state.alpha[1][idx] = alpha2;
 
         state.rho[idx] = state.alphaRho[0][idx] + state.alphaRho[1][idx];
         state.rhoU[idx] = 0.0;
@@ -61,7 +62,7 @@ void initializeTwoPhaseShockTube(const RectilinearMesh& mesh,
         state.pres[idx] = p;
 
         // Compute total energy from mixture EOS
-        std::vector<double> alphas = {alpha1};
+        std::vector<double> alphas = {alpha1, alpha2};
         double ke = 0.0;
         state.rhoE[idx] = MixtureEOS::mixtureTotalEnergy(state.rho[idx], p, alphas, ke, mp);
     }

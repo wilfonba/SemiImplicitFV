@@ -174,8 +174,8 @@ static int numFields(VarSet varSet, int dim, const SolutionState& state) {
     int nMultiPhase = 0;
     int nPhases = static_cast<int>(state.alphaRho.size());
     if (nPhases > 0) {
-        // alphaRho (N) + alpha (N-1)
-        nMultiPhase = nPhases + (nPhases - 1);
+        // alphaRho (N) + alpha (N)
+        nMultiPhase = 2 * nPhases;
     }
 
     switch (varSet) {

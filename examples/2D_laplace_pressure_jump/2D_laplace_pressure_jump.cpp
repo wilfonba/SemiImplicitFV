@@ -76,6 +76,7 @@ static void initializeDroplet(const RectilinearMesh& mesh,
             state.alphaRho[0][idx] = alphaW * rhoWater;
             state.alphaRho[1][idx] = alphaA * rhoAir;
             state.alpha[0][idx]    = alphaW;
+            state.alpha[1][idx]    = alphaA;
 
             state.rho[idx]  = state.alphaRho[0][idx] + state.alphaRho[1][idx];
             state.rhoU[idx] = 0.0;
@@ -85,7 +86,7 @@ static void initializeDroplet(const RectilinearMesh& mesh,
             state.pres[idx] = pAtm; //p;
 
             // Total energy from mixture EOS (accounts for stiffened-gas pInf)
-            std::vector<double> alphas = {alphaW};
+            std::vector<double> alphas = {alphaW, alphaA};
             double ke = 0.0;
             state.rhoE[idx] = MixtureEOS::mixtureTotalEnergy(
                 state.rho[idx], p, alphas, ke, mp);

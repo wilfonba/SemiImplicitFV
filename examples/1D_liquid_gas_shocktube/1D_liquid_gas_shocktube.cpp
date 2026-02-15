@@ -62,6 +62,7 @@ void initializeLiquidGasShockTube(const RectilinearMesh& mesh,
         state.alphaRho[0][idx] = alphaWater * rho;
         state.alphaRho[1][idx] = alphaAir * rho;
         state.alpha[0][idx] = alphaWater;
+        state.alpha[1][idx] = alphaAir;
 
         state.rho[idx] = state.alphaRho[0][idx] + state.alphaRho[1][idx];
         state.rhoU[idx] = 0.0;
@@ -69,7 +70,7 @@ void initializeLiquidGasShockTube(const RectilinearMesh& mesh,
         state.pres[idx] = p;
 
         // Compute total energy from mixture EOS (accounts for pInf)
-        std::vector<double> alphas = {alphaWater};
+        std::vector<double> alphas = {alphaWater, alphaAir};
         double ke = 0.0;
         state.rhoE[idx] = MixtureEOS::mixtureTotalEnergy(state.rho[idx], p, alphas, ke, mp);
     }
