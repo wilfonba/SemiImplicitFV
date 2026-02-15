@@ -82,37 +82,4 @@ RiemannFlux computeRusanovFlux(
     return flux;
 }
 
-// Virtual method wrapper for backward compatibility
-RiemannFlux RusanovSolver::computeFlux(
-    const PrimitiveState& left,
-    const PrimitiveState& right,
-    const std::array<double, 3>& normal
-) const {
-    FluxConfig fc;
-    fc.dim = config_.dim;
-    fc.includePressure = !config_.semiImplicit;
-    fc.useIGR = config_.useIGR;
-    fc.nPhases = config_.isMultiPhase() ? config_.multiPhaseParams.nPhases : 0;
-    return computeRusanovFlux(left, right, normal, fc);
-}
-
-double RusanovSolver::maxWaveSpeed(
-    const PrimitiveState& left,
-    const PrimitiveState& right,
-    const std::array<double, 3>& normal
-) const {
-    const int dim_ = config_.dim;
-    const bool includePressure_ = !config_.semiImplicit;
-    double uL = std::abs(normalVelocity(left, normal, dim_));
-    double uR = std::abs(normalVelocity(right, normal, dim_));
-
-    if (includePressure_) {
-        double cL = soundSpeedFromState(left, *eos_);
-        double cR = soundSpeedFromState(right, *eos_);
-        return std::max(uL + cL, uR + cR);
-    }
-
-    return std::max(uL, uR);
-}
-
 } // namespace SemiImplicitFV

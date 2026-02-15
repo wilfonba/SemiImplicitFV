@@ -480,7 +480,7 @@ Fields written per cell: density, velocity (u, v, w), momentum, pressure, temper
 
 The compute-path code has been refactored to eliminate patterns incompatible with OpenACC GPU offloading, while preserving identical numerical behavior on CPU:
 
-- **Devirtualized Riemann solvers** — Flux computation in all hot loops uses free functions (`computeLFFlux`, `computeRusanovFlux`, `computeHLLCFlux`) dispatched via a `RiemannSolverType` enum + switch (`computeFluxDirect()`). The virtual `computeFlux()` methods remain as backward-compatible wrappers but are not called in solver loops.
+- **Devirtualized Riemann solvers** — Flux computation in all hot loops uses free functions (`computeLFFlux`, `computeRusanovFlux`, `computeHLLCFlux`) dispatched via a `RiemannSolverType` enum + switch (`computeFluxDirect()`).
 - **Devirtualized EOS** — Sound speed, primitive-to-conservative, and conservative-to-primitive conversions in time stepping, pressure solve, and correction step use inline arithmetic with scalar gamma/pInf instead of virtual method calls.
 - **No per-cell heap allocations** — All `std::vector` scratch arrays in `solvePressure()` and `correctionStep()` are pre-allocated at solver construction.
 - **No lambda captures in compute paths** — Viscous flux computation uses a static helper function.

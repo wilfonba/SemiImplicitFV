@@ -26,7 +26,7 @@ CMake options:
 
 **Solvers**: `ExplicitSolver` (SSP-RK1/2/3 with acoustic CFL) and `SemiImplicitSolver` (advective CFL + implicit pressure). Both use shared RK utilities from `RKTimeStepping.hpp`.
 
-**Riemann solvers**: `LFSolver` (Lax-Friedrichs), `RusanovSolver`, `HLLCSolver` — all inherit from `RiemannSolver`. Hot-path flux computation uses devirtualized free functions (`computeLFFlux`, `computeRusanovFlux`, `computeHLLCFlux`) dispatched via `RiemannSolverType` enum + switch in `computeFluxDirect()`. The virtual `computeFlux()` methods remain as thin wrappers for backward compatibility. See `RiemannSolver.hpp` for the enum, `FluxConfig` struct, and inline dispatch function.
+**Riemann solvers**: `LFSolver` (Lax-Friedrichs), `RusanovSolver`, `HLLCSolver` — all inherit from `RiemannSolver`. Hot-path flux computation uses devirtualized free functions (`computeLFFlux`, `computeRusanovFlux`, `computeHLLCFlux`) dispatched via `RiemannSolverType` enum + switch in `computeFluxDirect()`. See `RiemannSolver.hpp` for the enum, `FluxConfig` struct, and inline dispatch function.
 
 **Reconstruction**: WENO1/3/5 and UPWIND1/3/5 schemes in `Reconstruction.cpp`. Ghost cell count in `SimulationConfig::nGhost` must satisfy `requiredGhostCells()`. The `Reconstructor` always populates `gammaEff`/`piInfEff` on face states — for multi-phase from mixture EOS, for single-phase from the scalar EOS gamma/pInf passed at construction. This ensures Riemann solvers never need virtual EOS calls.
 

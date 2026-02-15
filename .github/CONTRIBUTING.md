@@ -235,7 +235,7 @@ Add `src/MyFeature.cpp` to the `SOURCES` list in the top-level `CMakeLists.txt`.
 ### Adding a New Riemann Solver
 
 1. Create `include/MySolver.hpp` and `src/MySolver.cpp`
-2. Inherit from `RiemannSolver` and implement `computeFlux()` and `maxWaveSpeed()`
+2. Inherit from `RiemannSolver`, implement the `name()` override, add a free flux function (e.g. `computeMyFlux()`), and add a case to `RiemannSolverType` enum + `computeFluxDirect()` dispatch
 3. Add the source file to the `SOURCES` list in `CMakeLists.txt`
 
 ### Adding a New Equation of State

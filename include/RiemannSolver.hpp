@@ -44,21 +44,6 @@ public:
 
     virtual ~RiemannSolver() = default;
 
-    // Compute numerical flux at a face
-    virtual RiemannFlux computeFlux(
-        const PrimitiveState& left,
-        const PrimitiveState& right,
-        const std::array<double, 3>& normal
-    ) const = 0;
-
-    // Maximum wave speed for CFL
-    // Without pressure: |u| only. With pressure: |u| + c
-    virtual double maxWaveSpeed(
-        const PrimitiveState& left,
-        const PrimitiveState& right,
-        const std::array<double, 3>& normal
-    ) const = 0;
-
     virtual std::string name() const = 0;
 
     const EquationOfState& eos() const { return *eos_; }
@@ -68,14 +53,6 @@ protected:
     std::shared_ptr<EquationOfState> eos_;
     SimulationConfig config_;
 };
-
-// Utility: compute sound speed using gammaEff if available (multi-phase),
-// otherwise fall back to EOS
-inline double soundSpeedFromState(const PrimitiveState& W, const EquationOfState& eos) {
-    if (W.gammaEff > 0.0)
-        return std::sqrt(W.gammaEff * std::max(W.p + W.piInfEff, 1e-14) / std::max(W.rho, 1e-14));
-    return eos.soundSpeed(W);
-}
 
 // Utility used by solver implementations
 inline double normalVelocity(const PrimitiveState& W, const std::array<double, 3>& n, int dim = 3) {
