@@ -1,0 +1,29 @@
+{
+    // 1D Hydrostatic Water Column — stiffened gas EOS, gravity, equilibrium test
+    // Matches examples/1D_hydrostatic_water
+    "config": {
+        "dim": 1,
+        "nGhost": 4,
+        "RKOrder": 3,
+        "reconOrder": "WENO5",
+        "semiImplicit": true,
+        "semiImplicitParams": {
+            "cfl": 0.4, "maxDt": 1e-3,
+            "pressureTol": 1e-9, "maxPressureIters": 200
+        },
+        "bodyForceParams": { "a": [-9.81, 0, 0] }
+    },
+    "eos": { "type": "StiffenedGas", "gamma": 4.4, "pInf": 6.0e8, "R": 1816.0 },
+    "riemannSolver": "HLLC",
+    "mesh": {
+        "nx": 200, "xMin": 0.0, "xMax": 10.0
+    },
+    "boundaryConditions": {
+        "xLow": "NoSlipWall", "xHigh": "NoSlipWall"
+    },
+    "timeLoop": { "endTime": 1.6, "outputInterval": 0.01, "printInterval": 100 },
+    "output": { "baseName": "1D_hydrostatic_water" },
+    "initialConditions": {
+        "default": { "rho": 1000.0, "u": 0.0, "p": 1.0e5 }
+    }
+}

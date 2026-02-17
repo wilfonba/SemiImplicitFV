@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Options
 option(BUILD_EXAMPLES "Build example programs" ON)
 option(BUILD_TESTS "Build unit tests" OFF)
+option(BUILD_DRIVER "Build generic sifv driver executable" ON)
 option(ENABLE_OPENMP "Enable OpenMP parallelization" OFF)
 option(ENABLE_HYPRE "Enable Hypre pressure solver (PCG+PFMG)" OFF)
 
@@ -93,13 +94,52 @@ if(ENABLE_HYPRE)
     target_include_directories(SemiImplicitFV PUBLIC ${hypre_BINARY_DIR}/include)
 endif()
 
-# Examples — auto-discover every examples/<case>/*.cpp
+# ---- JSON Driver (sifv) ----
+if(BUILD_DRIVER)
+    include(FetchContent)
+
+    # nlohmann/json (header-only)
+    FetchContent_Declare(
+        nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.11.3
+    )
+    set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+    set(JSON_Install OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(nlohmann_json)
+
+    # exprtk (header-only math expression parser)
+    FetchContent_Declare(
+        exprtk
+        GIT_REPOSITORY https://github.com/ArashPartow/exprtk.git
+        GIT_TAG master
+    )
+    FetchContent_Populate(exprtk)
+
+    # Input library (keeps core library dependency-free)
+    add_library(SemiImplicitFV_input
+        src/InputParser.cpp
+        src/ICPatch.cpp
+        src/ExpressionEvaluator.cpp
+    )
+    target_link_libraries(SemiImplicitFV_input PUBLIC SemiImplicitFV nlohmann_json::nlohmann_json)
+    target_include_directories(SemiImplicitFV_input PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    )
+    target_include_directories(SemiImplicitFV_input PRIVATE ${exprtk_SOURCE_DIR})
+
+    # Generic driver executable
+    add_executable(sifv driver/main.cpp)
+    target_link_libraries(sifv PRIVATE SemiImplicitFV_input)
+endif()
+
+# Compiled cases — auto-discover every cases/<name>/*.cpp
 if(BUILD_EXAMPLES)
-    file(GLOB EXAMPLE_DIRS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/examples
-         ${CMAKE_CURRENT_SOURCE_DIR}/examples/*)
-    foreach(CASE_DIR ${EXAMPLE_DIRS})
-        if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/${CASE_DIR})
-            file(GLOB CASE_SOURCES examples/${CASE_DIR}/*.cpp)
+    file(GLOB CASE_DIRS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/cases
+         ${CMAKE_CURRENT_SOURCE_DIR}/cases/*)
+    foreach(CASE_DIR ${CASE_DIRS})
+        if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/cases/${CASE_DIR})
+            file(GLOB CASE_SOURCES cases/${CASE_DIR}/*.cpp)
             if(CASE_SOURCES)
                 add_executable(${CASE_DIR} ${CASE_SOURCES})
                 target_link_libraries(${CASE_DIR} PRIVATE SemiImplicitFV)

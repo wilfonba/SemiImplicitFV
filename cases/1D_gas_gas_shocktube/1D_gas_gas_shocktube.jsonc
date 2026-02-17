@@ -1,0 +1,48 @@
+{
+    // 1D Gas-Gas Shock Tube — two ideal gases with different gammas
+    // Matches examples/1D_gas_gas_shocktube
+    "config": {
+        "dim": 1,
+        "nGhost": 4,
+        "RKOrder": 3,
+        "reconOrder": "WENO5",
+        "explicitParams": { "cfl": 0.5, "maxDt": 1e-2 },
+        "multiPhaseParams": {
+            "nPhases": 2,
+            "phases": [
+                { "gamma": 1.6667, "pInf": 0.0 },
+                { "gamma": 1.4,    "pInf": 0.0 }
+            ],
+            "alphaMin": 1e-6
+        }
+    },
+    "eos": { "type": "IdealGas", "gamma": 1.4, "R": 287.0 },
+    "riemannSolver": "LF",
+    "mesh": {
+        "nx": 200, "xMin": 0.0, "xMax": 1.0
+    },
+    "boundaryConditions": {
+        "xLow": "Outflow", "xHigh": "Outflow"
+    },
+    "timeLoop": { "endTime": 0.15, "outputInterval": 0.01, "printInterval": 10 },
+    "output": { "baseName": "two_phase_shocktube" },
+    "initialConditions": {
+        // Left: mostly phase 0 (helium-like)
+        "default": {
+            "rho": 1.0, "u": 0.0, "p": 1.0,
+            "alpha":    [0.999999, 0.000001],
+            "alphaRho": [0.999999, 0.000001]
+        },
+        "patches": [
+            {
+                // Right: mostly phase 1 (air-like)
+                "geometry": { "type": "plane", "point": [0.5, 0, 0], "normal": [1, 0, 0] },
+                "state": {
+                    "rho": 0.125, "p": 0.1,
+                    "alpha":    [0.000001, 0.999999],
+                    "alphaRho": [0.000001, 0.124999]
+                }
+            }
+        ]
+    }
+}

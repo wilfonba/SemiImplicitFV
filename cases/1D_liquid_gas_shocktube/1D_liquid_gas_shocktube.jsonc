@@ -1,0 +1,47 @@
+{
+    // 1D Liquid-Gas Shock Tube — two-phase stiffened gas / ideal gas
+    "config": {
+        "dim": 1,
+        "nGhost": 3,
+        "RKOrder": 3,
+        "reconOrder": "WENO5",
+        "explicitParams": { "cfl": 0.3 },
+        "multiPhaseParams": {
+            "nPhases": 2,
+            "phases": [
+                { "gamma": 4.4, "pInf": 6e8 },
+                { "gamma": 1.4, "pInf": 0.0 }
+            ],
+            "alphaMin": 1e-8
+        }
+    },
+    "eos": { "type": "IdealGas", "gamma": 1.4, "R": 287.0 },
+    "riemannSolver": "HLLC",
+    "mesh": {
+        "nx": 400, "xMin": 0.0, "xMax": 1.0
+    },
+    "boundaryConditions": {
+        "xLow": "Outflow", "xHigh": "Outflow"
+    },
+    "timeLoop": { "endTime": 2.4e-4, "outputInterval": 2.4e-5, "printInterval": 10 },
+    "output": { "baseName": "liquid_gas_shocktube", "directory": "VTK" },
+    "initialConditions": {
+        // Left state: liquid (water)
+        "default": {
+            "rho": 1000.0, "u": 0.0, "p": 1e9,
+            "alpha": [1.0, 0.0],
+            "alphaRho": [1000.0, 0.0]
+        },
+        "patches": [
+            {
+                // Right state: gas (air)
+                "geometry": { "type": "plane", "point": [0.7, 0, 0], "normal": [1, 0, 0] },
+                "state": {
+                    "rho": 50.0, "p": 1e5,
+                    "alpha": [0.0, 1.0],
+                    "alphaRho": [0.0, 50.0]
+                }
+            }
+        ]
+    }
+}

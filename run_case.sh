@@ -3,43 +3,79 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$ROOT_DIR/build"
-EXAMPLES_DIR="$ROOT_DIR/examples"
+CASES_DIR="$ROOT_DIR/cases"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 
 usage() {
     cat <<EOF
 Usage: ./run_case.sh [options] <case_name> [-- program args...]
 
-Build and run a case from examples/<case_name>/.
+Run a simulation case from cases/.
+
+Each case can have:
+  - A JSON input file:  cases/<name>/<name>.jsonc  (run via sifv generic driver)
+  - A compiled source:  cases/<name>/*.cpp          (built and run directly)
+
+If both exist, the JSON file is used by default. Use --case-optimization to
+generate and compile an optimized C++ source from the JSON instead.
+
+Each case runs in its own directory under cases/<case_name>/, where all output
+(VTK files, logs) is written.
 
 Options:
-  -l, --list        List available cases
-  -c, --clean       Clean rebuild (remove build directory first)
-  -d, --debug       Build in Debug mode
-  -n <N>            Number of MPI ranks (default: 1)
-  --build-only      Only build, do not run
-  --hypre           Enable Hypre pressure solver (PCG+PFMG)
-  -j <N>            Parallel build jobs (default: number of cores)
-  -h, --help        Show this help
+  -l, --list              List available cases
+  -c, --clean             Clean rebuild (remove build directory first)
+  -d, --debug             Build in Debug mode
+  -n <N>                  Number of MPI ranks (default: 1)
+  --build-only            Only build, do not run
+  --compiled              Force using the compiled C++ source instead of JSON
+  --case-optimization     Generate and compile a custom C++ main() from the
+                          JSON input for maximum performance (codegen path)
+  --hypre                 Enable Hypre pressure solver (PCG+PFMG)
+  -j <N>                  Parallel build jobs (default: number of cores)
+  -o, --output-dir <dir>  Override the run directory (default: cases/<case_name>)
+  -h, --help              Show this help
 
 Examples:
-  ./run_case.sh 1D_sod_shocktube
-  ./run_case.sh --debug 1D_advection
-  ./run_case.sh -n 4 1D_sod_shocktube
-  ./run_case.sh -j4 1D_sod_shocktube -- --some-arg
-  ./run_case.sh --hypre 2D_rising_bubble -- --semi-implicit --hypre
+  ./run_case.sh 1D_sod_shocktube                      # JSON case via sifv driver
+  ./run_case.sh --case-optimization 1D_sod_shocktube   # JSON case via codegen
+  ./run_case.sh --compiled 1D_sod_shocktube            # compiled C++ source
+  ./run_case.sh -n 4 2D_rising_bubble
+  ./run_case.sh -d 1D_sod_shocktube
+  ./run_case.sh --hypre 2D_rising_bubble -- --semi-implicit
 EOF
     exit "${1:-0}"
 }
 
 list_cases() {
-    echo "Available cases:"
-    for dir in "$EXAMPLES_DIR"/*/; do
+    echo "Cases in cases/:"
+    echo ""
+
+    # Collect all case names (from subdirectories containing JSON and/or C++ files)
+    declare -A cases
+    for dir in "$CASES_DIR"/*/; do
+        [[ -d "$dir" ]] || continue
         name="$(basename "$dir")"
-        # Check that the directory has at least one .cpp file
+        # Check for JSON file inside subdirectory
+        for ext in jsonc json; do
+            if [[ -f "$dir/$name.$ext" ]]; then
+                cases[$name]="${cases[$name]:-}json "
+                break
+            fi
+        done
+        # Check for compiled C++ source
         if compgen -G "$dir"/*.cpp > /dev/null 2>&1; then
-            echo "  $name"
+            cases[$name]="${cases[$name]:-}compiled "
         fi
+    done
+
+    # Print sorted
+    for name in $(echo "${!cases[@]}" | tr ' ' '\n' | sort); do
+        types="${cases[$name]}"
+        tags=""
+        [[ "$types" == *json* ]] && tags="${tags}json"
+        [[ "$types" == *compiled* ]] && { [[ -n "$tags" ]] && tags="${tags}, "; tags="${tags}compiled"; }
+        printf "  %-30s [%s]\n" "$name" "$tags"
     done
 }
 
@@ -47,9 +83,12 @@ list_cases() {
 CLEAN=false
 BUILD_ONLY=false
 ENABLE_HYPRE=false
+CASE_OPTIMIZATION=false
+FORCE_COMPILED=false
 MPI_RANKS=1
-JOBS="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)"
+JOBS="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 CASE_NAME=""
+OUTPUT_DIR=""
 PROGRAM_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -78,6 +117,14 @@ while [[ $# -gt 0 ]]; do
             BUILD_ONLY=true
             shift
             ;;
+        --case-optimization)
+            CASE_OPTIMIZATION=true
+            shift
+            ;;
+        --compiled)
+            FORCE_COMPILED=true
+            shift
+            ;;
         --hypre)
             ENABLE_HYPRE=true
             shift
@@ -89,6 +136,10 @@ while [[ $# -gt 0 ]]; do
         -j*)
             JOBS="${1#-j}"
             shift
+            ;;
+        -o|--output-dir)
+            OUTPUT_DIR="$2"
+            shift 2
             ;;
         -h|--help)
             usage 0
@@ -119,13 +170,61 @@ if [[ -z "$CASE_NAME" ]]; then
     usage 1
 fi
 
-CASE_DIR="$EXAMPLES_DIR/$CASE_NAME"
-if [[ ! -d "$CASE_DIR" ]]; then
-    echo "Error: case '$CASE_NAME' not found at $CASE_DIR" >&2
+# --- Determine case type ---
+JSON_FILE=""
+COMPILED_DIR=""
+
+# Strip extension if user provided one
+BARE_NAME="${CASE_NAME%.jsonc}"
+BARE_NAME="${BARE_NAME%.json}"
+
+# Check for JSON case inside subdirectory: cases/<name>/<name>.jsonc
+for ext in jsonc json; do
+    if [[ -f "$CASES_DIR/$BARE_NAME/$BARE_NAME.$ext" ]]; then
+        JSON_FILE="$CASES_DIR/$BARE_NAME/$BARE_NAME.$ext"
+        break
+    fi
+done
+
+# Check for compiled source in cases/<name>/
+if [[ -d "$CASES_DIR/$BARE_NAME" ]]; then
+    if compgen -G "$CASES_DIR/$BARE_NAME"/*.cpp > /dev/null 2>&1; then
+        COMPILED_DIR="$CASES_DIR/$BARE_NAME"
+    fi
+fi
+
+if [[ -z "$JSON_FILE" && -z "$COMPILED_DIR" ]]; then
+    echo "Error: case '$CASE_NAME' not found." >&2
+    echo "  Looked for: cases/$BARE_NAME/$BARE_NAME.jsonc, cases/$BARE_NAME/$BARE_NAME.json, cases/$BARE_NAME/*.cpp" >&2
     echo ""
     list_cases
     exit 1
 fi
+
+# Decide mode: JSON (driver or codegen) vs compiled
+if $FORCE_COMPILED; then
+    if [[ -z "$COMPILED_DIR" ]]; then
+        echo "Error: --compiled requested but no compiled source found at cases/$BARE_NAME/" >&2
+        exit 1
+    fi
+    USE_JSON=false
+elif $CASE_OPTIMIZATION; then
+    if [[ -z "$JSON_FILE" ]]; then
+        echo "Error: --case-optimization requires a JSON case file (cases/$BARE_NAME/$BARE_NAME.jsonc)" >&2
+        exit 1
+    fi
+    USE_JSON=true
+elif [[ -n "$JSON_FILE" ]]; then
+    USE_JSON=true
+else
+    USE_JSON=false
+fi
+
+# --- Set up run directory ---
+if [[ -z "$OUTPUT_DIR" ]]; then
+    OUTPUT_DIR="$CASES_DIR/$BARE_NAME"
+fi
+mkdir -p "$OUTPUT_DIR"
 
 # --- Clean if requested ---
 if $CLEAN && [[ -d "$BUILD_DIR" ]]; then
@@ -157,15 +256,78 @@ if $NEED_CONFIGURE; then
         -DENABLE_HYPRE="$HYPRE_OPT"
 fi
 
-# --- Build just this target ---
-echo "Building $CASE_NAME..."
-cmake --build "$BUILD_DIR" --target "$CASE_NAME" -j "$JOBS"
+# --- Build and run ---
+if $USE_JSON; then
+    if $CASE_OPTIMIZATION; then
+        # ---- Code generation path ----
+        CODEGEN_DIR="$BUILD_DIR/codegen"
+        mkdir -p "$CODEGEN_DIR"
+        GEN_SRC="$CODEGEN_DIR/${BARE_NAME}.cpp"
+        GEN_TARGET="codegen_${BARE_NAME}"
 
-# --- Run from the case directory so output files land there ---
-if ! "$BUILD_ONLY"; then
-    echo ""
-    echo "=== Running $CASE_NAME with $MPI_RANKS MPI rank(s) ==="
-    echo ""
-    cd "$CASE_DIR"
-    mpirun -np "$MPI_RANKS" "$BUILD_DIR/$CASE_NAME" "${PROGRAM_ARGS[@]+"${PROGRAM_ARGS[@]}"}"
+        echo "Generating optimized source from $JSON_FILE..."
+        python3 "$ROOT_DIR/tools/codegen.py" "$JSON_FILE" -o "$GEN_SRC"
+
+        # Build the core library first, then compile the generated source
+        echo "Building library and $GEN_TARGET (optimized)..."
+        cmake --build "$BUILD_DIR" --target SemiImplicitFV -j "$JOBS"
+
+        # Compile the generated file directly against the library
+        cd "$BUILD_DIR"
+        COMPILE_CMD="$(grep -m1 'CXX_COMPILER' CMakeCache.txt | cut -d= -f2)"
+        COMPILE_CMD="${COMPILE_CMD:-c++}"
+        INCLUDE_FLAGS="-I$ROOT_DIR/include"
+        MPI_CFLAGS="$(pkg-config --cflags ompi 2>/dev/null || mpiCC --showme:compile 2>/dev/null || true)"
+        MPI_LDFLAGS="$(pkg-config --libs ompi 2>/dev/null || mpiCC --showme:link 2>/dev/null || echo "-lmpi")"
+        "$COMPILE_CMD" -std=c++17 -O3 -march=native \
+            $INCLUDE_FLAGS \
+            $MPI_CFLAGS \
+            "$GEN_SRC" \
+            -L"$BUILD_DIR" -lSemiImplicitFV \
+            $MPI_LDFLAGS \
+            -o "$BUILD_DIR/$GEN_TARGET" \
+            2>&1
+        cd "$ROOT_DIR"
+
+        if ! $BUILD_ONLY; then
+            echo ""
+            echo "=== Running $BARE_NAME (codegen optimized) with $MPI_RANKS MPI rank(s) ==="
+            echo "=== Output directory: $OUTPUT_DIR ==="
+            echo ""
+            cd "$OUTPUT_DIR"
+            mpirun -np "$MPI_RANKS" "$BUILD_DIR/$GEN_TARGET" \
+                "${PROGRAM_ARGS[@]+"${PROGRAM_ARGS[@]}"}"
+        fi
+    else
+        # ---- Generic driver path ----
+        echo "Building sifv driver..."
+        cmake --build "$BUILD_DIR" --target sifv -j "$JOBS"
+
+        if ! $BUILD_ONLY; then
+            echo ""
+            echo "=== Running $BARE_NAME via sifv driver with $MPI_RANKS MPI rank(s) ==="
+            echo "=== Output directory: $OUTPUT_DIR ==="
+            echo ""
+            cd "$OUTPUT_DIR"
+            mpirun -np "$MPI_RANKS" "$BUILD_DIR/sifv" "$JSON_FILE" \
+                "${PROGRAM_ARGS[@]+"${PROGRAM_ARGS[@]}"}"
+        fi
+    fi
+else
+    # ---- Compiled source path ----
+    # Find the CMake target name (basename of the subdirectory)
+    TARGET_NAME="$BARE_NAME"
+
+    echo "Building $TARGET_NAME..."
+    cmake --build "$BUILD_DIR" --target "$TARGET_NAME" -j "$JOBS"
+
+    if ! $BUILD_ONLY; then
+        echo ""
+        echo "=== Running $TARGET_NAME with $MPI_RANKS MPI rank(s) ==="
+        echo "=== Output directory: $OUTPUT_DIR ==="
+        echo ""
+        cd "$OUTPUT_DIR"
+        mpirun -np "$MPI_RANKS" "$BUILD_DIR/$TARGET_NAME" \
+            "${PROGRAM_ARGS[@]+"${PROGRAM_ARGS[@]}"}"
+    fi
 fi

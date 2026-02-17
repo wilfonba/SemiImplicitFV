@@ -1,0 +1,30 @@
+{
+    // 2D Channel Flow — Poiseuille flow driven by constant body force
+    // Matches examples/2D_channel_flow
+    // Analytical steady state: u(y) = (rho*G)/(2*mu) * y*(H-y) = 0.125 m/s
+    "config": {
+        "dim": 2,
+        "nGhost": 3,
+        "RKOrder": 3,
+        "reconOrder": "WENO5",
+        "semiImplicit": false,
+        "explicitParams": { "cfl": 0.8 },
+        "bodyForceParams": { "a": [0.1, 0, 0] },
+        "viscousParams": { "mu": 0.1 }
+    },
+    "eos": { "type": "IdealGas", "gamma": 1.4, "R": 1.0 },
+    "riemannSolver": "HLLC",
+    "mesh": {
+        "nx": 8, "xMin": 0.0, "xMax": 1.0,
+        "ny": 32, "yMin": 0.0, "yMax": 1.0
+    },
+    "boundaryConditions": {
+        "xLow": "Periodic", "xHigh": "Periodic",
+        "yLow": "NoSlipWall", "yHigh": "NoSlipWall"
+    },
+    "timeLoop": { "endTime": 20.0, "outputInterval": 2.0, "printInterval": 100 },
+    "output": { "baseName": "2D_channel_flow" },
+    "initialConditions": {
+        "default": { "rho": 1.0, "u": 0.0, "v": 0.0, "p": 100.0 }
+    }
+}

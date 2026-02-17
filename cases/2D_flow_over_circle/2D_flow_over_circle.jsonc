@@ -1,0 +1,38 @@
+{
+    // 2D Flow Over Circle — Mach=0.2 flow past a circular body
+    // Circle: center=(1.0, 1.0), radius=0.2
+    "config": {
+        "dim": 2,
+        "nGhost": 3,
+        "RKOrder": 3,
+        "reconOrder": "WENO5",
+        "semiImplicit": false,
+        "explicitParams": { "cfl": 0.5, "maxDt": 1.0 }
+    },
+    "eos": { "type": "IdealGas", "gamma": 1.4, "R": 1.0 },
+    "riemannSolver": "HLLC",
+    "mesh": {
+        "nx": 200, "xMin": 0.0, "xMax": 4.0,
+        "ny": 100, "yMin": 0.0, "yMax": 2.0
+    },
+    "boundaryConditions": {
+        "xLow": "Outflow", "xHigh": "Outflow",
+        "yLow": "SlipWall", "yHigh": "SlipWall"
+    },
+    "immersedBoundaries": {
+        "bodies": [
+            {
+                "type": "circle",
+                "center": [1.0, 1.0],
+                "radius": 0.2,
+                "wallType": "NoSlip"
+            }
+        ]
+    },
+    "timeLoop": { "endTime": 12.0, "outputInterval": 0.06, "printInterval": 10 },
+    "output": { "baseName": "2D_flow_over_circle" },
+    "initialConditions": {
+        // Uniform free-stream: Mach=0.2 → p = 1/(gamma*M^2) ≈ 35.714
+        "default": { "rho": 1.0, "u": 1.0, "v": 0.0, "p": 35.714285714 }
+    }
+}

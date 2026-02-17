@@ -1,0 +1,50 @@
+{
+    // 2D Riemann Problem — four-quadrant constant states
+    // Matches examples/2D_riemann
+    // Quadrant layout (interface at x=0.8, y=0.8):
+    //   Q2 (upper-left)  | Q1 (upper-right)
+    //   -----------------+-----------------
+    //   Q3 (lower-left)  | Q4 (lower-right)
+    "config": {
+        "dim": 2,
+        "nGhost": 4,
+        "RKOrder": 3,
+        "reconOrder": "WENO5",
+        "wenoEps": 1e-16,
+        "explicitParams": { "cfl": 0.6 }
+    },
+    "eos": { "type": "IdealGas", "gamma": 1.4, "R": 287.0 },
+    "riemannSolver": "HLLC",
+    "mesh": {
+        "nx": 500, "xMin": 0.0, "xMax": 1.0,
+        "ny": 500, "yMin": 0.0, "yMax": 1.0
+    },
+    "boundaryConditions": {
+        "xLow": "Outflow", "xHigh": "Outflow",
+        "yLow": "Outflow", "yHigh": "Outflow"
+    },
+    "timeLoop": { "endTime": 0.8, "outputInterval": 0.008, "printInterval": 1 },
+    "output": { "baseName": "riemann2d" },
+    "smoothing": { "iterations": 3 },
+    "initialConditions": {
+        // Q3: lower-left (default)
+        "default": { "rho": 0.138, "u": 1.206, "v": 1.206, "p": 0.029 },
+        "patches": [
+            {
+                // Q4: lower-right (x >= 0.8, y < 0.8) — first set all of right half
+                "geometry": { "type": "plane", "point": [0.8, 0, 0], "normal": [1, 0, 0] },
+                "state": { "rho": 0.532, "u": 0.0, "v": 1.206, "p": 0.3 }
+            },
+            {
+                // Q2: upper-left (y >= 0.8) — overwrites upper-right too
+                "geometry": { "type": "plane", "point": [0, 0.8, 0], "normal": [0, 1, 0] },
+                "state": { "rho": 0.532, "u": 1.206, "v": 0.0, "p": 0.3 }
+            },
+            {
+                // Q1: upper-right (x >= 0.8, y >= 0.8) — restores correct state
+                "geometry": { "type": "box", "min": [0.8, 0.8, 0], "max": [1.0, 1.0, 1.0] },
+                "state": { "rho": 1.5, "u": 0.0, "v": 0.0, "p": 1.5 }
+            }
+        ]
+    }
+}

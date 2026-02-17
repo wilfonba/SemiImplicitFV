@@ -1,0 +1,60 @@
+{
+    // 2D Laplace Pressure Jump — circular water droplet in air
+    // Matches examples/2D_laplace_pressure_jump
+    // Theoretical: dp = sigma/R = 0.0728/0.001 = 72.8 Pa (2D cylinder)
+    "config": {
+        "dim": 2,
+        "nGhost": 3,
+        "RKOrder": 3,
+        "reconOrder": "WENO5",
+        "explicitParams": { "cfl": 0.5 },
+        "multiPhaseParams": {
+            "nPhases": 2,
+            "phases": [
+                { "gamma": 4.4, "pInf": 6.0e8 },
+                { "gamma": 1.4, "pInf": 0.0 }
+            ],
+            "alphaMin": 1e-8
+        },
+        "surfaceTensionParams": { "sigma": 0.0728 }
+    },
+    "eos": { "type": "IdealGas", "gamma": 1.4, "R": 287.0 },
+    "riemannSolver": "HLLC",
+    "mesh": {
+        "nx": 100, "xMin": 0.0, "xMax": 6.0e-3,
+        "ny": 100, "yMin": 0.0, "yMax": 6.0e-3
+    },
+    "boundaryConditions": {
+        "xLow": "Outflow", "xHigh": "Outflow",
+        "yLow": "Outflow", "yHigh": "Outflow"
+    },
+    // endTime = 0.2 * tCap, tCap = sqrt(rhoWater * R^3 / sigma) = sqrt(1000*1e-9/0.0728) ≈ 3.705e-3
+    "timeLoop": { "endTime": 7.41e-4, "outputInterval": 7.41e-6, "printInterval": 100 },
+    "output": { "baseName": "2D_laplace_pressure_jump" },
+    "initialConditions": {
+        // Background: air
+        "default": {
+            "rho": 1.225, "u": 0.0, "v": 0.0, "p": 1.0e5,
+            "alpha":    [1e-8, 0.99999999],
+            "alphaRho": [0.00001225, 1.22499999]
+        },
+        "patches": [
+            {
+                // Water droplet with Laplace pressure jump and smooth interface
+                // R0=1e-3, center=(3e-3, 3e-3), dp=72.8 Pa
+                "geometry": {
+                    "type": "analytic",
+                    "region": { "type": "box", "min": [0, 0, 0], "max": [6e-3, 6e-3, 1] }
+                },
+                "expressions": {
+                    "rho":   "var r := sqrt((x - 3e-3)^2 + (y - 3e-3)^2); var eps := 1.8e-4; var H := 0.5 * (1 - tanh((r - 1e-3) / eps)); 1000.0 * H + 1.225 * (1 - H)",
+                    "p":     "var r := sqrt((x - 3e-3)^2 + (y - 3e-3)^2); var eps := 1.8e-4; 1e5 + 72.8 * 0.5 * (1 - tanh((r - 1e-3) / eps))",
+                    "alpha_0":    "var r := sqrt((x - 3e-3)^2 + (y - 3e-3)^2); var eps := 1.8e-4; var H := 0.5 * (1 - tanh((r - 1e-3) / eps)); max(1e-8, H)",
+                    "alpha_1":    "var r := sqrt((x - 3e-3)^2 + (y - 3e-3)^2); var eps := 1.8e-4; var H := 0.5 * (1 - tanh((r - 1e-3) / eps)); max(1e-8, 1 - H)",
+                    "alphaRho_0": "var r := sqrt((x - 3e-3)^2 + (y - 3e-3)^2); var eps := 1.8e-4; var H := 0.5 * (1 - tanh((r - 1e-3) / eps)); max(1e-8, H) * 1000.0",
+                    "alphaRho_1": "var r := sqrt((x - 3e-3)^2 + (y - 3e-3)^2); var eps := 1.8e-4; var H := 0.5 * (1 - tanh((r - 1e-3) / eps)); max(1e-8, 1 - H) * 1.225"
+                }
+            }
+        ]
+    }
+}

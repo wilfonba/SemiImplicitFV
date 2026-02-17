@@ -1,0 +1,32 @@
+{
+    // 1D Sod Shock Tube — matches examples/1D_sod_shocktube
+    "config": {
+        "dim": 1,
+        "nGhost": 4,
+        "RKOrder": 3,
+        "reconOrder": "UPWIND3",
+        "useIGR": true,
+        "explicitParams": { "cfl": 0.1 },
+        "igrParams": { "alphaCoeff": 10.0, "IGRIters": 5 }
+    },
+    "eos": { "type": "IdealGas", "gamma": 1.4, "R": 287.0 },
+    "riemannSolver": "LF",
+    "mesh": {
+        "nx": 100, "xMin": 0.0, "xMax": 1.0
+    },
+    "boundaryConditions": {
+        "xLow": "Outflow", "xHigh": "Outflow"
+    },
+    "timeLoop": { "endTime": 0.2, "outputInterval": 0.002, "printInterval": 1 },
+    "output": { "baseName": "1D_sod", "directory": "VTK" },
+    "smoothing": { "iterations": 10 },
+    "initialConditions": {
+        "default": { "rho": 1.0, "u": 0.0, "v": 0.0, "w": 0.0, "p": 1.0 },
+        "patches": [
+            {
+                "geometry": { "type": "plane", "point": [0.5, 0, 0], "normal": [1, 0, 0] },
+                "state": { "rho": 0.125, "p": 0.1 }
+            }
+        ]
+    }
+}

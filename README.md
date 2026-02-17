@@ -6,12 +6,13 @@ A finite volume solver for the compressible Euler equations on rectilinear meshe
 
 - **Explicit and semi-implicit time integration** — SSP-RK1/2/3 for explicit; advective CFL with implicit pressure correction for semi-implicit (Kwatra et al.)
 - **High-order spatial reconstruction** — WENO and upwind schemes at 1st, 3rd, and 5th order
-- **Riemann solvers** — Lax-Friedrichs, Rusanov, and HLLC (devirtualized via enum dispatch for GPU readiness)
+- **Riemann solvers** — Lax-Friedrichs, Rusanov, and HLLC
 - **Equations of state** — Ideal gas and stiffened gas
 - **N-phase compressible flow** — Volume-fraction-based multi-phase model with per-phase stiffened gas EOS, Wood's mixture sound speed, and mixture Riemann solvers
 - **Viscosity** — Newtonian viscous stress tensor with Stokes hypothesis; per-phase viscosity via arithmetic mixture rule for multi-phase flows
 - **Body forces** — Time-dependent gravitational / body force acceleration per dimension
 - **Surface tension** — Capillary stress tensor (Schmidmayer et al. 2017) with CSF interface force
+- **Immersed boundary method** — Ghost-cell IBM with circle, rectangle, cylinder, and rectangular prism body types; slip and no-slip walls
 - **Information Geometric Regularization (IGR)** — Entropic pressure via elliptic solve for improved stability
 - **1D / 2D / 3D** on rectilinear (uniform) meshes with ghost cells
 - **Boundary conditions** — Periodic, Reflective, Outflow, Slip Wall, No-Slip Wall
@@ -30,25 +31,27 @@ The 1D advection test case (Gaussian density pulse on a periodic domain, WENO5 +
 ## Quick Start
 
 ```bash
-# Build
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j
+# Run the Sod shock tube (builds automatically on first run)
+./run_case.sh 1D_sod_shocktube
 
-# Run the Sod shock tube example
-cd ../examples/1D_sod_shocktube
-../../build/1D_sod_shocktube
+# List all available cases
+./run_case.sh --list
 ```
 
-Or use the convenience script:
+Output VTK files are written to a `VTK/` directory inside the case folder (e.g. `cases/1D_sod_shocktube/VTK/`). Open the `.pvd` file in [ParaView](https://www.paraview.org/) to visualize the results.
+
+## Building and Running
+
+The `run_case.sh` script handles configuring, building, and running automatically. There is no need to invoke CMake or Make directly.
 
 ```bash
-./run_case.sh 1D_sod_shocktube
+./run_case.sh 1D_sod_shocktube              # Build and run (1 MPI rank)
+./run_case.sh -n 4 2D_riemann               # Run with 4 MPI ranks
+./run_case.sh --debug 1D_advection           # Debug build (enables AddressSanitizer)
+./run_case.sh --build-only 2D_riemann        # Build without running
+./run_case.sh --case-optimization 1D_sod     # Codegen: compile JSON into optimized C++
+./run_case.sh --list                         # List available cases
 ```
-
-Output VTK files are written to a `VTK/` directory inside the example folder. Open the `.pvd` file in [ParaView](https://www.paraview.org/) to visualize the results.
-
-## Building
 
 ### Requirements
 
@@ -57,139 +60,195 @@ Output VTK files are written to a `VTK/` directory inside the example folder. Op
 - MPI implementation (e.g., Open MPI, MPICH)
 - OpenMP (optional)
 
-### CMake Options
+### Manual Build
 
-| Option | Default | Description |
-|---|---|---|
-| `BUILD_EXAMPLES` | `ON` | Build example programs in `examples/` |
-| `BUILD_TESTS` | `OFF` | Build tests |
-| `ENABLE_OPENMP` | `OFF` | Enable OpenMP support |
-
-MPI is always required and linked automatically.
+If you prefer to build manually instead of using `run_case.sh`:
 
 ```bash
 mkdir build && cd build
-
-# Release build (default)
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j
-
-# Debug build (enables AddressSanitizer automatically)
-cmake .. -DCMAKE_BUILD_TYPE=Debug
-make -j
 ```
 
-### Using `run_case.sh`
+| CMake Option | Default | Description |
+|---|---|---|
+| `BUILD_EXAMPLES` | `ON` | Build legacy example programs in `examples/` |
+| `BUILD_TESTS` | `OFF` | Build tests |
+| `ENABLE_OPENMP` | `OFF` | Enable OpenMP support |
 
-The `run_case.sh` script handles configuring, building, and running any example:
+## Defining Cases (JSON Input)
+
+Cases are defined as JSON files in `cases/<name>/<name>.jsonc`. This is the primary way to set up simulations — no C++ coding required. The `sifv` generic driver reads the JSON and runs the simulation.
+
+### Minimal Example
+
+```jsonc
+{
+    "config": {
+        "dim": 1,
+        "nGhost": 3,
+        "RKOrder": 3,
+        "reconOrder": "WENO5",
+        "explicitParams": { "cfl": 0.6 }
+    },
+    "eos": { "type": "IdealGas", "gamma": 1.4, "R": 287.0 },
+    "riemannSolver": "HLLC",
+    "mesh": { "nx": 100, "xMin": 0.0, "xMax": 1.0 },
+    "boundaryConditions": { "xLow": "Outflow", "xHigh": "Outflow" },
+    "timeLoop": { "endTime": 0.2, "outputInterval": 0.01 },
+    "output": { "baseName": "my_case" },
+    "initialConditions": {
+        "default": { "rho": 1.0, "u": 0.0, "p": 1.0 },
+        "patches": [
+            {
+                "geometry": { "type": "plane", "point": [0.5, 0, 0], "normal": [1, 0, 0] },
+                "state": { "rho": 0.125, "p": 0.1 }
+            }
+        ]
+    }
+}
+```
+
+### JSON Schema Reference
+
+**Top-level sections:**
+
+| Section | Required | Description |
+|---|---|---|
+| `config` | Yes | Solver parameters (dim, RK order, CFL, etc.) |
+| `eos` | No | Equation of state (`"IdealGas"` or `"StiffenedGas"`) |
+| `riemannSolver` | No | `"LF"`, `"Rusanov"`, or `"HLLC"` (default) |
+| `mesh` | Yes | Grid dimensions and extents |
+| `boundaryConditions` | No | Per-face BC: `"Outflow"`, `"Periodic"`, `"Symmetry"`, `"SlipWall"`, `"NoSlipWall"` |
+| `timeLoop` | Yes | End time, output interval, print interval |
+| `output` | No | VTK base name and directory |
+| `initialConditions` | Yes | Default state and geometry-based patches |
+| `immersedBoundaries` | No | Immersed boundary bodies (explicit solver only) |
+| `smoothing` | No | Post-initialization field smoothing iterations |
+
+**Initial condition patches** support `"box"`, `"sphere"`, `"plane"`, and `"analytic"` geometry types. Patch states inherit from the default state — only specify fields that differ.
+
+### Immersed Boundaries
+
+Add solid bodies to the domain using the ghost-cell immersed boundary method. Supported with the explicit solver only.
+
+```jsonc
+"immersedBoundaries": {
+    "bodies": [
+        {
+            "type": "circle",              // "circle", "rectangle", "cylinder", "rectangularPrism"
+            "center": [1.0, 1.0],          // 2D: [x,y], 3D: [x,y,z]
+            "radius": 0.2,                 // circle/cylinder only
+            "wallType": "NoSlip"           // "NoSlip" (default) or "Slip"
+        }
+    ]
+}
+```
+
+Body types:
+- **`circle`** — 2D circle: `center` (2 values), `radius`
+- **`rectangle`** — 2D axis-aligned rectangle: `center` (2 values), `halfWidths` (2 values)
+- **`cylinder`** — 3D infinite cylinder: `center` (2 values in cross-section plane), `radius`, `axis` (0=x, 1=y, 2=z, default 2)
+- **`rectangularPrism`** — 3D axis-aligned box: `center` (3 values), `halfWidths` (3 values)
+
+### Code Generation (Case Optimization)
+
+For maximum performance, the `--case-optimization` flag generates a standalone C++ `main()` from the JSON with all parameters hardcoded as compile-time constants:
 
 ```bash
-./run_case.sh 1D_sod_shocktube              # Build and run (1 MPI rank)
-./run_case.sh --debug 1D_advection           # Debug build
-./run_case.sh -n 4 1D_sod_shocktube         # Run with 4 MPI ranks
-./run_case.sh --build-only 2D_riemann        # Build without running
-./run_case.sh --list                         # List available cases
+./run_case.sh --case-optimization 1D_sod_shocktube
 ```
 
-## Configuration
+This eliminates runtime parsing overhead and enables the compiler to optimize aggressively.
 
-All simulation parameters are set through the `SimulationConfig` struct (defined in `include/SimulationConfig.hpp`). Key settings:
+## Configuration Reference
 
-```cpp
-SimulationConfig config;
-config.dim = 2;                              // Spatial dimensions (1, 2, or 3)
-config.nGhost = 3;                           // Ghost cells (must match reconstruction order)
-config.RKOrder = 3;                          // Runge-Kutta order (1, 2, or 3)
-config.reconOrder = ReconstructionOrder::WENO5;  // Reconstruction scheme
-config.semiImplicit = false;                 // Use semi-implicit solver
-config.useIGR = true;                        // Enable IGR
+All simulation parameters are set through `SimulationConfig` (defined in `include/SimulationConfig.hpp`). In JSON cases, these appear under the `"config"` section. In compiled C++ cases, they are set directly on the struct.
 
-// Explicit solver parameters
-config.explicitParams.cfl = 0.6;
-config.explicitParams.maxDt = 1e-3;
+### Config Fields
 
-// Semi-implicit solver parameters
-config.semiImplicitParams.cfl = 0.8;
-config.semiImplicitParams.maxPressureIters = 1000;
-config.semiImplicitParams.pressureTol = 1e-6;
+| Field | Default | Description |
+|---|---|---|
+| `dim` | 1 | Spatial dimensions (1, 2, or 3) |
+| `nGhost` | 3 | Ghost cells (must match reconstruction order) |
+| `RKOrder` | 1 | Runge-Kutta order (1, 2, or 3) |
+| `reconOrder` | `"WENO1"` | Reconstruction scheme |
+| `semiImplicit` | false | Use semi-implicit solver |
+| `useIGR` | false | Enable IGR |
+| `wenoEps` | 1e-6 | WENO smoothness parameter |
 
-// IGR parameters
-config.igrParams.alphaCoeff = 10.0;
-config.igrParams.IGRIters = 5;
+### Explicit Solver Parameters (`explicitParams`)
+
+| Field | Description |
+|---|---|
+| `cfl` | CFL number (acoustic) |
+| `constDt` | Fixed time step (0 = adaptive) |
+| `maxDt` | Maximum time step |
+| `minDt` | Minimum time step |
+
+### Semi-Implicit Solver Parameters (`semiImplicitParams`)
+
+| Field | Description |
+|---|---|
+| `cfl` | CFL number (advective) |
+| `maxDt` / `minDt` | Time step bounds |
+| `maxPressureIters` | Max pressure Poisson iterations |
+| `pressureTol` | Pressure solve convergence tolerance |
+
+### Multi-Phase Configuration (`multiPhaseParams`)
+
+Enable N-phase flow with per-phase stiffened gas EOS. Set `pInf = 0` for ideal gas phases.
+
+```jsonc
+"multiPhaseParams": {
+    "nPhases": 2,
+    "phases": [
+        { "gamma": 4.4, "pInf": 6.0e8 },
+        { "gamma": 1.4, "pInf": 0.0 }
+    ],
+    "alphaMin": 1e-8
+}
 ```
 
-The `validate()` method checks consistency (e.g., ghost cell count matches reconstruction stencil, semi-implicit requires RK order 1).
+### Viscosity (`viscousParams`)
 
-### Multi-Phase Configuration
-
-Enable N-phase flow by setting `multiPhaseParams` in the config. Each phase has its own stiffened gas EOS parameters (`gamma` and `pInf`). Set `pInf = 0` for ideal gas phases.
-
-```cpp
-// Two-phase setup: water (stiffened gas) + air (ideal gas)
-config.multiPhaseParams.nPhases = 2;
-config.multiPhaseParams.phases = {
-    {4.4, 6.0e8},   // Phase 0 (water): gamma = 4.4, pInf = 6e8 Pa
-    {1.4, 0.0}      // Phase 1 (air):   gamma = 1.4, pInf = 0
-};
-config.multiPhaseParams.alphaMin = 1e-8;     // Minimum volume fraction clamp
+```jsonc
+"viscousParams": {
+    "mu": 1.81e-5,
+    "phaseMu": [1.0e-3, 1.81e-5]
+}
 ```
 
-Volume fractions (`alpha[k]`) are tracked for phases 0 through `nPhases - 2`; the last phase fraction is `1 - sum(alpha[k])`. The solver uses Wood's mixture sound speed at cell centers and an equivalent single-fluid formula at reconstructed faces.
+Set `mu` for uniform viscosity or `phaseMu` for per-phase viscosity (multi-phase only). When `phaseMu` is set, the scalar `mu` is ignored.
 
-### Viscosity
+### Body Forces (`bodyForceParams`)
 
-Enable Newtonian viscous fluxes by setting a non-zero dynamic viscosity:
+Per-dimension acceleration of the form `a(t) = a + b * cos(c * t + d)`:
 
-```cpp
-config.viscousParams.mu = 1.81e-5;  // dynamic viscosity in Pa·s (0 = inviscid)
+```jsonc
+"bodyForceParams": {
+    "a": [0.0, -9.81, 0.0]
+}
 ```
 
-The viscous stress tensor uses the Stokes hypothesis: `tau_ij = mu * (du_i/dx_j + du_j/dx_i) - (2/3) * mu * div(u) * delta_ij`. Viscous work (`tau . u`) is included in the energy equation.
+### Surface Tension (`surfaceTensionParams`)
 
-#### Per-Phase Viscosity
+Capillary stress tensor (Schmidmayer et al. 2017) for multi-phase flows:
 
-For multi-phase problems where each fluid has a different viscosity, set `phaseMu` instead of the scalar `mu`. The vector must have one entry per phase, matching the order in `multiPhaseParams.phases`:
-
-```cpp
-// Per-phase viscosity: water (phase 0) and air (phase 1)
-config.viscousParams.phaseMu = {1.0e-3, 1.81e-5};  // Pa·s per phase
+```jsonc
+"surfaceTensionParams": {
+    "sigma": 0.0728,
+    "epsGradAlpha": 1e-8
+}
 ```
 
-The effective viscosity at each cell face is computed on-the-fly using an arithmetic volume-fraction-weighted mixture rule:
+### IGR Parameters (`igrParams`)
 
-```
-mu_cell = sum_k( alpha_k * mu_k )
-mu_face = 0.5 * ( mu_left + mu_right )
-```
-
-When `phaseMu` is set, the scalar `mu` field is ignored. When `phaseMu` is empty (the default), the scalar `mu` is used uniformly. This avoids allocating a viscosity array equal to the problem size.
-
-### Body Forces
-
-Apply time-dependent body forces with a per-dimension acceleration of the form `a(t) = a + b * cos(c * t + d)`:
-
-```cpp
-// Constant gravity in the y-direction
-config.bodyForceParams.a = {0.0, -9.81, 0.0};
-
-// Oscillating force in the x-direction: 5.0 * cos(2*pi*t)
-config.bodyForceParams.a = {0.0, 0.0, 0.0};
-config.bodyForceParams.b = {5.0, 0.0, 0.0};
-config.bodyForceParams.c = {2.0 * M_PI, 0.0, 0.0};
-```
-
-### Surface Tension
-
-Enable surface tension for multi-phase simulations. The capillary stress tensor (Schmidmayer et al. 2017) is:
-
-`T_cap = sigma * ( |grad(alpha)| I - grad(alpha) x grad(alpha) / |grad(alpha)| )`
-
-whose divergence recovers the classical Continuum Surface Force (CSF): `div(T_cap) = sigma * kappa * grad(alpha)`.
-
-```cpp
-config.surfaceTensionParams.sigma = 0.0728;        // surface tension coefficient in N/m
-config.surfaceTensionParams.epsGradAlpha = 1e-8;    // regularization for |grad(alpha)|
-```
+| Field | Description |
+|---|---|
+| `alphaCoeff` | Regularization coefficient |
+| `IGRIters` | Gauss-Seidel iterations per step |
+| `IGRWarmStartIters` | Warm-start iterations at t=0 |
 
 ### Reconstruction Orders
 
@@ -201,219 +260,21 @@ config.surfaceTensionParams.epsGradAlpha = 1e-8;    // regularization for |grad(
 
 WENO schemes include nonlinear shock-capturing weights. Upwind schemes use standard polynomial reconstruction.
 
-## Writing a New Problem
+## Writing Compiled Cases (C++)
 
-Each example is a standalone `.cpp` file in its own subdirectory under `examples/`. CMake automatically discovers and builds them. To add a new case:
+For cases requiring custom post-processing, diagnostics, or logic not expressible in JSON, you can write a standalone C++ source file. Place it in `cases/<name>/<name>.cpp` (generated `.cpp` files in `cases/` are git-ignored).
 
-1. Create `examples/my_case/my_case.cpp`
-2. Set up a `SimulationConfig` and create a mesh via `Runtime`
-3. Choose an EOS, Riemann solver, and (optionally) IGR and pressure solvers
-4. Attach the solver to the runtime and set initial/boundary conditions
-5. Run the time loop
-
-### Single-Phase Example
-
-```cpp
-#include "Runtime.hpp"
-#include "IdealGasEOS.hpp"
-#include "HLLCSolver.hpp"
-#include "ExplicitSolver.hpp"
-#include "VTKSession.hpp"
-
-using namespace SemiImplicitFV;
-
-int main(int argc, char* argv[]) {
-    Runtime runtime(argc, argv);
-
-    SimulationConfig config;
-    config.dim = 1;
-    config.nGhost = 3;
-    config.RKOrder = 3;
-    config.reconOrder = ReconstructionOrder::WENO5;
-    config.explicitParams.cfl = 0.6;
-
-    auto mesh = runtime.createUniformMesh(100, 0.0, 1.0, config);
-    runtime.setBoundaryCondition(Face::XLow, BoundaryCondition::Outflow);
-    runtime.setBoundaryCondition(Face::XHigh, BoundaryCondition::Outflow);
-
-    auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0);
-    auto riemann = std::make_shared<HLLCSolver>(eos, config);
-    auto solver = std::make_shared<ExplicitSolver>(mesh, riemann, eos, nullptr, config);
-    runtime.attachSolver(solver);
-
-    SolutionState state;
-    state.allocate(mesh);
-
-    // Set initial conditions...
-    // for (int i = 0; i < mesh.totalCells(); ++i) { ... }
-
-    state.convertPrimitiveToConservativeVariables(mesh, *eos);
-
-    VTKSession vtk("my_case", "VTK");
-    double t = 0.0, tEnd = 0.2, dtOut = 0.01;
-    double nextOut = 0.0;
-
-    while (t < tEnd) {
-        if (t >= nextOut) {
-            vtk.write(mesh, state, t);
-            nextOut += dtOut;
-        }
-        double dt = solver->step(config, mesh, state, tEnd - t);
-        t += dt;
-    }
-    vtk.finalize();
-    return 0;
-}
-```
-
-### Multi-Phase Example
-
-Multi-phase problems require additional initialization of per-phase volume fractions (`alpha`) and partial densities (`alphaRho`). The `MixtureEOS` namespace provides the mixture total energy function. A fallback single-phase EOS is still needed for the solver constructor.
-
-```cpp
-#include "Runtime.hpp"
-#include "IdealGasEOS.hpp"
-#include "MixtureEOS.hpp"
-#include "LFSolver.hpp"
-#include "ExplicitSolver.hpp"
-#include "VTKSession.hpp"
-#include "RKTimeStepping.hpp"
-
-using namespace SemiImplicitFV;
-
-int main(int argc, char** argv) {
-    Runtime rt(argc, argv);
-
-    SimulationConfig config;
-    config.dim = 1;
-    config.nGhost = 4;
-    config.RKOrder = 3;
-    config.reconOrder = ReconstructionOrder::WENO5;
-    config.explicitParams.cfl = 0.5;
-
-    // Two-phase stiffened-gas setup
-    config.multiPhaseParams.nPhases = 2;
-    config.multiPhaseParams.phases = {{4.4, 6.0e8}, {1.4, 0.0}};
-    config.multiPhaseParams.alphaMin = 1e-8;
-
-    config.validate();
-
-    RectilinearMesh mesh = rt.createUniformMesh(config, 500, 0.0, 1.0);
-    rt.setBoundaryCondition(mesh, RectilinearMesh::XLow,  BoundaryCondition::Outflow);
-    rt.setBoundaryCondition(mesh, RectilinearMesh::XHigh, BoundaryCondition::Outflow);
-
-    SolutionState state;
-    state.allocate(mesh.totalCells(), config);
-
-    auto& mp = config.multiPhaseParams;
-    double alphaMin = mp.alphaMin;
-
-    for (int i = 0; i < mesh.nx(); ++i) {
-        std::size_t idx = mesh.index(i, 0, 0);
-        double x = mesh.cellCentroidX(i);
-
-        double rho, p, alphaWater;
-        if (x < 0.7) {
-            rho = 1000.0; p = 1.0e9; alphaWater = 1.0 - alphaMin;
-        } else {
-            rho = 50.0;   p = 1.0e5; alphaWater = alphaMin;
-        }
-        double alphaAir = 1.0 - alphaWater;
-
-        state.alphaRho[0][idx] = alphaWater * rho;
-        state.alphaRho[1][idx] = alphaAir * rho;
-        state.alpha[0][idx] = alphaWater;
-        state.rho[idx] = rho;
-        state.pres[idx] = p;
-        state.velU[idx] = 0.0;
-
-        std::vector<double> alphas = {alphaWater};
-        state.rhoE[idx] = MixtureEOS::mixtureTotalEnergy(rho, p, alphas, 0.0, mp);
-    }
-
-    auto eos = std::make_shared<IdealGasEOS>(1.4, 287.0, config);
-    auto riemann = std::make_shared<LFSolver>(eos, config);
-    ExplicitSolver solver(mesh, riemann, eos, nullptr, config);
-    rt.attachSolver(solver, mesh);
-
-    VTKSession vtk(rt, "my_multiphase_case", mesh);
-    auto stepFn = [&](double targetDt) {
-        return solver.step(config, mesh, state, targetDt);
-    };
-    runTimeLoop(rt, config, mesh, state, vtk, stepFn,
-                {.endTime = 2.4e-4, .outputInterval = 1.2e-5, .printInterval = 50});
-
-    return 0;
-}
-```
-
-Key differences from single-phase:
-- Set `config.multiPhaseParams` with phase count, per-phase `{gamma, pInf}`, and `alphaMin`
-- Call `state.allocate(mesh.totalCells(), config)` (the config overload allocates `alpha` and `alphaRho` arrays)
-- Initialize `state.alpha[k]`, `state.alphaRho[k]` for each phase, and compute `state.rhoE` via `MixtureEOS::mixtureTotalEnergy()`
-- The solver automatically detects multi-phase mode from the config and uses mixture EOS routines for reconstruction, Riemann solving, and time stepping
-
-Rebuild, and the new executable appears automatically:
+Use `--compiled` to build and run a compiled case:
 
 ```bash
-./run_case.sh my_case
+./run_case.sh --compiled 2D_flow_over_circle
 ```
 
-### Multi-Phase Viscous Example
-
-The `2D_rising_bubble` example demonstrates a full multi-phase viscous setup with gravity and surface tension (Hysing et al. 2009, Test Case 2). The key configuration pattern for combining multi-phase with per-phase viscosity, body forces, and surface tension:
-
-```cpp
-// Two-phase EOS: heavy surrounding fluid + light bubble
-config.multiPhaseParams.nPhases  = 2;
-config.multiPhaseParams.phases   = {{6.12, 3.43e8}, {1.4, 0.0}};
-config.multiPhaseParams.alphaMin = 1e-8;
-
-// Per-phase viscosity (phase 0 = heavy, phase 1 = light)
-config.viscousParams.phaseMu = {10.0, 0.1};     // Pa·s
-
-// Gravity
-config.bodyForceParams.a[1] = -9.81;
-
-// Surface tension
-config.surfaceTensionParams.sigma = 1.96;        // N/m
-```
-
-When initializing the solution state, set the volume fractions and partial densities per cell. The mixture EOS computes total energy from the local phase composition:
-
-```cpp
-SolutionState state;
-state.allocate(mesh.totalCells(), config);
-
-for (int j = 0; j < mesh.ny(); ++j) {
-    for (int i = 0; i < mesh.nx(); ++i) {
-        std::size_t idx = mesh.index(i, j, 0);
-        // ... compute alphaHeavy from interface geometry ...
-
-        state.alpha[0][idx]    = alphaHeavy;              // phase 0 volume fraction
-        state.alphaRho[0][idx] = alphaHeavy * rhoHeavy;   // phase 0 partial density
-        state.alphaRho[1][idx] = (1.0 - alphaHeavy) * rhoLight;
-        state.rho[idx]         = state.alphaRho[0][idx] + state.alphaRho[1][idx];
-
-        state.pres[idx] = p;
-        std::vector<double> alphas = {alphaHeavy};
-        state.rhoE[idx] = MixtureEOS::mixtureTotalEnergy(
-            state.rho[idx], p, alphas, 0.0, config.multiPhaseParams);
-    }
-}
-```
-
-No viscosity array is allocated — the viscous flux routine evaluates `mu = sum(alpha_k * mu_k)` at each face directly from the volume fractions stored in the solution state.
+Legacy examples in `examples/` also use this approach. See the existing examples for the full C++ API pattern.
 
 ## MPI Execution
 
-MPI is always linked. Run with `mpirun`:
-
-```bash
-mpirun -np 4 ./build/2D_riemann
-```
-
-Or via the helper script:
+Run with multiple MPI ranks using the `-n` flag:
 
 ```bash
 ./run_case.sh -n 4 2D_riemann
@@ -425,43 +286,25 @@ The `Runtime` class handles domain decomposition, halo exchange, and parallel VT
 
 ```
 SemiImplicitFV/
-├── include/               Header files
-│   ├── SimulationConfig.hpp   Configuration struct
-│   ├── SolutionState.hpp      Field data storage
-│   ├── RectilinearMesh.hpp    Mesh with ghost cells
-│   ├── ExplicitSolver.hpp     SSP-RK explicit solver
-│   ├── SemiImplicitSolver.hpp Pressure-split semi-implicit solver
-│   ├── RiemannSolver.hpp      Riemann solver interface + free flux functions
-│   ├── LFSolver.hpp           Lax-Friedrichs
-│   ├── RusanovSolver.hpp      Rusanov
-│   ├── HLLCSolver.hpp         HLLC
-│   ├── Reconstruction.hpp     WENO/upwind reconstruction
-│   ├── IGR.hpp                Information Geometric Regularization
-│   ├── EquationOfState.hpp    Abstract EOS interface
-│   ├── IdealGasEOS.hpp        Ideal gas EOS
-│   ├── StiffenedGasEOS.hpp    Stiffened gas EOS
-│   ├── MixtureEOS.hpp         N-phase mixture EOS routines (with raw-pointer overloads)
-│   ├── ViscousFlux.hpp        Newtonian viscous stress
-│   ├── SurfaceTension.hpp     Capillary stress tensor
-│   ├── PressureSolver.hpp     Abstract pressure solver
-│   ├── Runtime.hpp            MPI/serial runtime abstraction
-│   ├── MPIContext.hpp         MPI domain decomposition
-│   ├── HaloExchange.hpp       MPI ghost cell communication
-│   ├── VTKWriter.hpp          VTK file I/O
-│   └── VTKSession.hpp         VTK time-series management
-├── src/                   Implementation files
-├── examples/              Example problems
+├── cases/                 Case definitions (JSON input files)
 │   ├── 1D_advection/
 │   ├── 1D_sod_shocktube/
-│   ├── 1D_gas_gas_shocktube/       Two-phase ideal gas shock tube
-│   ├── 1D_liquid_gas_shocktube/    Water-air stiffened gas shock tube
-│   ├── 1D_hydrostatic_water/       Hydrostatic column with gravity
-│   ├── 2D_channel_flow/            Viscous Poiseuille flow
+│   ├── 1D_gas_gas_shocktube/
+│   ├── 1D_liquid_gas_shocktube/
+│   ├── 1D_hydrostatic_water/
+│   ├── 2D_channel_flow/
+│   ├── 2D_flow_over_circle/      IBM: flow past a circular body
 │   ├── 2D_isentropic_vortex/
-│   ├── 2D_laplace_pressure_jump/   Droplet with surface tension
+│   ├── 2D_laplace_pressure_jump/
 │   ├── 2D_quasi1D_sod/
 │   ├── 2D_riemann/
-│   └── 2D_rising_bubble/         Multi-phase viscous bubble with surface tension
+│   └── 2D_rising_bubble/
+├── driver/                Generic JSON driver (sifv)
+├── include/               Header files
+├── src/                   Library source files
+├── examples/              Legacy compiled example programs
+├── tools/                 Code generation and utilities
+│   └── codegen.py         JSON → optimized C++ source generator
 ├── CMakeLists.txt
 └── run_case.sh            Build & run helper script
 ```
@@ -475,19 +318,6 @@ Output files are VTK XML RectilinearGrid format, viewable in [ParaView](https://
 3. Use the animation controls to step through time
 
 Fields written per cell: density, velocity (u, v, w), momentum, pressure, temperature, total energy, and entropic pressure (sigma). Multi-phase simulations additionally write per-phase volume fractions (`Alpha_0`, `Alpha_1`, ...) and partial densities (`AlphaRho_0`, `AlphaRho_1`, ...).
-
-## GPU Readiness
-
-The compute-path code has been refactored to eliminate patterns incompatible with OpenACC GPU offloading, while preserving identical numerical behavior on CPU:
-
-- **Devirtualized Riemann solvers** — Flux computation in all hot loops uses free functions (`computeLFFlux`, `computeRusanovFlux`, `computeHLLCFlux`) dispatched via a `RiemannSolverType` enum + switch (`computeFluxDirect()`).
-- **Devirtualized EOS** — Sound speed, primitive-to-conservative, and conservative-to-primitive conversions in time stepping, pressure solve, and correction step use inline arithmetic with scalar gamma/pInf instead of virtual method calls.
-- **No per-cell heap allocations** — All `std::vector` scratch arrays in `solvePressure()` and `correctionStep()` are pre-allocated at solver construction.
-- **No lambda captures in compute paths** — Viscous flux computation uses a static helper function.
-- **Raw-pointer MixtureEOS overloads** — `mixturePressure`, `mixtureSoundSpeed`, and `mixtureTotalEnergy` have `const double*`/`const PhaseEOS*` overloads suitable for device code, with `std::vector` convenience wrappers on top.
-- **Face states always carry EOS parameters** — `gammaEff`/`piInfEff` are set on every reconstructed face state (single-phase and multi-phase), so Riemann solvers never fall back to virtual EOS lookups.
-
-These changes have no effect on case setup or the public API. All existing examples and configurations work without modification.
 
 ## License
 
