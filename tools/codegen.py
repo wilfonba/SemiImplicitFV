@@ -59,6 +59,78 @@ def strip_comments(text):
     return ''.join(result)
 
 
+def _convert_pow(expr):
+    """Convert ^ (exponentiation) to std::pow() in a C++ expression.
+
+    Handles nested parentheses by scanning for balanced groups.
+    E.g. '((x - 0.5) / 0.05)^2' -> 'std::pow((x - 0.5) / 0.05, 2)'
+    """
+    while '^' in expr:
+        pos = expr.index('^')
+
+        # Find base: scan left from ^ to find balanced paren group or token
+        base_end = pos
+        if pos > 0 and expr[pos - 1] == ')':
+            # Walk backward to find matching '('
+            depth = 0
+            i = pos - 1
+            while i >= 0:
+                if expr[i] == ')':
+                    depth += 1
+                elif expr[i] == '(':
+                    depth -= 1
+                    if depth == 0:
+                        break
+                i -= 1
+            base_start = i
+        else:
+            # Token (number, variable, etc.)
+            i = pos - 1
+            while i >= 0 and (expr[i].isalnum() or expr[i] in '_.'):
+                i -= 1
+            base_start = i + 1
+
+        # Find exponent: scan right from ^ to find token or balanced paren group
+        exp_start = pos + 1
+        if exp_start < len(expr) and expr[exp_start] == '(':
+            depth = 0
+            i = exp_start
+            while i < len(expr):
+                if expr[i] == '(':
+                    depth += 1
+                elif expr[i] == ')':
+                    depth -= 1
+                    if depth == 0:
+                        break
+                i += 1
+            exp_end = i + 1
+        else:
+            # Token (possibly with leading minus for negative exponents)
+            i = exp_start
+            if i < len(expr) and expr[i] == '-':
+                i += 1
+            while i < len(expr) and (expr[i].isalnum() or expr[i] in '_.'):
+                i += 1
+            exp_end = i
+
+        base = expr[base_start:base_end]
+        exponent = expr[exp_start:exp_end]
+
+        if not base or not exponent:
+            break  # safety
+
+        # For parenthesized base, unwrap the outer parens for cleaner output
+        if base.startswith('(') and base.endswith(')'):
+            inner = base[1:-1]
+            replacement = f'std::pow({inner}, {exponent})'
+        else:
+            replacement = f'std::pow({base}, {exponent})'
+
+        expr = expr[:base_start] + replacement + expr[exp_end:]
+
+    return expr
+
+
 def load_jsonc(filename):
     """Load a JSONC file (JSON with comments)."""
     with open(filename, 'r') as f:
@@ -270,6 +342,8 @@ def generate_ic_loop(data, dim):
             for fn in ["sin", "cos", "tan", "exp", "log", "sqrt", "abs", "pow",
                         "asin", "acos", "atan", "atan2", "fabs", "tanh"]:
                 cpp_expr = re.sub(rf'\b{fn}\b', f'std::{fn}', cpp_expr)
+            # Convert ^ (exponentiation) to std::pow() calls
+            cpp_expr = _convert_pow(cpp_expr)
             if name in ["rho", "u", "v", "w", "p"]:
                 expr_assignments.append(f"            {name} = {cpp_expr};")
             elif name.startswith("alpha_") and is_multi:

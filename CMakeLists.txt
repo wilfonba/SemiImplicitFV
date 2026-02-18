@@ -9,7 +9,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(BUILD_EXAMPLES "Build example programs" ON)
 option(BUILD_TESTS "Build unit tests" OFF)
 option(BUILD_DRIVER "Build generic sifv driver executable" ON)
-option(ENABLE_OPENMP "Enable OpenMP parallelization" OFF)
 option(ENABLE_HYPRE "Enable Hypre pressure solver (PCG+PFMG)" OFF)
 
 # Compiler flags
@@ -21,11 +20,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         add_compile_options(-g -fsanitize=address -fno-omit-frame-pointer)
         add_link_options(-fsanitize=address)
     endif()
-endif()
-
-# OpenMP
-if(ENABLE_OPENMP)
-    find_package(OpenMP REQUIRED)
 endif()
 
 # MPI
@@ -79,10 +73,6 @@ target_include_directories(SemiImplicitFV PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-
-if(ENABLE_OPENMP)
-    target_link_libraries(SemiImplicitFV PUBLIC OpenMP::OpenMP_CXX)
-endif()
 
 target_link_libraries(SemiImplicitFV PUBLIC MPI::MPI_CXX)
 

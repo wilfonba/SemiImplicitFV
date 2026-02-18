@@ -6,11 +6,11 @@
         "nGhost": 3,
         "RKOrder": 3,
         "reconOrder": "WENO5",
-        "semiImplicit": false,
-        "explicitParams": { "cfl": 0.8, "maxDt": 1e-2 }
+        "semiImplicit": true,
+        "semiImplicitParams": { "cfl": 0.8, "maxDt": 1e-2, "maxPressureIters": 100, "pressureTol": 1e-6 }
     },
     "eos": { "type": "IdealGas", "gamma": 1.4, "R": 287.0 },
-    "riemannSolver": "LF",
+    "riemannSolver": "HLLC",
     "mesh": {
         "nx": 256, "xMin": 0.0, "xMax": 1.0
     },
@@ -18,7 +18,7 @@
         "xLow": "Periodic", "xHigh": "Periodic"
     },
     "timeLoop": { "endTime": 0.1, "outputInterval": 0.001, "printInterval": 1 },
-    "output": { "baseName": "1D_advection" },
+    "output": { "baseName": "1D_advection_SI" },
     "initialConditions": {
         "default": { "rho": 1.225, "u": 10.0, "p": 101325.0 },
         "patches": [

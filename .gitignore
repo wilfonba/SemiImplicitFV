@@ -139,4 +139,3 @@ Thumbs.db
 *.vtr
 *.pvtr
 VTK/*
-cases/*/*.cpp

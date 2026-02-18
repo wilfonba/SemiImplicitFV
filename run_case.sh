@@ -247,6 +247,9 @@ elif ! grep -q "CMAKE_BUILD_TYPE:STRING=${BUILD_TYPE}$" "$BUILD_DIR/CMakeCache.t
     NEED_CONFIGURE=true
 elif ! grep -q "ENABLE_HYPRE:BOOL=${HYPRE_OPT}$" "$BUILD_DIR/CMakeCache.txt"; then
     NEED_CONFIGURE=true
+elif ! $USE_JSON && [[ -n "$COMPILED_DIR" ]]; then
+    # Always reconfigure for compiled cases so file(GLOB) picks up new directories
+    NEED_CONFIGURE=true
 fi
 
 if $NEED_CONFIGURE; then

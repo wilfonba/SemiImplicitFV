@@ -23,10 +23,10 @@ A finite volume solver for the compressible Euler equations on rectilinear meshe
 
 The 1D advection test case (Gaussian density pulse on a periodic domain, WENO5 + RK3) demonstrates the expected convergence rates for both solvers across grid resolutions from 128 to 2048 cells:
 
-![Convergence of explicit and semi-implicit solvers](examples/1D_advection/convergence.png)
+![Convergence of explicit and semi-implicit solvers](cases/1D_advection_E/convergence_plot.png)
 
 - **Explicit solver** (red, CFL = 0.8): 5th-order convergence in all norms, matching the WENO5 spatial accuracy
-- **Semi-implicit solver** (blue, effective CFL ~ 27): 3rd-order convergence, limited by the RK3 time integrator but with substantially larger time steps
+- **Semi-implicit solver** (blue, effective CFL ~ 28): 3rd-order convergence, limited by the RK3 time integrator but with substantially larger time steps
 
 ## Quick Start
 
@@ -58,7 +58,6 @@ The `run_case.sh` script handles configuring, building, and running automaticall
 - CMake 3.14+
 - C++17 compiler
 - MPI implementation (e.g., Open MPI, MPICH)
-- OpenMP (optional)
 
 ### Manual Build
 
@@ -69,12 +68,6 @@ mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j
 ```
-
-| CMake Option | Default | Description |
-|---|---|---|
-| `BUILD_EXAMPLES` | `ON` | Build legacy example programs in `examples/` |
-| `BUILD_TESTS` | `OFF` | Build tests |
-| `ENABLE_OPENMP` | `OFF` | Enable OpenMP support |
 
 ## Defining Cases (JSON Input)
 
@@ -270,8 +263,6 @@ Use `--compiled` to build and run a compiled case:
 ./run_case.sh --compiled 2D_flow_over_circle
 ```
 
-Legacy examples in `examples/` also use this approach. See the existing examples for the full C++ API pattern.
-
 ## MPI Execution
 
 Run with multiple MPI ranks using the `-n` flag:
@@ -302,7 +293,6 @@ SemiImplicitFV/
 ├── driver/                Generic JSON driver (sifv)
 ├── include/               Header files
 ├── src/                   Library source files
-├── examples/              Legacy compiled example programs
 ├── tools/                 Code generation and utilities
 │   └── codegen.py         JSON → optimized C++ source generator
 ├── CMakeLists.txt
