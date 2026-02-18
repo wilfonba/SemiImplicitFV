@@ -12,7 +12,6 @@ A finite volume solver for the compressible Euler equations on rectilinear meshe
 - **Viscosity** — Newtonian viscous stress tensor with Stokes hypothesis; per-phase viscosity via arithmetic mixture rule for multi-phase flows
 - **Body forces** — Time-dependent gravitational / body force acceleration per dimension
 - **Surface tension** — Capillary stress tensor (Schmidmayer et al. 2017) with CSF interface force
-- **Immersed boundary method** — Ghost-cell IBM with circle, rectangle, cylinder, and rectangular prism body types; slip and no-slip walls
 - **Information Geometric Regularization (IGR)** — Entropic pressure via elliptic solve for improved stability
 - **1D / 2D / 3D** on rectilinear (uniform) meshes with ghost cells
 - **Boundary conditions** — Periodic, Reflective, Outflow, Slip Wall, No-Slip Wall
@@ -116,33 +115,9 @@ Cases are defined as JSON files in `cases/<name>/<name>.jsonc`. This is the prim
 | `timeLoop` | Yes | End time, output interval, print interval |
 | `output` | No | VTK base name and directory |
 | `initialConditions` | Yes | Default state and geometry-based patches |
-| `immersedBoundaries` | No | Immersed boundary bodies (explicit solver only) |
 | `smoothing` | No | Post-initialization field smoothing iterations |
 
 **Initial condition patches** support `"box"`, `"sphere"`, `"plane"`, and `"analytic"` geometry types. Patch states inherit from the default state — only specify fields that differ.
-
-### Immersed Boundaries
-
-Add solid bodies to the domain using the ghost-cell immersed boundary method. Supported with the explicit solver only.
-
-```jsonc
-"immersedBoundaries": {
-    "bodies": [
-        {
-            "type": "circle",              // "circle", "rectangle", "cylinder", "rectangularPrism"
-            "center": [1.0, 1.0],          // 2D: [x,y], 3D: [x,y,z]
-            "radius": 0.2,                 // circle/cylinder only
-            "wallType": "NoSlip"           // "NoSlip" (default) or "Slip"
-        }
-    ]
-}
-```
-
-Body types:
-- **`circle`** — 2D circle: `center` (2 values), `radius`
-- **`rectangle`** — 2D axis-aligned rectangle: `center` (2 values), `halfWidths` (2 values)
-- **`cylinder`** — 3D infinite cylinder: `center` (2 values in cross-section plane), `radius`, `axis` (0=x, 1=y, 2=z, default 2)
-- **`rectangularPrism`** — 3D axis-aligned box: `center` (3 values), `halfWidths` (3 values)
 
 ### Code Generation (Case Optimization)
 
@@ -284,7 +259,6 @@ SemiImplicitFV/
 │   ├── 1D_liquid_gas_shocktube/
 │   ├── 1D_hydrostatic_water/
 │   ├── 2D_channel_flow/
-│   ├── 2D_flow_over_circle/      IBM: flow past a circular body
 │   ├── 2D_isentropic_vortex/
 │   ├── 2D_laplace_pressure_jump/
 │   ├── 2D_quasi1D_sod/

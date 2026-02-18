@@ -64,7 +64,6 @@ set(LIB_SOURCES
     src/HaloExchange.cpp
     src/Runtime.cpp
     src/VTKSession.cpp
-    src/ImmersedBoundary.cpp
 )
 
 # Create library

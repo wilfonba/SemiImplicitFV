@@ -52,7 +52,6 @@ Example (`cases/my_case/my_case.jsonc`):
 | `timeLoop` | Yes | `endTime`, `outputInterval`, `printInterval`, `checkNaN` |
 | `output` | No | `baseName` and `directory` for VTK output |
 | `initialConditions` | Yes | `default` state + `patches` array with geometry and state overrides |
-| `immersedBoundaries` | No | IBM bodies (explicit solver only) — see below |
 | `smoothing` | No | `iterations` for post-initialization field smoothing |
 
 ### Initial Condition Geometries
@@ -61,21 +60,6 @@ Example (`cases/my_case/my_case.jsonc`):
 - **`sphere`**: `center` [x,y,z], `radius`
 - **`plane`**: `point` [x,y,z], `normal` [x,y,z] — positive side gets the patch state
 - **`analytic`**: expressions evaluated per cell (with optional `region` sub-geometry)
-
-### Immersed Boundary Bodies
-
-Define solid bodies in the `"immersedBoundaries"` section. Only supported with the explicit solver.
-
-```jsonc
-"immersedBoundaries": {
-    "bodies": [
-        { "type": "circle", "center": [1.0, 1.0], "radius": 0.2, "wallType": "NoSlip" },
-        { "type": "rectangle", "center": [2.0, 1.0], "halfWidths": [0.3, 0.2] },
-        { "type": "cylinder", "center": [1.0, 1.0], "radius": 0.2, "axis": 2 },
-        { "type": "rectangularPrism", "center": [1.0, 1.0, 0.5], "halfWidths": [0.3, 0.2, 0.1] }
-    ]
-}
-```
 
 ### Compiled C++ Case (When Needed)
 

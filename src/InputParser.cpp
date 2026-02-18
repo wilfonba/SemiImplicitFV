@@ -125,36 +125,6 @@ static std::unique_ptr<ICGeometry> parseGeometry(const json& j) {
 }
 
 // -----------------------------------------------------------------
-//  Parse IBBodyDef from JSON
-// -----------------------------------------------------------------
-static IBBodyDef parseIBBodyDef(const json& j) {
-    IBBodyDef def;
-    def.type = get<std::string>(j, "type", "");
-    if (def.type != "circle" && def.type != "rectangle" &&
-        def.type != "cylinder" && def.type != "rectangularPrism") {
-        throw std::runtime_error("Unknown immersed body type: '" + def.type + "'");
-    }
-
-    if (j.contains("center")) {
-        for (const auto& v : j["center"]) def.center.push_back(v.get<double>());
-    }
-
-    def.radius = get<double>(j, "radius", 0.0);
-    def.axis   = get<int>(j, "axis", 2);
-
-    if (j.contains("halfWidths")) {
-        for (const auto& v : j["halfWidths"]) def.halfWidths.push_back(v.get<double>());
-    }
-
-    def.wallType = get<std::string>(j, "wallType", "NoSlip");
-    if (def.wallType != "NoSlip" && def.wallType != "Slip") {
-        throw std::runtime_error("Unknown wallType: '" + def.wallType + "' (expected 'Slip' or 'NoSlip')");
-    }
-
-    return def;
-}
-
-// -----------------------------------------------------------------
 //  Parse ICState from JSON
 // -----------------------------------------------------------------
 static ICState parseICState(const json& j, const ICState& inherit) {
@@ -323,16 +293,6 @@ static InputData parseJson(const json& root) {
     if (root.contains("smoothing")) {
         const auto& s = root["smoothing"];
         data.smoothingParams.iterations = get<int>(s, "iterations", data.smoothingParams.iterations);
-    }
-
-    // --- Immersed boundaries ---
-    if (root.contains("immersedBoundaries")) {
-        const auto& ib = root["immersedBoundaries"];
-        if (ib.contains("bodies")) {
-            for (const auto& bj : ib["bodies"]) {
-                data.ibBodies.push_back(parseIBBodyDef(bj));
-            }
-        }
     }
 
     // --- Initial conditions ---

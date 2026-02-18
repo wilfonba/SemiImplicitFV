@@ -16,7 +16,6 @@
 #include "HyprePressureSolver.hpp"
 #endif
 #include "IGR.hpp"
-#include "ImmersedBoundary.hpp"
 #include "SimulationConfig.hpp"
 #include "Runtime.hpp"
 #include "VTKSession.hpp"
@@ -78,13 +77,6 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    if (!input.ibBodies.empty() && config.semiImplicit) {
-        if (rt.isRoot()) {
-            std::cerr << "Error: Immersed boundary method is not supported with the semi-implicit solver.\n";
-        }
-        return 1;
-    }
-
     // ---- Create mesh ----
     const auto& mp = input.meshParams;
     RectilinearMesh mesh = [&]() {
@@ -103,31 +95,6 @@ int main(int argc, char** argv) {
     // ---- Set boundary conditions ----
     for (int f = 0; f < 6; ++f) {
         rt.setBoundaryCondition(mesh, f, input.bcParams.bc[f]);
-    }
-
-    // ---- Create immersed boundaries ----
-    ImmersedBoundaryMethod ibm;
-    for (const auto& bd : input.ibBodies) {
-        std::shared_ptr<IBBody> body;
-        if (bd.type == "circle") {
-            body = std::make_shared<IBCircle>(bd.center[0], bd.center[1], bd.radius);
-        } else if (bd.type == "rectangle") {
-            body = std::make_shared<IBRectangle>(bd.center[0], bd.center[1],
-                                                  bd.halfWidths[0], bd.halfWidths[1]);
-        } else if (bd.type == "cylinder") {
-            body = std::make_shared<IBCylinder>(bd.center[0], bd.center[1], bd.radius, bd.axis);
-        } else if (bd.type == "rectangularPrism") {
-            body = std::make_shared<IBRectangularPrism>(
-                bd.center[0], bd.center[1], bd.center[2],
-                bd.halfWidths[0], bd.halfWidths[1], bd.halfWidths[2]);
-        }
-        if (bd.wallType == "Slip") {
-            body->setWallType(IBBody::WallType::Slip);
-        }
-        ibm.addBody(body);
-    }
-    if (ibm.hasIBM()) {
-        ibm.classifyCells(mesh);
     }
 
     rt.print("=== SemiImplicitFV Driver ===\n");
@@ -229,12 +196,6 @@ int main(int argc, char** argv) {
         stepFn = [&](double targetDt) {
             return explicitSolver->step(config, mesh, state, targetDt);
         };
-    }
-
-    // ---- Attach IBM (after solver creation) ----
-    if (ibm.hasIBM()) {
-        rt.attachIBM(ibm, *explicitSolver);
-        rt.print("  IBM bodies: ", input.ibBodies.size(), "\n");
     }
 
     // ---- Smoothing (after attachSolver creates HaloExchange) ----

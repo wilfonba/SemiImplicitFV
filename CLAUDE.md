@@ -45,15 +45,9 @@ When adding new cases, prefer JSON input files. Use compiled C++ only when the c
 
 ### JSON Schema
 
-Top-level sections: `config`, `eos`, `riemannSolver`, `mesh`, `boundaryConditions`, `timeLoop`, `output`, `initialConditions`, `immersedBoundaries`, `smoothing`. All sections except `config`, `mesh`, `timeLoop`, and `initialConditions` are optional.
+Top-level sections: `config`, `eos`, `riemannSolver`, `mesh`, `boundaryConditions`, `timeLoop`, `output`, `initialConditions`, `smoothing`. All sections except `config`, `mesh`, `timeLoop`, and `initialConditions` are optional.
 
 Initial condition patches support `"box"`, `"sphere"`, `"plane"`, and `"analytic"` geometry types. Patch states inherit from the default state.
-
-### Immersed Boundaries
-
-The `"immersedBoundaries"` section defines solid bodies via the ghost-cell IBM. Only supported with the explicit solver (`"semiImplicit": false`). Body types: `"circle"`, `"rectangle"`, `"cylinder"`, `"rectangularPrism"`. Each body has `center`, shape-specific parameters (`radius`, `halfWidths`, `axis`), and `wallType` (`"NoSlip"` or `"Slip"`).
-
-Parsed into `std::vector<IBBodyDef>` in `InputData`. The driver (`driver/main.cpp`) converts `IBBodyDef` structs into concrete `IBBody` subclasses, calls `ibm.classifyCells(mesh)`, and attaches via `rt.attachIBM(ibm, solver)`. The codegen (`tools/codegen.py`) emits equivalent C++ directly.
 
 ### Adding a New JSON Case
 
@@ -74,17 +68,15 @@ Parsed into `std::vector<IBBodyDef>` in `InputData`. The driver (`driver/main.cp
 
 **Multi-phase**: `MixtureEOS` namespace (`MixtureEOS.hpp` / `MixtureEOS.cpp`) provides N-phase mixture routines — effective gamma/piInf from volume fractions, Wood's mixture sound speed, mixture pressure, and mixture total energy. All functions have raw-pointer overloads (`const double*`, `const PhaseEOS*`) for GPU readiness alongside `std::vector` convenience wrappers. Enabled by setting `config.multiPhaseParams.nPhases >= 2` with per-phase `{gamma, pInf}` in `PhaseEOS`. All N volume fractions (`alpha[k]` for k=0..nPhases-1) and N partial densities (`alphaRho[k]` for k=0..nPhases-1) are stored and advected in `SolutionState`. After each RK stage, alphas are clamped to `alphaMin` and normalized so `sum(alpha) = 1`. At faces, `gammaEff` and `piInfEff` are computed from reconstructed alphas via `MixtureEOS::effectiveGammaAndPiInf()`. Cell-center sound speed uses the full Wood's formula.
 
-**IBM**: `ImmersedBoundaryMethod` (`ImmersedBoundary.hpp/cpp`) classifies cells as Fluid/Ghost/Dead and applies ghost-cell interpolation to enforce wall BCs on embedded bodies. Body shapes: `IBCircle`, `IBRectangle`, `IBCylinder`, `IBRectangularPrism`. Only works with `ExplicitSolver` (attached via `Runtime::attachIBM()`). In the JSON driver, IBM bodies are defined via `IBBodyDef` structs parsed from the `"immersedBoundaries"` section.
-
 **IGR**: `IGRSolver` computes entropic pressure via Gauss-Seidel iteration on the elliptic equation. Controlled by `SimulationConfig::useIGR` and `IGRParams`.
 
 **Mesh**: `RectilinearMesh` with ghost cells and boundary conditions (Periodic, Reflective, Outflow).
 
 **Output**: `VTKWriter` produces `.vtr` and `.pvd` files. Multi-phase fields (`Alpha_k`, `AlphaRho_k`) are written automatically when present.
 
-**Input parsing**: `InputParser` (`InputParser.hpp/cpp`) reads JSON/JSONC files into `InputData` structs. This includes `SimulationConfig`, mesh/EOS/BC parameters, initial condition patches, and `IBBodyDef` structs. The driver (`driver/main.cpp`) converts these data structs into runtime objects.
+**Input parsing**: `InputParser` (`InputParser.hpp/cpp`) reads JSON/JSONC files into `InputData` structs. This includes `SimulationConfig`, mesh/EOS/BC parameters, and initial condition patches. The driver (`driver/main.cpp`) converts these data structs into runtime objects.
 
-**Code generation**: `tools/codegen.py` reads a JSON case file and emits a standalone C++ `main()` with hardcoded parameters for maximum performance. Supports all JSON features including immersed boundaries.
+**Code generation**: `tools/codegen.py` reads a JSON case file and emits a standalone C++ `main()` with hardcoded parameters for maximum performance.
 
 ## Key Configuration
 

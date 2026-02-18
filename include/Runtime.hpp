@@ -15,7 +15,6 @@ namespace SemiImplicitFV {
 
 class ExplicitSolver;
 class SemiImplicitSolver;
-class ImmersedBoundaryMethod;
 
 /// Unified initialization / utility class that abstracts MPI vs serial.
 /// In serial mode it is a thin passthrough.  In MPI mode it owns
@@ -60,9 +59,6 @@ public:
     // --- Solver attachment ---
     void attachSolver(ExplicitSolver& solver, const RectilinearMesh& mesh);
     void attachSolver(SemiImplicitSolver& solver, const RectilinearMesh& mesh);
-
-    // --- IBM attachment ---
-    void attachIBM(ImmersedBoundaryMethod& ibm, ExplicitSolver& solver);
 
     // --- Field smoothing ---
     void smoothFields(SolutionState& state, const RectilinearMesh& mesh, int nIters);

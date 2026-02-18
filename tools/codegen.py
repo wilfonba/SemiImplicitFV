@@ -407,52 +407,6 @@ def generate_ic_loop(data, dim):
     return "\n".join(lines)
 
 
-def generate_ibm(data):
-    """Generate IBM body creation, classification, and attachment code."""
-    ib = data.get("immersedBoundaries", {})
-    bodies = ib.get("bodies", [])
-    if not bodies:
-        return "", "", ""
-
-    is_semi = data.get("config", {}).get("semiImplicit", False)
-    if is_semi:
-        raise ValueError("Immersed boundary method is not supported with the semi-implicit solver.")
-
-    create_lines = ["    // Immersed boundaries", "    ImmersedBoundaryMethod ibm;"]
-    for body in bodies:
-        btype = body["type"]
-        wall = body.get("wallType", "NoSlip")
-        if btype == "circle":
-            c = body["center"]
-            create_lines.append(f"    {{")
-            create_lines.append(f"        auto body = std::make_shared<IBCircle>({c[0]}, {c[1]}, {body['radius']});")
-        elif btype == "rectangle":
-            c = body["center"]
-            hw = body["halfWidths"]
-            create_lines.append(f"    {{")
-            create_lines.append(f"        auto body = std::make_shared<IBRectangle>({c[0]}, {c[1]}, {hw[0]}, {hw[1]});")
-        elif btype == "cylinder":
-            c = body["center"]
-            axis = body.get("axis", 2)
-            create_lines.append(f"    {{")
-            create_lines.append(f"        auto body = std::make_shared<IBCylinder>({c[0]}, {c[1]}, {body['radius']}, {axis});")
-        elif btype == "rectangularPrism":
-            c = body["center"]
-            hw = body["halfWidths"]
-            create_lines.append(f"    {{")
-            create_lines.append(f"        auto body = std::make_shared<IBRectangularPrism>({c[0]}, {c[1]}, {c[2]}, {hw[0]}, {hw[1]}, {hw[2]});")
-
-        if wall == "Slip":
-            create_lines.append(f"        body->setWallType(IBBody::WallType::Slip);")
-        create_lines.append(f"        ibm.addBody(body);")
-        create_lines.append(f"    }}")
-
-    create_lines.append("    ibm.classifyCells(mesh);")
-    create_code = "\n".join(create_lines)
-    attach_code = "    rt.attachIBM(ibm, *solver);"
-    return create_code, attach_code
-
-
 def generate(data, input_filename):
     """Generate the complete C++ source."""
     cfg = data.get("config", {})
@@ -464,10 +418,8 @@ def generate(data, input_filename):
     tl_cfg = data.get("timeLoop", {})
     out_cfg = data.get("output", {})
     smooth_cfg = data.get("smoothing", {})
-    ib_cfg = data.get("immersedBoundaries", {})
     is_semi = cfg.get("semiImplicit", False)
     is_multi = cfg.get("multiPhaseParams", {}).get("nPhases", 0) >= 2
-    has_ibm = bool(ib_cfg.get("bodies", []))
 
     # Includes
     includes = [
@@ -501,9 +453,6 @@ def generate(data, input_filename):
 
     if is_multi:
         includes.append("MixtureEOS.hpp")
-
-    if has_ibm:
-        includes.append("ImmersedBoundary.hpp")
 
     include_str = "\n".join(f'#include "{h}"' for h in includes)
 
@@ -564,12 +513,6 @@ def generate(data, input_filename):
 
     # IC loop
     ic_code = generate_ic_loop(data, dim)
-
-    # IBM
-    ibm_create_code = ""
-    ibm_attach_code = ""
-    if has_ibm:
-        ibm_create_code, ibm_attach_code = generate_ibm(data)
 
     # Smoothing (placed after solver attachment since attachSolver creates HaloExchange)
     smooth_iters = smooth_cfg.get("iterations", 0)
@@ -647,8 +590,6 @@ int main(int argc, char** argv) {{
 {mesh_code}
 {bc_code}
 
-{ibm_create_code}
-
     SolutionState state;
     state.allocate(mesh.totalCells(), config);
 
@@ -660,8 +601,6 @@ int main(int argc, char** argv) {{
 {ic_code}
 
 {solver_code}
-
-{ibm_attach_code}
 
 {smooth_code}
 

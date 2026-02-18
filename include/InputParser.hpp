@@ -48,15 +48,6 @@ struct SmoothingParams {
     int iterations = 0;
 };
 
-struct IBBodyDef {
-    std::string type;               // "circle", "rectangle", "cylinder", "rectangularPrism"
-    std::vector<double> center;     // 2 or 3 elements
-    double radius = 0.0;            // circle/cylinder
-    std::vector<double> halfWidths; // rectangle (2) or rectangularPrism (3)
-    int axis = 2;                   // cylinder axis (0=x, 1=y, 2=z)
-    std::string wallType = "NoSlip";
-};
-
 struct InputData {
     SimulationConfig config;
     MeshParams meshParams;
@@ -69,7 +60,6 @@ struct InputData {
     SmoothingParams smoothingParams;
     ICState defaultState;
     std::vector<ICPatch> patches;
-    std::vector<IBBodyDef> ibBodies;
 };
 
 namespace InputParser {

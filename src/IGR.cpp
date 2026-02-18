@@ -1,6 +1,5 @@
 #include "IGR.hpp"
 #include "HaloExchange.hpp"
-#include "ImmersedBoundary.hpp"
 #include <cmath>
 #include <algorithm>
 #include <iostream>
@@ -16,7 +15,7 @@ double IGRSolver::computeAlpha(double dx) const {
 }
 
 double IGRSolver::computeIGRRhs(const SimulationConfig& config, const GradientTensor& gradU, double alpha) const {
-    // Compute: α[tr(∇u)² + tr²(∇u)]
+    // Compute: alpha[tr(nabla u)^2 + tr^2(nabla u)]
 
     double trSq{0.0};
     for (int i = 0; i < config.dim; ++i) {
@@ -29,7 +28,7 @@ double IGRSolver::computeIGRRhs(const SimulationConfig& config, const GradientTe
     for (int i = 0; i < config.dim; ++i) {
         trSquared += gradU[i][i];  // Add diagonal components to get trace
     }
-    trSquared *= trSquared;  // Square the trace to get (tr(∇u))²
+    trSquared *= trSquared;  // Square the trace to get (tr(nabla u))^2
 
     return alpha * (trSq + trSquared);
 }
@@ -38,7 +37,7 @@ void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
         const RectilinearMesh& mesh,
         SolutionState& state,
         std::vector<GradientTensor> gradU) {
-    // Solve: σ/ρ - α∇·((1/ρ)∇σ) = rhs
+    // Solve: sigma/rho - alpha nabla . ((1/rho) nabla sigma) = rhs
     // Gauss-Seidel iteration with warm start
     int maxIters = config.step == 0 ? params_.IGRWarmStartIters : params_.IGRIters;
     double alpha = params_.alphaCoeff * mesh.dx(0) * mesh.dx(0);
@@ -48,14 +47,13 @@ void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
             for (int j = 0; j < mesh.ny(); ++j) {
                 for (int i = 0; i < mesh.nx(); ++i) {
                     std::size_t idx = mesh.index(i, j, k);
-                    if (ibm_ && ibm_->isSolid(idx)) continue;
 
                     double rhs = computeIGRRhs(config, gradU[idx], alpha);
 
-                    // Diagonal coefficient: 1/ρ_i + α·Σ(1/ρ_neighbor)/dx²
+                    // Diagonal coefficient: 1/rho_i + alpha * Sum(1/rho_neighbor)/dx^2
                     double diag = 1.0 / state.rho[idx];
 
-                    // Off-diagonal sum: α·Σ(σ_neighbor/ρ_neighbor)/dx²
+                    // Off-diagonal sum: alpha * Sum(sigma_neighbor/rho_neighbor)/dx^2
                     double offdiag = 0.0;
 
                     // X-direction (face-averaged densities)
@@ -95,7 +93,6 @@ void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
             }
         }
         mesh.fillScalarGhosts(state.sigma);
-        if (ibm_) ibm_->applyScalarGhostCells(mesh, state.sigma);
     }
 }
 
@@ -112,7 +109,6 @@ void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
             for (int j = 0; j < mesh.ny(); ++j) {
                 for (int i = 0; i < mesh.nx(); ++i) {
                     std::size_t idx = mesh.index(i, j, k);
-                    if (ibm_ && ibm_->isSolid(idx)) continue;
 
                     double rhs = computeIGRRhs(config, gradU[idx], alpha);
 
@@ -153,7 +149,6 @@ void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
             }
         }
         mesh.fillScalarGhosts(state.sigma, halo);
-        if (ibm_) ibm_->applyScalarGhostCells(mesh, state.sigma);
     }
 }
 
@@ -200,4 +195,3 @@ GradientTensor IGRSolver::computeVelocityGradient(
 }
 
 } // namespace SemiImplicitFV
-
