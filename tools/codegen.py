@@ -418,8 +418,11 @@ def generate(data, input_filename):
     tl_cfg = data.get("timeLoop", {})
     out_cfg = data.get("output", {})
     smooth_cfg = data.get("smoothing", {})
+    restart_cfg = data.get("restart", {})
     is_semi = cfg.get("semiImplicit", False)
     is_multi = cfg.get("multiPhaseParams", {}).get("nPhases", 0) >= 2
+    do_checkpoint = restart_cfg.get("checkpoint", False)
+    restart_file = restart_cfg.get("file", "")
 
     # Includes
     includes = [
@@ -454,6 +457,9 @@ def generate(data, input_filename):
     if is_multi:
         includes.append("MixtureEOS.hpp")
 
+    if do_checkpoint or restart_file:
+        includes.append("Checkpoint.hpp")
+
     include_str = "\n".join(f'#include "{h}"' for h in includes)
 
     # Hypre include is conditional on SIFV_HAS_HYPRE (matches driver pattern)
@@ -463,13 +469,17 @@ def generate(data, input_filename):
                         "#endif")
 
     # Standard includes
-    std_includes = "\n".join([
+    std_inc_list = [
         "#include <iostream>",
         "#include <memory>",
         "#include <cmath>",
         "#include <vector>",
         "#include <functional>",
-    ])
+    ]
+    if restart_file:
+        std_inc_list.append("#include <iomanip>")
+        std_inc_list.append("#include <sstream>")
+    std_includes = "\n".join(std_inc_list)
 
     # Config code
     config_code = generate_config(cfg)
@@ -572,6 +582,30 @@ def generate(data, input_filename):
     out_int = tl_cfg.get("outputInterval", 0.01)
     print_int = tl_cfg.get("printInterval", 1)
 
+    # Restart / checkpoint code
+    if restart_file:
+        restart_load_code = f'''    // ---- Load checkpoint or apply ICs ----
+    const std::string restartFile = "{restart_file}";
+    {{
+        std::string ckptFile = restartFile;
+        std::string placeholder = "{{rank}}";
+        auto pos = ckptFile.find(placeholder);
+        if (pos != std::string::npos) {{
+            std::ostringstream rankStr;
+            rankStr << std::setw(4) << std::setfill('0') << rt.rank();
+            ckptFile.replace(pos, placeholder.size(), rankStr.str());
+        }}
+        loadCheckpoint(ckptFile, mesh, state, config);
+        state.convertConservativeToPrimitiveVariables(mesh, eos);
+        rt.print("  Restarting from checkpoint: ", ckptFile, "\\n");
+        rt.print("  Restart time: ", config.time, ", step: ", config.step, "\\n\\n");
+    }}'''
+        init_code = restart_load_code
+    else:
+        init_code = f"    // Initialize fields\n{ic_code}"
+
+    checkpoint_line = f"    tlp.checkpoint = true;" if do_checkpoint else ""
+
     # Assemble
     source = f"""// Auto-generated from {os.path.basename(input_filename)}
 // Compile: link against SemiImplicitFV library
@@ -597,12 +631,11 @@ int main(int argc, char** argv) {{
 {rs_code}
 {igr_code}
 
-    // Initialize fields
-{ic_code}
+{init_code}
 
 {solver_code}
 
-{smooth_code}
+{smooth_code if not restart_file else ""}
 
     VTKSession vtk(rt, "{base}", mesh, config, "{vtk_dir}");
 
@@ -610,6 +643,8 @@ int main(int argc, char** argv) {{
     tlp.endTime = {end_time};
     tlp.outputInterval = {out_int};
     tlp.printInterval = {print_int};
+{checkpoint_line}
+    tlp.startTime = config.time;
 {f"""    tlp.acousticDtFn = [&]() {{
         return computeAcousticTimeStep(mesh, state, *eos, config,
                                        1.0, 1e30, rt.mpiContext().comm());

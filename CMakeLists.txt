@@ -41,6 +41,7 @@ endif()
 
 # Library sources
 set(LIB_SOURCES
+    src/Checkpoint.cpp
     src/SolutionState.cpp
     src/RectilinearMesh.cpp
     src/Reconstruction.cpp

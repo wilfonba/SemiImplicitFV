@@ -16,6 +16,7 @@ A finite volume solver for the compressible Euler equations on rectilinear meshe
 - **1D / 2D / 3D** on rectilinear (uniform) meshes with ghost cells
 - **Boundary conditions** — Periodic, Reflective, Outflow, Slip Wall, No-Slip Wall
 - **MPI parallelism** — Cartesian domain decomposition with non-blocking halo exchange
+- **Checkpoint / restart** — Periodic binary checkpoints with automatic restart for HPC wall-time resilience
 - **VTK output** — `.vtr` (serial), `.pvtr` (parallel), and `.pvd` (time series) for ParaView
 
 ## Convergence
@@ -116,6 +117,7 @@ Cases are defined as JSON files in `cases/<name>/<name>.jsonc`. This is the prim
 | `output` | No | VTK base name and directory |
 | `initialConditions` | Yes | Default state and geometry-based patches |
 | `smoothing` | No | Post-initialization field smoothing iterations |
+| `restart` | No | Checkpoint/restart settings |
 
 **Initial condition patches** support `"box"`, `"sphere"`, `"plane"`, and `"analytic"` geometry types. Patch states inherit from the default state — only specify fields that differ.
 
@@ -227,6 +229,42 @@ Capillary stress tensor (Schmidmayer et al. 2017) for multi-phase flows:
 | `WENO5` / `UPWIND5` | 5th | 3 |
 
 WENO schemes include nonlinear shock-capturing weights. Upwind schemes use standard polynomial reconstruction.
+
+## Checkpoint / Restart
+
+Long-running simulations can write periodic binary checkpoints and restart from them. This is essential for jobs on HPC clusters with wall-time limits.
+
+Add an optional `"restart"` section to the JSON input file:
+
+```jsonc
+"restart": {
+    "checkpointInterval": 0.1,              // write a checkpoint every 0.1 time units (0 = disabled)
+    "file": "VTK/checkpoint.{rank}.bin"     // restart from this file (omit for a fresh run)
+}
+```
+
+| Field | Default | Description |
+|---|---|---|
+| `checkpointInterval` | 0 | Time interval between checkpoint writes. 0 disables checkpointing. |
+| `file` | (empty) | Path to a checkpoint file to restart from. `{rank}` is replaced with the zero-padded MPI rank (e.g. `0000`). When set, initial conditions and smoothing are skipped. |
+
+Checkpoint files are written to the case's output directory as `checkpoint.NNNN.bin` (one per MPI rank). Only the latest checkpoint is kept — each write overwrites the previous file. The checkpoint stores all conservative variables and multi-phase fields in a compact binary format; primitive variables are recomputed on restart.
+
+### Example: restart a killed job
+
+```bash
+# 1. Run with periodic checkpoints
+#    (add "restart": {"checkpointInterval": 0.05} to the case JSONC)
+./run_case.sh 1D_sod_shocktube
+
+# 2. Job is killed at the wall-time limit...
+
+# 3. Add the restart file path and re-run
+#    (add "file": "VTK/checkpoint.{rank}.bin" to the "restart" section)
+./run_case.sh 1D_sod_shocktube
+```
+
+The simulation resumes from the saved time and step count. Output from the restarted run is bitwise identical to an uninterrupted run.
 
 ## Writing Compiled Cases (C++)
 

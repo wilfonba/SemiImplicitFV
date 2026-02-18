@@ -33,6 +33,10 @@
         "yLow": "NoSlipWall", "yHigh": "NoSlipWall"
     },
     "timeLoop": { "endTime": 3.0, "outputInterval": 0.03, "printInterval": 1 },
+    "restart": {
+        "checkpoint": true
+        //"file": "Checkpoint/checkpoint.{rank}.bin"
+    },
     "output": { "baseName": "2D_rising_bubble" },
     "initialConditions": {
         // Default: heavy fluid everywhere

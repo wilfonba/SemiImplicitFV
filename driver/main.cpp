@@ -20,9 +20,12 @@
 #include "Runtime.hpp"
 #include "VTKSession.hpp"
 #include "RKTimeStepping.hpp"
+#include "Checkpoint.hpp"
 
 #include <iostream>
+#include <iomanip>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <functional>
 
@@ -142,8 +145,25 @@ int main(int argc, char** argv) {
         igrSolver = std::make_shared<IGRSolver>(config.igrParams);
     }
 
-    // ---- Apply initial conditions ----
-    applyInitialConditions(mesh, state, *eos, config, input.defaultState, input.patches);
+    // ---- Apply initial conditions or load checkpoint ----
+    const bool restarting = !input.restartParams.file.empty();
+    if (restarting) {
+        // Replace {rank} placeholder with zero-padded MPI rank
+        std::string ckptFile = input.restartParams.file;
+        std::string placeholder = "{rank}";
+        auto pos = ckptFile.find(placeholder);
+        if (pos != std::string::npos) {
+            std::ostringstream rankStr;
+            rankStr << std::setw(4) << std::setfill('0') << rt.rank();
+            ckptFile.replace(pos, placeholder.size(), rankStr.str());
+        }
+        loadCheckpoint(ckptFile, mesh, state, config);
+        state.convertConservativeToPrimitiveVariables(mesh, eos);
+        rt.print("  Restarting from checkpoint: ", ckptFile, "\n");
+        rt.print("  Restart time: ", config.time, ", step: ", config.step, "\n\n");
+    } else {
+        applyInitialConditions(mesh, state, *eos, config, input.defaultState, input.patches);
+    }
 
     // ---- Build solver and step function ----
     std::function<double(double)> stepFn;
@@ -199,7 +219,7 @@ int main(int argc, char** argv) {
     }
 
     // ---- Smoothing (after attachSolver creates HaloExchange) ----
-    if (input.smoothingParams.iterations > 0) {
+    if (!restarting && input.smoothingParams.iterations > 0) {
         rt.smoothFields(state, mesh, input.smoothingParams.iterations, config);
     }
 
@@ -213,6 +233,8 @@ int main(int argc, char** argv) {
     tlp.outputInterval = input.timeLoopParams.outputInterval;
     tlp.printInterval  = input.timeLoopParams.printInterval;
     tlp.checkNaN       = input.timeLoopParams.checkNaN;
+    tlp.checkpoint         = input.restartParams.checkpoint;
+    tlp.startTime          = config.time;
 
     if (config.semiImplicit) {
         tlp.acousticDtFn = [&]() {

@@ -48,6 +48,11 @@ struct SmoothingParams {
     int iterations = 0;
 };
 
+struct RestartParams {
+    std::string file;           // empty = no restart
+    bool checkpoint = false;    // write checkpoints at outputInterval
+};
+
 struct InputData {
     SimulationConfig config;
     MeshParams meshParams;
@@ -58,6 +63,7 @@ struct InputData {
     TimeLoopInputParams timeLoopParams;
     OutputParams outputParams;
     SmoothingParams smoothingParams;
+    RestartParams restartParams;
     ICState defaultState;
     std::vector<ICPatch> patches;
 };

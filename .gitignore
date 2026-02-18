@@ -140,3 +140,4 @@ Thumbs.db
 *.pvtr
 VTK/*
 __pycache__
+*.bin

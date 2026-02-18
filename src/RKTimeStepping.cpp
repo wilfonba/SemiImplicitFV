@@ -1,4 +1,5 @@
 #include "RKTimeStepping.hpp"
+#include "Checkpoint.hpp"
 #include "MixtureEOS.hpp"
 #include "Runtime.hpp"
 #include "VTKSession.hpp"
@@ -277,13 +278,26 @@ void runTimeLoop(
     const std::function<double(double)>& stepFn,
     const TimeLoopParams& params)
 {
-    // Write initial VTK at t=0
-    vtk.write(state, 0.0);
+    // Write initial VTK
+    vtk.write(state, params.startTime);
 
     rt.print("Running simulation to t = ", params.endTime, "...\n");
 
-    double time = 0.0;
+    double time = params.startTime;
     double nextOutput = params.outputInterval;
+    // Advance nextOutput past the start time for restarts
+    if (time > 0.0) {
+        while (nextOutput <= time + 1e-12 * params.outputInterval)
+            nextOutput += params.outputInterval;
+    }
+
+    // Checkpoint scheduling (writes at outputInterval to Checkpoint/ directory)
+    const bool doCheckpoint = params.checkpoint;
+    double nextCheckpoint = doCheckpoint ? params.outputInterval : params.endTime + 1.0;
+    if (doCheckpoint && time > 0.0) {
+        while (nextCheckpoint <= time + 1e-12 * params.outputInterval)
+            nextCheckpoint += params.outputInterval;
+    }
     double wallTotal = 0.0;
 
     while (time < params.endTime) {
@@ -340,6 +354,13 @@ void runTimeLoop(
                     MPI_Abort(rt.mpiContext().comm(), 1);
                 }
             }
+        }
+
+        // Checkpoint writing
+        if (doCheckpoint && time >= nextCheckpoint - 1e-12 * params.outputInterval) {
+            writeCheckpoint("Checkpoint", mesh, state, config, rt.rank());
+            nextCheckpoint += params.outputInterval;
+            rt.print("  Checkpoint written at t = ", time, "\n");
         }
 
         if (config.step % params.printInterval == 0 || config.step == 1) {

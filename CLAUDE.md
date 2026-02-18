@@ -45,7 +45,7 @@ When adding new cases, prefer JSON input files. Use compiled C++ only when the c
 
 ### JSON Schema
 
-Top-level sections: `config`, `eos`, `riemannSolver`, `mesh`, `boundaryConditions`, `timeLoop`, `output`, `initialConditions`, `smoothing`. All sections except `config`, `mesh`, `timeLoop`, and `initialConditions` are optional.
+Top-level sections: `config`, `eos`, `riemannSolver`, `mesh`, `boundaryConditions`, `timeLoop`, `output`, `initialConditions`, `smoothing`, `restart`. All sections except `config`, `mesh`, `timeLoop`, and `initialConditions` are optional.
 
 Initial condition patches support `"box"`, `"sphere"`, `"plane"`, and `"analytic"` geometry types. Patch states inherit from the default state.
 
@@ -55,6 +55,53 @@ Initial condition patches support `"box"`, `"sphere"`, `"plane"`, and `"analytic
 2. Define config, mesh, BCs, ICs, and any optional sections
 3. Run: `./run_case.sh <name>`
 4. VTK output appears in `cases/<name>/VTK/`
+
+## Checkpoint / Restart
+
+Simulations can write periodic binary checkpoints and restart from them, which is essential for long-running jobs on HPC clusters with wall-time limits.
+
+### Enabling checkpoints
+
+Add an optional `"restart"` section to the JSON input file:
+
+```jsonc
+"restart": {
+    "checkpoint": true,                          // write checkpoints at outputInterval (default: false)
+    "file": "Checkpoint/checkpoint.{rank}.bin"   // restart file path (omit for a fresh run)
+}
+```
+
+- **`checkpoint`** — When `true`, writes checkpoint files at every `outputInterval` to a `Checkpoint/` directory (created automatically) in the run directory. Files are named `checkpoint.RRRR.bin` (one per MPI rank, zero-padded to 4 digits). Only the latest checkpoint is kept (overwritten each time).
+- **`file`** — If present, the simulation loads state from this checkpoint instead of applying initial conditions and smoothing. The placeholder `{rank}` is replaced with the zero-padded MPI rank (e.g. `0000`). After loading, `config.time` and `config.step` are restored from the file and the time loop resumes from where it left off.
+
+### Checkpoint file format
+
+Simple binary format (`Checkpoint.hpp` / `Checkpoint.cpp`):
+
+```
+[Header]
+  magic (uint64), version (int32), dim (int32), nPhases (int32),
+  nx (int32), ny (int32), nz (int32), nGhost (int32),
+  step (int32), time (double)
+[Data — totalCells doubles each, including ghost cells]
+  rho, rhoU, rhoV (if dim>=2), rhoW (if dim>=3), rhoE
+  alpha[0..nPhases-1]     (if multi-phase)
+  alphaRho[0..nPhases-1]  (if multi-phase)
+```
+
+Only conservative variables are saved. Primitives are recomputed on restart via `convertConservativeToPrimitiveVariables()`.
+
+### Example workflow
+
+```bash
+# 1. Run with checkpoints enabled (add "restart": {"checkpoint": true} to the JSONC)
+./run_case.sh 1D_sod_shocktube
+
+# 2. Job gets killed at wall-time limit...
+
+# 3. Restart: add "file": "Checkpoint/checkpoint.{rank}.bin" to the "restart" section
+./run_case.sh 1D_sod_shocktube
+```
 
 ## Architecture
 
@@ -86,6 +133,7 @@ All simulation parameters live in `SimulationConfig` (see `include/SimulationCon
 - `SemiImplicitParams`: cfl, maxDt, minDt, maxPressureIters, pressureTol
 - `IGRParams`: alphaCoeff, IGRIters, IGRWarmStartIters
 - `MultiPhaseParams`: nPhases (0=single-phase), phases (vector of `PhaseEOS{gamma, pInf}`), alphaMin
+- `RestartParams` (in `InputData`): file, checkpoint
 
 ## GPU Readiness (OpenACC)
 

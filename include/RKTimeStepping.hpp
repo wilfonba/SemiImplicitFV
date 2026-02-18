@@ -98,6 +98,8 @@ struct TimeLoopParams {
     // If set, prints acoustic CFL = dt / acousticDtFn() at each print step.
     // The callback should return the acoustic time step with CFL=1.
     std::function<double()> acousticDtFn;
+    bool checkpoint = false;         // write checkpoints to Checkpoint/ at outputInterval
+    double startTime = 0.0;          // non-zero when restarting from checkpoint
 };
 
 void runTimeLoop(

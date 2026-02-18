@@ -295,6 +295,13 @@ static InputData parseJson(const json& root) {
         data.smoothingParams.iterations = get<int>(s, "iterations", data.smoothingParams.iterations);
     }
 
+    // --- Restart / checkpoint ---
+    if (root.contains("restart")) {
+        const auto& r = root["restart"];
+        data.restartParams.file       = get<std::string>(r, "file", data.restartParams.file);
+        data.restartParams.checkpoint = get<bool>(r, "checkpoint", data.restartParams.checkpoint);
+    }
+
     // --- Initial conditions ---
     if (root.contains("initialConditions")) {
         const auto& ic = root["initialConditions"];
