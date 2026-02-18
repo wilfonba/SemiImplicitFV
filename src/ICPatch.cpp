@@ -52,48 +52,6 @@ static void applyCellState(
     }
 }
 
-// Helper: blend ICState fields based on blend factor (0 = keep existing, 1 = full patch)
-static void blendCellState(
-    std::size_t idx,
-    const ICState& patchState,
-    const ICState& defaultState,
-    double blendFactor,
-    SolutionState& state,
-    const EquationOfState& eos,
-    const SimulationConfig& config)
-{
-    double bf = std::max(0.0, std::min(1.0, blendFactor));
-    double ibf = 1.0 - bf;
-
-    ICState blended;
-    blended.rho = ibf * defaultState.rho + bf * patchState.rho;
-    blended.u   = ibf * defaultState.u   + bf * patchState.u;
-    blended.v   = ibf * defaultState.v   + bf * patchState.v;
-    blended.w   = ibf * defaultState.w   + bf * patchState.w;
-    blended.p   = ibf * defaultState.p   + bf * patchState.p;
-
-    if (config.isMultiPhase() && !patchState.alpha.empty()) {
-        int nPhases = config.multiPhaseParams.nPhases;
-        blended.alpha.resize(nPhases);
-        blended.alphaRho.resize(nPhases);
-        for (int ph = 0; ph < nPhases; ++ph) {
-            double aDefault = (ph < static_cast<int>(defaultState.alpha.size()))
-                ? defaultState.alpha[ph] : config.multiPhaseParams.alphaMin;
-            double aRhoDefault = (ph < static_cast<int>(defaultState.alphaRho.size()))
-                ? defaultState.alphaRho[ph] : aDefault * defaultState.rho;
-
-            blended.alpha[ph] = ibf * aDefault + bf * patchState.alpha[ph];
-            if (!patchState.alphaRho.empty()) {
-                blended.alphaRho[ph] = ibf * aRhoDefault + bf * patchState.alphaRho[ph];
-            } else {
-                blended.alphaRho[ph] = blended.alpha[ph] * blended.rho;
-            }
-        }
-    }
-
-    applyCellState(idx, blended, state, eos, config);
-}
-
 void applyInitialConditions(
     const RectilinearMesh& mesh,
     SolutionState& state,
@@ -102,6 +60,8 @@ void applyInitialConditions(
     const ICState& defaultState,
     const std::vector<ICPatch>& patches)
 {
+    int dim = config.dim;
+
     // Step 1: Fill all cells with default state
     for (int k = 0; k < mesh.nz(); ++k) {
         for (int j = 0; j < mesh.ny(); ++j) {
@@ -117,16 +77,6 @@ void applyInitialConditions(
         if (!patch.geometry) continue;
 
         bool isAnalytic = !patch.expressions.empty();
-        bool hasDiffuse = (patch.interface.diffuseWidth > 0.0);
-
-        // Compute epsilon for diffuse interface
-        double epsilon = 0.0;
-        if (hasDiffuse) {
-            double dxMin = mesh.dx(0);
-            if (config.dim >= 2) dxMin = std::min(dxMin, mesh.dy(0));
-            if (config.dim >= 3) dxMin = std::min(dxMin, mesh.dz(0));
-            epsilon = patch.interface.diffuseWidth * dxMin;
-        }
 
         // Create expression evaluator if needed
         std::unique_ptr<ExpressionEvaluator> evaluator;
@@ -141,25 +91,10 @@ void applyInitialConditions(
             for (int j = 0; j < mesh.ny(); ++j) {
                 for (int i = 0; i < mesh.nx(); ++i) {
                     double x = mesh.cellCentroidX(i);
-                    double y = mesh.cellCentroidY(j);
-                    double z = mesh.cellCentroidZ(k);
+                    double y = (dim >= 2) ? mesh.cellCentroidY(j) : 0.0;
+                    double z = (dim >= 3) ? mesh.cellCentroidZ(k) : 0.0;
 
-                    if (hasDiffuse) {
-                        double sd = patch.geometry->signedDistance(x, y, z);
-                        double blendFactor;
-                        if (patch.interface.profile == "linear") {
-                            blendFactor = 0.5 - sd / (2.0 * epsilon);
-                            blendFactor = std::max(0.0, std::min(1.0, blendFactor));
-                        } else {
-                            // tanh profile
-                            blendFactor = 0.5 * (1.0 - std::tanh(sd / epsilon));
-                        }
-
-                        if (blendFactor > 1e-12) {
-                            blendCellState(mesh.index(i,j,k), patch.state,
-                                           defaultState, blendFactor, state, eos, config);
-                        }
-                    } else if (patch.geometry->contains(x, y, z)) {
+                    if (patch.geometry->contains(x, y, z)) {
                         std::size_t idx = mesh.index(i, j, k);
 
                         if (isAnalytic) {

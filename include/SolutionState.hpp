@@ -124,6 +124,15 @@ public:
     void smoothFields(const RectilinearMesh& mesh, int nIterations,
                       class HaloExchange& halo);
 
+    /// Config-aware versions that maintain thermodynamic consistency for
+    /// multi-phase flows.  For multi-phase: smooths only the independent
+    /// fields (alpha, alphaRho, pres, velocity) then recomputes rho, rhoU/V/W,
+    /// and rhoE from the mixture EOS so that the smoothed state is self-consistent.
+    void smoothFields(const RectilinearMesh& mesh, int nIterations,
+                      const SimulationConfig& config);
+    void smoothFields(const RectilinearMesh& mesh, int nIterations,
+                      class HaloExchange& halo, const SimulationConfig& config);
+
 private:
     int dim_ = 3;
 };

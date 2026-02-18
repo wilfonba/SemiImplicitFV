@@ -223,42 +223,75 @@ def generate_ic_loop(data, dim):
             lines.append(f"        std::vector<double> alphaRhos = {{{arho_str}}};")
     lines.append("")
 
-    # Apply patches via if/else chain
+    # Apply patches — each patch is independent (not if/else)
     for pi, patch in enumerate(patches):
         geom = patch.get("geometry", {})
         gtype = geom.get("type", "box")
         state = patch.get("state", {})
+        expressions = patch.get("expressions", {})
 
         # Generate condition
-        if gtype == "plane":
-            pt = geom.get("point", [0, 0, 0])
-            n = geom.get("normal", [1, 0, 0])
-            cond = f"(x - {pt[0]}) * {n[0]} + (y - {pt[1]}) * {n[1]} + (z - {pt[2]}) * {n[2]} > 0.0"
-        elif gtype == "sphere":
+        if gtype == "sphere":
             c = geom.get("center", [0, 0, 0])
             r = geom.get("radius", 1.0)
             cond = (f"((x-{c[0]})*(x-{c[0]}) + (y-{c[1]})*(y-{c[1]}) "
                     f"+ (z-{c[2]})*(z-{c[2]})) <= {r*r}")
+        elif gtype == "plane":
+            pt = geom.get("point", [0, 0, 0])
+            n = geom.get("normal", [1, 0, 0])
+            cond = f"(x - {pt[0]}) * {n[0]} + (y - {pt[1]}) * {n[1]} + (z - {pt[2]}) * {n[2]} > 0.0"
         elif gtype == "box":
             lo = geom.get("min", [0, 0, 0])
             hi = geom.get("max", [1, 1, 1])
             cond = (f"x >= {lo[0]} && x <= {hi[0]} && "
                     f"y >= {lo[1]} && y <= {hi[1]} && z >= {lo[2]} && z <= {hi[2]}")
+        elif gtype == "analytic":
+            cond = "true"
         else:
             cond = "true"
 
-        prefix = "        if" if pi == 0 else "        else if"
-        lines.append(f"{prefix} ({cond}) {{")
+        # Determine what state assignments to generate
+        state_assignments = []
         for field in ["rho", "u", "v", "w", "p"]:
             if field in state:
-                lines.append(f"            {field} = {state[field]};")
+                state_assignments.append(f"            {field} = {state[field]};")
         if is_multi and "alpha" in state:
             for ai, a in enumerate(state["alpha"]):
-                lines.append(f"            alphas[{ai}] = {a};")
+                state_assignments.append(f"            alphas[{ai}] = {a};")
             if "alphaRho" in state:
                 for ai, a in enumerate(state["alphaRho"]):
-                    lines.append(f"            alphaRhos[{ai}] = {a};")
-        lines.append("        }")
+                    state_assignments.append(f"            alphaRhos[{ai}] = {a};")
+
+        # Expression assignments (analytic patches)
+        expr_assignments = []
+        for name, expr in expressions.items():
+            # Convert expression to C++ (replace common math functions)
+            cpp_expr = expr
+            for fn in ["sin", "cos", "tan", "exp", "log", "sqrt", "abs", "pow",
+                        "asin", "acos", "atan", "atan2", "fabs", "tanh"]:
+                cpp_expr = re.sub(rf'\b{fn}\b', f'std::{fn}', cpp_expr)
+            if name in ["rho", "u", "v", "w", "p"]:
+                expr_assignments.append(f"            {name} = {cpp_expr};")
+            elif name.startswith("alpha_") and is_multi:
+                idx = name[6:]
+                expr_assignments.append(f"            alphas[{idx}] = {cpp_expr};")
+            elif name.startswith("alphaRho_") and is_multi:
+                idx = name[9:]
+                expr_assignments.append(f"            alphaRhos[{idx}] = {cpp_expr};")
+
+        has_state = bool(state_assignments)
+        has_expr = bool(expr_assignments)
+
+        if has_state or has_expr:
+            if cond == "true":
+                lines.append(f"        {{ // Patch {pi}")
+            else:
+                lines.append(f"        if ({cond}) {{ // Patch {pi}")
+            for line in state_assignments:
+                lines.append(line)
+            for line in expr_assignments:
+                lines.append(line)
+            lines.append("        }")
 
     lines.append("")
 
@@ -375,8 +408,17 @@ def generate(data, input_filename):
     else:
         includes.append("IdealGasEOS.hpp")
 
+    pressure_solver_type = data.get("pressureSolver", "GaussSeidel") if is_semi else None
+    if pressure_solver_type == "Hypre" and dim == 1:
+        print("Error: Hypre pressure solver is not supported for 1D cases. Use GaussSeidel or Jacobi instead.")
+        sys.exit(1)
+
     if is_semi:
-        includes.extend(["SemiImplicitSolver.hpp", "GaussSeidelPressureSolver.hpp"])
+        includes.append("SemiImplicitSolver.hpp")
+        if pressure_solver_type == "Jacobi":
+            includes.append("JacobiPressureSolver.hpp")
+        elif pressure_solver_type != "Hypre":
+            includes.append("GaussSeidelPressureSolver.hpp")
     else:
         includes.append("ExplicitSolver.hpp")
 
@@ -390,6 +432,12 @@ def generate(data, input_filename):
         includes.append("ImmersedBoundary.hpp")
 
     include_str = "\n".join(f'#include "{h}"' for h in includes)
+
+    # Hypre include is conditional on SIFV_HAS_HYPRE (matches driver pattern)
+    if pressure_solver_type == "Hypre":
+        include_str += ("\n#ifdef SIFV_HAS_HYPRE\n"
+                        '#include "HyprePressureSolver.hpp"\n'
+                        "#endif")
 
     # Standard includes
     std_includes = "\n".join([
@@ -451,24 +499,49 @@ def generate(data, input_filename):
 
     # Smoothing (placed after solver attachment since attachSolver creates HaloExchange)
     smooth_iters = smooth_cfg.get("iterations", 0)
-    smooth_code = f"    rt.smoothFields(state, mesh, {smooth_iters});" if smooth_iters > 0 else ""
+    smooth_code = f"    rt.smoothFields(state, mesh, {smooth_iters}, config);" if smooth_iters > 0 else ""
 
     # Solver
     if is_semi:
-        solver_code = """    auto pressureSolver = std::make_shared<GaussSeidelPressureSolver>();
-    auto solver = std::make_unique<SemiImplicitSolver>(
-        mesh, riemannSolver, pressureSolver, eos, {igr}, config);
-    rt.attachSolver(*solver, mesh);
-    std::function<double(double)> stepFn = [&](double targetDt) {{
-        return solver->step(config, mesh, state, targetDt);
-    }};""".format(igr="igrSolver" if cfg.get("useIGR") else "nullptr")
+        igr = "igrSolver" if cfg.get("useIGR") else "nullptr"
+        if pressure_solver_type == "Hypre":
+            ps_lines = [
+                "#ifdef SIFV_HAS_HYPRE",
+                "    std::shared_ptr<PressureSolver> pressureSolver;",
+                "    if (rt.size() > 1) {",
+                "        pressureSolver = std::make_shared<HyprePressureSolver>(",
+                "            rt.mpiContext().comm(),",
+                "            rt.mpiContext().localExtent(),",
+                "            std::array<int,3>{0, 0, 0});",
+                "    } else {",
+                "        pressureSolver = std::make_shared<HyprePressureSolver>();",
+                "    }",
+                '#else',
+                '    #error "This case requires Hypre. Build with -DENABLE_HYPRE=ON."',
+                "#endif",
+            ]
+            ps_code = "\n".join(ps_lines)
+        elif pressure_solver_type == "Jacobi":
+            ps_code = "    auto pressureSolver = std::make_shared<JacobiPressureSolver>();"
+        else:
+            ps_code = "    auto pressureSolver = std::make_shared<GaussSeidelPressureSolver>();"
+
+        solver_code = (ps_code + "\n" +
+            "    auto solver = std::make_unique<SemiImplicitSolver>(\n"
+            f"        mesh, riemannSolver, pressureSolver, eos, {igr}, config);\n"
+            "    rt.attachSolver(*solver, mesh);\n"
+            "    std::function<double(double)> stepFn = [&](double targetDt) {\n"
+            "        return solver->step(config, mesh, state, targetDt);\n"
+            "    };")
     else:
-        solver_code = """    auto solver = std::make_unique<ExplicitSolver>(
-        mesh, riemannSolver, eos, {igr}, config);
-    rt.attachSolver(*solver, mesh);
-    std::function<double(double)> stepFn = [&](double targetDt) {{
-        return solver->step(config, mesh, state, targetDt);
-    }};""".format(igr="igrSolver" if cfg.get("useIGR") else "nullptr")
+        igr = "igrSolver" if cfg.get("useIGR") else "nullptr"
+        solver_code = (
+            "    auto solver = std::make_unique<ExplicitSolver>(\n"
+            f"        mesh, riemannSolver, eos, {igr}, config);\n"
+            "    rt.attachSolver(*solver, mesh);\n"
+            "    std::function<double(double)> stepFn = [&](double targetDt) {\n"
+            "        return solver->step(config, mesh, state, targetDt);\n"
+            "    };")
 
     # IGR
     igr_code = ""
@@ -520,8 +593,15 @@ int main(int argc, char** argv) {{
 
     VTKSession vtk(rt, "{base}", mesh, config, "{vtk_dir}");
 
-    runTimeLoop(rt, config, mesh, state, vtk, stepFn,
-                {{.endTime = {end_time}, .outputInterval = {out_int}, .printInterval = {print_int}}});
+    TimeLoopParams tlp;
+    tlp.endTime = {end_time};
+    tlp.outputInterval = {out_int};
+    tlp.printInterval = {print_int};
+{f"""    tlp.acousticDtFn = [&]() {{
+        return computeAcousticTimeStep(mesh, state, *eos, config,
+                                       1.0, 1e30, rt.mpiContext().comm());
+    }};""" if is_semi else ""}
+    runTimeLoop(rt, config, mesh, state, vtk, stepFn, tlp);
 
     return 0;
 }}

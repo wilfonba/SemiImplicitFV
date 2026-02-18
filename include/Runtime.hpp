@@ -66,6 +66,8 @@ public:
 
     // --- Field smoothing ---
     void smoothFields(SolutionState& state, const RectilinearMesh& mesh, int nIters);
+    void smoothFields(SolutionState& state, const RectilinearMesh& mesh, int nIters,
+                      const SimulationConfig& config);
 
     // --- Reductions ---
     double reduceMax(double localValue);

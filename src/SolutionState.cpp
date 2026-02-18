@@ -1,6 +1,7 @@
 #include "SolutionState.hpp"
 #include "RectilinearMesh.hpp"
 #include "EquationOfState.hpp"
+#include "MixtureEOS.hpp"
 
 namespace SemiImplicitFV {
 
@@ -363,6 +364,188 @@ void SolutionState::smoothFields(const RectilinearMesh& mesh, int nIterations,
 
     for (auto& ar : alphaRho) smoothField(ar);
     for (auto& a : alpha) smoothField(a);
+}
+
+// ---------------------------------------------------------------------------
+//  Config-aware smoothing: reconciles multi-phase thermodynamics
+// ---------------------------------------------------------------------------
+
+// Helper: after smoothing independent fields, recompute conservative variables
+// so that rhoE is consistent with the smoothed alpha and pres via MixtureEOS.
+static void reconcileMultiPhase(SolutionState& state,
+                                const RectilinearMesh& mesh,
+                                const SimulationConfig& config) {
+    const auto& mp = config.multiPhaseParams;
+    int nPhases = mp.nPhases;
+    int dim = config.dim;
+
+    // Scratch for gathering per-cell alpha values (alpha is stored as [phase][cell])
+    std::vector<double> alphas(nPhases);
+
+    for (int k = 0; k < mesh.nz(); ++k) {
+        for (int j = 0; j < mesh.ny(); ++j) {
+            for (int i = 0; i < mesh.nx(); ++i) {
+                std::size_t idx = mesh.index(i, j, k);
+
+                // Clamp and normalize alpha
+                double alphaSum = 0.0;
+                for (int ph = 0; ph < nPhases; ++ph) {
+                    state.alpha[ph][idx] = std::max(state.alpha[ph][idx], mp.alphaMin);
+                    alphaSum += state.alpha[ph][idx];
+                }
+                for (int ph = 0; ph < nPhases; ++ph)
+                    state.alpha[ph][idx] /= alphaSum;
+
+                // Recompute rho from smoothed alphaRho
+                double rhoNew = 0.0;
+                for (int ph = 0; ph < nPhases; ++ph) {
+                    state.alphaRho[ph][idx] = std::max(state.alphaRho[ph][idx], 1e-14);
+                    rhoNew += state.alphaRho[ph][idx];
+                }
+                state.rho[idx] = rhoNew;
+
+                // Recompute momentum from smoothed velocity
+                state.rhoU[idx] = rhoNew * state.velU[idx];
+                if (dim >= 2) state.rhoV[idx] = rhoNew * state.velV[idx];
+                if (dim >= 3) state.rhoW[idx] = rhoNew * state.velW[idx];
+
+                // Gather alphas for this cell
+                for (int ph = 0; ph < nPhases; ++ph)
+                    alphas[ph] = state.alpha[ph][idx];
+
+                // Recompute rhoE from smoothed pressure and alpha via MixtureEOS
+                double ke = 0.5 * rhoNew * state.velU[idx] * state.velU[idx];
+                if (dim >= 2) ke += 0.5 * rhoNew * state.velV[idx] * state.velV[idx];
+                if (dim >= 3) ke += 0.5 * rhoNew * state.velW[idx] * state.velW[idx];
+
+                state.rhoE[idx] = MixtureEOS::mixtureTotalEnergy(
+                    rhoNew, state.pres[idx], alphas.data(),
+                    nPhases, ke, mp.phases.data());
+            }
+        }
+    }
+}
+
+void SolutionState::smoothFields(const RectilinearMesh& mesh, int nIterations,
+                                  const SimulationConfig& config) {
+    if (!config.isMultiPhase()) {
+        smoothFields(mesh, nIterations);
+        return;
+    }
+
+    int dim = dim_;
+    double nu = 1.0 / (4.0 * dim);
+
+    auto smoothField = [&](std::vector<double>& field) {
+        for (int iter = 0; iter < nIterations; ++iter) {
+            mesh.fillScalarGhosts(field);
+            for (int k = 0; k < mesh.nz(); ++k) {
+                for (int j = 0; j < mesh.ny(); ++j) {
+                    for (int i = 0; i < mesh.nx(); ++i) {
+                        std::size_t idx = mesh.index(i, j, k);
+                        double lap = 0.0;
+
+                        std::size_t xm = mesh.index(i - 1, j, k);
+                        std::size_t xp = mesh.index(i + 1, j, k);
+                        lap += field[xm] + 2.0 * field[idx] + field[xp];
+
+                        if (dim >= 2) {
+                            std::size_t ym = mesh.index(i, j - 1, k);
+                            std::size_t yp = mesh.index(i, j + 1, k);
+                            lap += field[ym] + 2.0 * field[idx] + field[yp];
+                        }
+                        if (dim >= 3) {
+                            std::size_t zm = mesh.index(i, j, k - 1);
+                            std::size_t zp = mesh.index(i, j, k + 1);
+                            lap += field[zm] + 2.0 * field[idx] + field[zp];
+                        }
+
+                        aux[idx] = nu * lap;
+                    }
+                }
+            }
+            for (int k = 0; k < mesh.nz(); ++k) {
+                for (int j = 0; j < mesh.ny(); ++j) {
+                    for (int i = 0; i < mesh.nx(); ++i) {
+                        std::size_t idx = mesh.index(i, j, k);
+                        field[idx] = aux[idx];
+                    }
+                }
+            }
+        }
+    };
+
+    // Smooth only the independent primitive fields
+    for (auto& a : alpha) smoothField(a);
+    for (auto& ar : alphaRho) smoothField(ar);
+    smoothField(pres);
+    smoothField(velU);
+    if (dim >= 2) smoothField(velV);
+    if (dim >= 3) smoothField(velW);
+
+    // Recompute conservative variables from smoothed primitives
+    reconcileMultiPhase(*this, mesh, config);
+}
+
+void SolutionState::smoothFields(const RectilinearMesh& mesh, int nIterations,
+                                  HaloExchange& halo, const SimulationConfig& config) {
+    if (!config.isMultiPhase()) {
+        smoothFields(mesh, nIterations, halo);
+        return;
+    }
+
+    int dim = dim_;
+    double nu = 1.0 / (4.0 * dim);
+
+    auto smoothField = [&](std::vector<double>& field) {
+        for (int iter = 0; iter < nIterations; ++iter) {
+            mesh.fillScalarGhosts(field, halo);
+            for (int k = 0; k < mesh.nz(); ++k) {
+                for (int j = 0; j < mesh.ny(); ++j) {
+                    for (int i = 0; i < mesh.nx(); ++i) {
+                        std::size_t idx = mesh.index(i, j, k);
+                        double lap = 0.0;
+
+                        std::size_t xm = mesh.index(i - 1, j, k);
+                        std::size_t xp = mesh.index(i + 1, j, k);
+                        lap += field[xm] + 2.0 * field[idx] + field[xp];
+
+                        if (dim >= 2) {
+                            std::size_t ym = mesh.index(i, j - 1, k);
+                            std::size_t yp = mesh.index(i, j + 1, k);
+                            lap += field[ym] + 2.0 * field[idx] + field[yp];
+                        }
+                        if (dim >= 3) {
+                            std::size_t zm = mesh.index(i, j, k - 1);
+                            std::size_t zp = mesh.index(i, j, k + 1);
+                            lap += field[zm] + 2.0 * field[idx] + field[zp];
+                        }
+
+                        aux[idx] = nu * lap;
+                    }
+                }
+            }
+            for (int k = 0; k < mesh.nz(); ++k) {
+                for (int j = 0; j < mesh.ny(); ++j) {
+                    for (int i = 0; i < mesh.nx(); ++i) {
+                        std::size_t idx = mesh.index(i, j, k);
+                        field[idx] = aux[idx];
+                    }
+                }
+            }
+        }
+    };
+
+    // Smooth only the independent primitive fields
+    for (auto& a : alpha) smoothField(a);
+    for (auto& ar : alphaRho) smoothField(ar);
+    smoothField(pres);
+    smoothField(velU);
+    if (dim >= 2) smoothField(velV);
+    if (dim >= 3) smoothField(velW);
+
+    // Recompute conservative variables from smoothed primitives
+    reconcileMultiPhase(*this, mesh, config);
 }
 
 } // namespace SemiImplicitFV

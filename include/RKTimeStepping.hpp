@@ -74,6 +74,21 @@ double computeViscousDt(const RectilinearMesh& mesh,
                         MPI_Comm comm,
                         const ImmersedBoundaryMethod* ibm = nullptr);
 
+// Viscous time step using per-cell effective viscosity from config
+// (supports per-phase phaseMu via alpha-weighted average).
+double computeViscousDt(const RectilinearMesh& mesh,
+                        const SolutionState& state,
+                        const SimulationConfig& config,
+                        double cfl, double maxDt,
+                        const ImmersedBoundaryMethod* ibm = nullptr);
+
+double computeViscousDt(const RectilinearMesh& mesh,
+                        const SolutionState& state,
+                        const SimulationConfig& config,
+                        double cfl, double maxDt,
+                        MPI_Comm comm,
+                        const ImmersedBoundaryMethod* ibm = nullptr);
+
 // Capillary time step: dt <= cfl * sqrt(rho * dx_min^3 / sigma).
 double computeCapillaryDt(const RectilinearMesh& mesh,
                           const SolutionState& state,

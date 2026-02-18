@@ -44,10 +44,6 @@ public:
     /// Returns true if the point (x,y,z) is inside this geometry.
     virtual bool contains(double x, double y, double z) const = 0;
 
-    /// Returns signed distance to the boundary (negative inside, positive outside).
-    /// Used for diffuse-interface blending.
-    virtual double signedDistance(double x, double y, double z) const = 0;
-
     /// Clone for value semantics via unique_ptr.
     virtual std::unique_ptr<ICGeometry> clone() const = 0;
 };
@@ -64,22 +60,6 @@ public:
         return x >= lo_[0] && x <= hi_[0]
             && y >= lo_[1] && y <= hi_[1]
             && z >= lo_[2] && z <= hi_[2];
-    }
-
-    double signedDistance(double x, double y, double z) const override {
-        // Positive outside, negative inside
-        double dx = std::max({lo_[0] - x, x - hi_[0], 0.0});
-        double dy = std::max({lo_[1] - y, y - hi_[1], 0.0});
-        double dz = std::max({lo_[2] - z, z - hi_[2], 0.0});
-        double outsideDist = std::sqrt(dx*dx + dy*dy + dz*dz);
-
-        // Inside distance (negative)
-        double ix = std::min(x - lo_[0], hi_[0] - x);
-        double iy = std::min(y - lo_[1], hi_[1] - y);
-        double iz = std::min(z - lo_[2], hi_[2] - z);
-        double insideDist = std::min({ix, iy, iz});
-
-        return (outsideDist > 0.0) ? outsideDist : -insideDist;
     }
 
     std::unique_ptr<ICGeometry> clone() const override {
@@ -101,11 +81,6 @@ public:
     bool contains(double x, double y, double z) const override {
         double dx = x - center_[0], dy = y - center_[1], dz = z - center_[2];
         return (dx*dx + dy*dy + dz*dz) <= radius_ * radius_;
-    }
-
-    double signedDistance(double x, double y, double z) const override {
-        double dx = x - center_[0], dy = y - center_[1], dz = z - center_[2];
-        return std::sqrt(dx*dx + dy*dy + dz*dz) - radius_;
     }
 
     std::unique_ptr<ICGeometry> clone() const override {
@@ -133,10 +108,6 @@ public:
 
     bool contains(double x, double y, double z) const override {
         return dot(x, y, z) > 0.0;
-    }
-
-    double signedDistance(double x, double y, double z) const override {
-        return -dot(x, y, z);  // positive outside (where dot < 0)
     }
 
     std::unique_ptr<ICGeometry> clone() const override {
@@ -167,10 +138,6 @@ public:
         return region_ ? region_->contains(x, y, z) : true;
     }
 
-    double signedDistance(double x, double y, double z) const override {
-        return region_ ? region_->signedDistance(x, y, z) : -1.0;
-    }
-
     std::unique_ptr<ICGeometry> clone() const override {
         return std::make_unique<AnalyticGeometry>(*this);
     }
@@ -182,20 +149,11 @@ private:
 };
 
 // -----------------------------------------------------------------
-//  DiffuseInterface parameters
-// -----------------------------------------------------------------
-struct DiffuseInterface {
-    double diffuseWidth = 0.0;   // in cells (0 = sharp)
-    std::string profile = "tanh"; // "tanh" or "linear"
-};
-
-// -----------------------------------------------------------------
-//  ICPatch: geometry + state + optional expressions + diffuse interface
+//  ICPatch: geometry + state + optional expressions
 // -----------------------------------------------------------------
 struct ICPatch {
     std::unique_ptr<ICGeometry> geometry;
     ICState state;
-    DiffuseInterface interface;
 
     // For analytic patches: map from field name to expression string
     // e.g., {"rho": "1.0 + 0.5*sin(2*pi*x)", "p": "1.0"}
@@ -208,7 +166,7 @@ struct ICPatch {
     // Copy constructor (deep copies geometry)
     ICPatch(const ICPatch& other)
         : geometry(other.geometry ? other.geometry->clone() : nullptr),
-          state(other.state), interface(other.interface),
+          state(other.state),
           expressions(other.expressions) {}
 };
 

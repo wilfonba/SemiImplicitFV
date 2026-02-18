@@ -198,6 +198,61 @@ double computeViscousDt(const RectilinearMesh& mesh,
     return globalDt;
 }
 
+double computeViscousDt(const RectilinearMesh& mesh,
+                        const SolutionState& state,
+                        const SimulationConfig& config,
+                        double cfl, double maxDt,
+                        const ImmersedBoundaryMethod* ibm) {
+    const auto& vp = config.viscousParams;
+    const bool perPhase = !vp.phaseMu.empty();
+    if (!perPhase) {
+        return computeViscousDt(mesh, state, vp.mu, cfl, maxDt, ibm);
+    }
+
+    double dt = maxDt;
+    int dim = mesh.dim();
+    int nPhases = config.multiPhaseParams.nPhases;
+
+    for (int k = 0; k < mesh.nz(); ++k) {
+        for (int j = 0; j < mesh.ny(); ++j) {
+            for (int i = 0; i < mesh.nx(); ++i) {
+                std::size_t idx = mesh.index(i, j, k);
+
+                if (ibm && ibm->isSolid(idx)) continue;
+
+                double muEff = 0.0;
+                for (int ph = 0; ph < nPhases; ++ph)
+                    muEff += state.alpha[ph][idx] * vp.phaseMu[ph];
+
+                if (muEff <= 0.0) continue;
+
+                double dxMin = mesh.dx(i);
+                if (dim >= 2) dxMin = std::min(dxMin, mesh.dy(j));
+                if (dim >= 3) dxMin = std::min(dxMin, mesh.dz(k));
+
+                double nu = muEff / std::max(state.rho[idx], 1e-14);
+                double dtCell = dxMin * dxMin / (2.0 * dim * nu);
+
+                dt = std::min(dt, cfl * dtCell);
+            }
+        }
+    }
+
+    return dt;
+}
+
+double computeViscousDt(const RectilinearMesh& mesh,
+                        const SolutionState& state,
+                        const SimulationConfig& config,
+                        double cfl, double maxDt,
+                        MPI_Comm comm,
+                        const ImmersedBoundaryMethod* ibm) {
+    double localDt = computeViscousDt(mesh, state, config, cfl, maxDt, ibm);
+    double globalDt;
+    MPI_Allreduce(&localDt, &globalDt, 1, MPI_DOUBLE, MPI_MIN, comm);
+    return globalDt;
+}
+
 double computeCapillaryDt(const RectilinearMesh& mesh,
                           const SolutionState& state,
                           double sigma, double cfl, double maxDt,

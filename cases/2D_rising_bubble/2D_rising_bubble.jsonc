@@ -6,8 +6,9 @@
         "nGhost": 3,
         "RKOrder": 3,
         "reconOrder": "WENO5",
-        "semiImplicit": false,
-        "explicitParams": { "cfl": 0.5 },
+        "semiImplicit": true,
+        //"explicitParams": { "cfl": 0.5 },
+        "semiImplicitParams": { "cfl": 0.5, "maxDt": 1e-3, "maxPressureIters": 200, "pressureTol": 1e-6 },
         "multiPhaseParams": {
             "nPhases": 2,
             "phases": [
@@ -22,15 +23,16 @@
     },
     "eos": { "type": "IdealGas", "gamma": 1.4, "R": 287.0 },
     "riemannSolver": "HLLC",
+    "pressureSolver": "Hypre",
     "mesh": {
-        "nx": 40, "xMin": 0.0, "xMax": 1.0,
-        "ny": 80, "yMin": 0.0, "yMax": 2.0
+        "nx": 200, "xMin": 0.0, "xMax": 1.0,
+        "ny": 400, "yMin": 0.0, "yMax": 2.0
     },
     "boundaryConditions": {
         "xLow": "SlipWall", "xHigh": "SlipWall",
         "yLow": "NoSlipWall", "yHigh": "NoSlipWall"
     },
-    "timeLoop": { "endTime": 3.0, "outputInterval": 0.03, "printInterval": 50 },
+    "timeLoop": { "endTime": 3.0, "outputInterval": 0.03, "printInterval": 1 },
     "output": { "baseName": "2D_rising_bubble" },
     "initialConditions": {
         // Default: heavy fluid everywhere
@@ -45,19 +47,19 @@
                 // Hydrostatic pressure everywhere
                 "geometry": { "type": "analytic" },
                 "expressions": {
-                    "p": "1e6 + 980 * (2.0 - y)"
+                    "p": "1e5 + 980 * (2.0 - y)"
                 }
             },
             {
-                // Light bubble at center with diffuse interface
+                // Light bubble at center
                 "geometry": { "type": "sphere", "center": [0.5, 0.5, 0], "radius": 0.25 },
                 "state": {
-                    "rho": 1.0, "p": 1.0e6,
+                    "rho": 1.0, "p": 1.0e5,
                     "alpha": [1e-8, 0.99999999],
                     "alphaRho": [0.001, 0.99999999]
-                },
-                "interface": { "diffuseWidth": 3, "profile": "tanh" }
+                }
             }
         ]
-    }
+    },
+    "smoothing": { "iterations": 25 }
 }

@@ -188,9 +188,15 @@ int main(int argc, char** argv) {
         std::shared_ptr<PressureSolver> pressureSolver;
         if (input.pressureSolverType == "Jacobi") {
             pressureSolver = std::make_shared<JacobiPressureSolver>();
-        }
+        } else if (input.pressureSolverType == "Hypre") {
 #ifdef SIFV_HAS_HYPRE
-        else if (input.pressureSolverType == "Hypre") {
+            if (config.dim == 1) {
+                if (rt.isRoot()) {
+                    std::cerr << "Error: Hypre pressure solver is not supported for 1D cases.\n"
+                              << "  Use GaussSeidel or Jacobi instead.\n";
+                }
+                return 1;
+            }
             if (rt.size() > 1) {
                 pressureSolver = std::make_shared<HyprePressureSolver>(
                     rt.mpiContext().comm(),
@@ -199,9 +205,14 @@ int main(int argc, char** argv) {
             } else {
                 pressureSolver = std::make_shared<HyprePressureSolver>();
             }
-        }
+#else
+            if (rt.isRoot()) {
+                std::cerr << "Error: Hypre pressure solver requested but not built.\n"
+                          << "  Rebuild with: ./run_case.sh --hypre ...\n";
+            }
+            return 1;
 #endif
-        else {
+        } else {
             pressureSolver = std::make_shared<GaussSeidelPressureSolver>();
         }
 
@@ -228,7 +239,7 @@ int main(int argc, char** argv) {
 
     // ---- Smoothing (after attachSolver creates HaloExchange) ----
     if (input.smoothingParams.iterations > 0) {
-        rt.smoothFields(state, mesh, input.smoothingParams.iterations);
+        rt.smoothFields(state, mesh, input.smoothingParams.iterations, config);
     }
 
     // ---- VTK output ----

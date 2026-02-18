@@ -77,7 +77,7 @@ double ExplicitSolver::step(const SimulationConfig& config,
             mesh, state, *eos_, config, params_.cfl, params_.maxDt, halo_->mpi().comm(), ibm_);
         if (config.hasViscosity()) {
             dt = std::min(dt, computeViscousDt(mesh, state,
-                config.viscousParams.mu, params_.cfl, params_.maxDt, halo_->mpi().comm(), ibm_));
+                config, params_.cfl, params_.maxDt, halo_->mpi().comm(), ibm_));
         }
         if (config.hasSurfaceTension()) {
             dt = std::min(dt, computeCapillaryDt(mesh, state,

@@ -150,6 +150,11 @@ void Runtime::smoothFields(SolutionState& state, const RectilinearMesh& mesh, in
     state.smoothFields(mesh, nIters, *halo_);
 }
 
+void Runtime::smoothFields(SolutionState& state, const RectilinearMesh& mesh, int nIters,
+                            const SimulationConfig& config) {
+    state.smoothFields(mesh, nIters, *halo_, config);
+}
+
 // ---- Reductions ----
 
 double Runtime::reduceMax(double localValue) {

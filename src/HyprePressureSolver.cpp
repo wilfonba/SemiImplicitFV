@@ -2,6 +2,7 @@
 #include "HaloExchange.hpp"
 
 #include <HYPRE_struct_ls.h>
+#include <HYPRE.h>
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -32,7 +33,11 @@ HyprePressureSolver::HyprePressureSolver(
 {}
 
 HyprePressureSolver::~HyprePressureSolver() {
+    bool wasInitialized = initialized_;
     destroyHypre();
+    if (wasInitialized) {
+        HYPRE_Finalize();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -41,6 +46,9 @@ HyprePressureSolver::~HyprePressureSolver() {
 
 void HyprePressureSolver::setupHypre(int dim, int nLocalCells) {
     dim_ = dim;
+
+    // HYPRE must be initialized before any API calls
+    HYPRE_Init();
 
     // ---- Grid ----
     HYPRE_StructGridCreate(comm_, dim_, &grid_);
@@ -120,7 +128,8 @@ void HyprePressureSolver::setupHypre(int dim, int nLocalCells) {
     HYPRE_StructVectorCreate(comm_, grid_, &xVec_);
     HYPRE_StructVectorInitialize(xVec_);
 
-    // ---- PFMG preconditioner ----
+    // ---- Multigrid preconditioner (PFMG, 2D/3D only) ----
+    assert(dim_ >= 2 && "HyprePressureSolver does not support 1D; use GaussSeidel or Jacobi.");
     HYPRE_StructPFMGCreate(comm_, &precond_);
     HYPRE_StructPFMGSetMaxIter(precond_, 1);       // single V-cycle
     HYPRE_StructPFMGSetRelaxType(precond_, 2);      // weighted Jacobi
@@ -145,7 +154,7 @@ void HyprePressureSolver::setupHypre(int dim, int nLocalCells) {
 
 void HyprePressureSolver::destroyHypre() {
     if (solver_)  { HYPRE_StructPCGDestroy(solver_);   solver_  = nullptr; }
-    if (precond_) { HYPRE_StructPFMGDestroy(precond_);  precond_ = nullptr; }
+    if (precond_) { HYPRE_StructPFMGDestroy(precond_); precond_ = nullptr; }
     if (xVec_)    { HYPRE_StructVectorDestroy(xVec_);   xVec_    = nullptr; }
     if (bVec_)    { HYPRE_StructVectorDestroy(bVec_);   bVec_    = nullptr; }
     if (matrix_)  { HYPRE_StructMatrixDestroy(matrix_);  matrix_  = nullptr; }

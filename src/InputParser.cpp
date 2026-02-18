@@ -368,13 +368,6 @@ static InputData parseJson(const json& root) {
                     }
                 }
 
-                // Diffuse interface
-                if (pj.contains("interface")) {
-                    const auto& iface = pj["interface"];
-                    patch.interface.diffuseWidth = get<double>(iface, "diffuseWidth", 0.0);
-                    patch.interface.profile      = get<std::string>(iface, "profile", "tanh");
-                }
-
                 data.patches.push_back(std::move(patch));
             }
         }

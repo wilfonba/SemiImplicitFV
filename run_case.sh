@@ -279,11 +279,23 @@ if $USE_JSON; then
         INCLUDE_FLAGS="-I$ROOT_DIR/include"
         MPI_CFLAGS="$(pkg-config --cflags ompi 2>/dev/null || mpiCC --showme:compile 2>/dev/null || true)"
         MPI_LDFLAGS="$(pkg-config --libs ompi 2>/dev/null || mpiCC --showme:link 2>/dev/null || echo "-lmpi")"
+
+        # Hypre flags for codegen builds (static lib not transitively linked)
+        HYPRE_CFLAGS=""
+        HYPRE_LDFLAGS=""
+        if $ENABLE_HYPRE; then
+            HYPRE_CFLAGS="-DSIFV_HAS_HYPRE"
+            HYPRE_BUILD="$BUILD_DIR/_deps/hypre-build"
+            HYPRE_LDFLAGS="-L$HYPRE_BUILD -L$HYPRE_BUILD/lib -lHYPRE"
+        fi
+
         "$COMPILE_CMD" -std=c++17 -O3 -march=native \
             $INCLUDE_FLAGS \
+            $HYPRE_CFLAGS \
             $MPI_CFLAGS \
             "$GEN_SRC" \
             -L"$BUILD_DIR" -lSemiImplicitFV \
+            $HYPRE_LDFLAGS \
             $MPI_LDFLAGS \
             -o "$BUILD_DIR/$GEN_TARGET" \
             2>&1
