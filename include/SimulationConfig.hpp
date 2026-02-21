@@ -34,6 +34,7 @@ struct SemiImplicitParams {
     double maxAcousticCFL = -1.0; // if > 0, limits dt so acoustic CFL <= this value
     int maxPressureIters = 100;
     double pressureTol = 1e-8;
+    bool singlePressureSolve = false; // only solve pressure on final RK stage
 };
 
 struct IGRParams {

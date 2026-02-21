@@ -200,6 +200,8 @@ def generate_config(cfg):
     if "semiImplicitParams" in cfg:
         sp = cfg["semiImplicitParams"]
         for k, v in sp.items():
+            if isinstance(v, bool):
+                v = "true" if v else "false"
             lines.append(f"    config.semiImplicitParams.{k} = {v};")
 
     # IGR params

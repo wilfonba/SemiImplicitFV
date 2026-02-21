@@ -186,6 +186,7 @@ static InputData parseJson(const json& root) {
             cfg.semiImplicitParams.maxAcousticCFL    = get<double>(sp, "maxAcousticCFL", cfg.semiImplicitParams.maxAcousticCFL);
             cfg.semiImplicitParams.maxPressureIters  = get<int>(sp, "maxPressureIters", cfg.semiImplicitParams.maxPressureIters);
             cfg.semiImplicitParams.pressureTol       = get<double>(sp, "pressureTol", cfg.semiImplicitParams.pressureTol);
+            cfg.semiImplicitParams.singlePressureSolve = get<bool>(sp, "singlePressureSolve", cfg.semiImplicitParams.singlePressureSolve);
         }
 
         if (c.contains("igrParams")) {

@@ -241,9 +241,22 @@ double SemiImplicitSolver::step(const SimulationConfig& config,
         // Re-fill ghost cells (density + star velocity) before pressure solve
         mesh.applyBoundaryConditions(state, VarSet::PRIM, *halo_);
 
-        solvePressure(config, mesh, state, dt);
-
-        correctionStep(config, mesh, state, dt);
+        if (params_.singlePressureSolve && s < config.RKOrder - 1) {
+            // Intermediate stage: copy star states to conservative (no pressure correction)
+            for (int k = 0; k < mesh.nz(); ++k)
+                for (int j = 0; j < mesh.ny(); ++j)
+                    for (int i = 0; i < mesh.nx(); ++i) {
+                        std::size_t idx = mesh.index(i, j, k);
+                        state.rhoU[idx] = state.rhoUStar[idx];
+                        if (config.dim >= 2) state.rhoV[idx] = state.rhoVStar[idx];
+                        if (config.dim >= 3) state.rhoW[idx] = state.rhoWStar[idx];
+                        state.rhoE[idx] = state.rhoEstar[idx];
+                    }
+            mesh.applyBoundaryConditions(state, VarSet::CONS, *halo_);
+        } else {
+            solvePressure(config, mesh, state, dt);
+            correctionStep(config, mesh, state, dt);
+        }
     }
 
     return dt;
