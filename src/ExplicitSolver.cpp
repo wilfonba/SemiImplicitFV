@@ -4,6 +4,7 @@
 #include "ViscousFlux.hpp"
 #include "SurfaceTension.hpp"
 #include "SimulationConfig.hpp"
+#include "NvtxRange.hpp"
 #include <array>
 #include <cmath>
 #include <algorithm>
@@ -68,6 +69,7 @@ double ExplicitSolver::step(const SimulationConfig& config,
                             const RectilinearMesh& mesh,
                             SolutionState& state,
                             double targetDt) {
+    NvtxRange nvtx("Explicit::step");
     double dt;
     if (params_.constDt > 0) {
         dt = params_.constDt;
@@ -202,6 +204,7 @@ void ExplicitSolver::solveIGR(const SimulationConfig& config,
         const RectilinearMesh& mesh,
         SolutionState& state) {
     if (!igrSolver_) return;
+    NvtxRange nvtx("Explicit::solveIGR");
 
     computeVelocityGradients(config, mesh, state);
 
@@ -266,6 +269,7 @@ void ExplicitSolver::computeVelocityGradients(const SimulationConfig& config, co
 void ExplicitSolver::computeRHS(const SimulationConfig& config,
         const RectilinearMesh& mesh,
         SolutionState& state) {
+    NvtxRange nvtx("Explicit::computeRHS");
     reconstructor_.reconstruct(config, mesh, state);
 
     int dim = mesh.dim();

@@ -32,6 +32,7 @@ Options:
   --case-optimization     Generate and compile a custom C++ main() from the
                           JSON input for maximum performance (codegen path)
   --petsc                 Enable PETSc pressure solver (KSP+GAMG)
+  --nsys                  Profile with Nsight Systems (enables NVTX ranges)
   -j <N>                  Parallel build jobs (default: number of cores)
   -o, --output-dir <dir>  Override the run directory (default: cases/<case_name>)
   -h, --help              Show this help
@@ -43,6 +44,7 @@ Examples:
   ./run_case.sh -n 4 2D_rising_bubble
   ./run_case.sh -d 1D_sod_shocktube
   ./run_case.sh --petsc 2D_rising_bubble
+  ./run_case.sh --nsys 2D_rising_bubble                # Profile with Nsight Systems
 EOF
     exit "${1:-0}"
 }
@@ -83,6 +85,7 @@ list_cases() {
 CLEAN=false
 BUILD_ONLY=false
 ENABLE_PETSC=false
+ENABLE_NSYS=false
 CASE_OPTIMIZATION=false
 FORCE_COMPILED=false
 MPI_RANKS=1
@@ -127,6 +130,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --petsc)
             ENABLE_PETSC=true
+            shift
+            ;;
+        --nsys)
+            ENABLE_NSYS=true
             shift
             ;;
         -j)
@@ -239,6 +246,12 @@ else
     PETSC_OPT="OFF"
 fi
 
+if $ENABLE_NSYS; then
+    NVTX_OPT="ON"
+else
+    NVTX_OPT="OFF"
+fi
+
 # --- Configure if needed or if build type / options changed ---
 NEED_CONFIGURE=false
 if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
@@ -247,16 +260,29 @@ elif ! grep -q "CMAKE_BUILD_TYPE:STRING=${BUILD_TYPE}$" "$BUILD_DIR/CMakeCache.t
     NEED_CONFIGURE=true
 elif ! grep -q "ENABLE_PETSC:BOOL=${PETSC_OPT}$" "$BUILD_DIR/CMakeCache.txt"; then
     NEED_CONFIGURE=true
+elif ! grep -q "ENABLE_NVTX:BOOL=${NVTX_OPT}$" "$BUILD_DIR/CMakeCache.txt"; then
+    NEED_CONFIGURE=true
 elif ! $USE_JSON && [[ -n "$COMPILED_DIR" ]]; then
     # Always reconfigure for compiled cases so file(GLOB) picks up new directories
     NEED_CONFIGURE=true
 fi
 
 if $NEED_CONFIGURE; then
-    echo "Configuring (${BUILD_TYPE}, PETSC=${PETSC_OPT})..."
+    echo "Configuring (${BUILD_TYPE}, PETSC=${PETSC_OPT}, NVTX=${NVTX_OPT})..."
     cmake -S "$ROOT_DIR" -B "$BUILD_DIR" \
         -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-        -DENABLE_PETSC="$PETSC_OPT"
+        -DENABLE_PETSC="$PETSC_OPT" \
+        -DENABLE_NVTX="$NVTX_OPT"
+fi
+
+# --- Nsight Systems wrapper ---
+NSYS_PREFIX=()
+if $ENABLE_NSYS; then
+    if ! command -v nsys &>/dev/null; then
+        echo "Error: nsys not found in PATH. Install NVIDIA Nsight Systems." >&2
+        exit 1
+    fi
+    NSYS_PREFIX=(nsys profile --trace=mpi,nvtx --output="${OUTPUT_DIR}/${BARE_NAME}.nsys-rep" --force-overwrite=true)
 fi
 
 # --- Build and run ---
@@ -310,7 +336,8 @@ if $USE_JSON; then
             echo "=== Output directory: $OUTPUT_DIR ==="
             echo ""
             cd "$OUTPUT_DIR"
-            mpirun -np "$MPI_RANKS" "$BUILD_DIR/$GEN_TARGET" \
+            "${NSYS_PREFIX[@]+"${NSYS_PREFIX[@]}"}" \
+                mpirun -np "$MPI_RANKS" "$BUILD_DIR/$GEN_TARGET" \
                 "${PROGRAM_ARGS[@]+"${PROGRAM_ARGS[@]}"}"
         fi
     else
@@ -324,7 +351,8 @@ if $USE_JSON; then
             echo "=== Output directory: $OUTPUT_DIR ==="
             echo ""
             cd "$OUTPUT_DIR"
-            mpirun -np "$MPI_RANKS" "$BUILD_DIR/sifv" "$JSON_FILE" \
+            "${NSYS_PREFIX[@]+"${NSYS_PREFIX[@]}"}" \
+                mpirun -np "$MPI_RANKS" "$BUILD_DIR/sifv" "$JSON_FILE" \
                 "${PROGRAM_ARGS[@]+"${PROGRAM_ARGS[@]}"}"
         fi
     fi
@@ -342,7 +370,8 @@ else
         echo "=== Output directory: $OUTPUT_DIR ==="
         echo ""
         cd "$OUTPUT_DIR"
-        mpirun -np "$MPI_RANKS" "$BUILD_DIR/$TARGET_NAME" \
+        "${NSYS_PREFIX[@]+"${NSYS_PREFIX[@]}"}" \
+            mpirun -np "$MPI_RANKS" "$BUILD_DIR/$TARGET_NAME" \
             "${PROGRAM_ARGS[@]+"${PROGRAM_ARGS[@]}"}"
     fi
 fi

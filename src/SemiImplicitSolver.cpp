@@ -3,6 +3,7 @@
 #include "MixtureEOS.hpp"
 #include "ViscousFlux.hpp"
 #include "SurfaceTension.hpp"
+#include "NvtxRange.hpp"
 #include <array>
 #include <cmath>
 #include <algorithm>
@@ -107,6 +108,7 @@ double SemiImplicitSolver::step(const SimulationConfig& config,
         const RectilinearMesh& mesh,
         SolutionState& state,
         double targetDt) {
+    NvtxRange nvtx("SemiImplicit::step");
     double dt;
     if (params_.constDt > 0) {
         dt = params_.constDt;
@@ -250,6 +252,7 @@ double SemiImplicitSolver::step(const SimulationConfig& config,
 void SemiImplicitSolver::computeRHS(const SimulationConfig& config,
         const RectilinearMesh& mesh,
         SolutionState& state) {
+    NvtxRange nvtx("SemiImplicit::computeRHS");
     reconstructor_.reconstruct(config, mesh, state);
 
     int dim = mesh.dim();
@@ -536,6 +539,7 @@ void SemiImplicitSolver::solveIGR(const SimulationConfig& config,
         const RectilinearMesh& mesh,
         SolutionState& state) {
     if (!igrSolver_) return;
+    NvtxRange nvtx("SemiImplicit::solveIGR");
 
     computeVelocityGradients(config, mesh, state);
 
@@ -543,6 +547,7 @@ void SemiImplicitSolver::solveIGR(const SimulationConfig& config,
 }
 
 void SemiImplicitSolver::solvePressure(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state, double dt) {
+    NvtxRange nvtx("SemiImplicit::solvePressure");
     const bool multiPhase = config.isMultiPhase();
     const auto& mp = config.multiPhaseParams;
     int nPhases = multiPhase ? mp.nPhases : 0;
@@ -600,6 +605,7 @@ void SemiImplicitSolver::solvePressure(const SimulationConfig& config, const Rec
 }
 
 void SemiImplicitSolver::correctionStep(const SimulationConfig& config, const RectilinearMesh& mesh, SolutionState& state, double dt) {
+    NvtxRange nvtx("SemiImplicit::correctionStep");
     int dim = mesh.dim();
 
     for (int k = 0; k < mesh.nz(); ++k) {

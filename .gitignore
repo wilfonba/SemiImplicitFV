@@ -141,3 +141,4 @@ Thumbs.db
 VTK/*
 __pycache__
 *.bin
+*.nsys-rep

@@ -44,7 +44,7 @@
         "yLow": "Periodic", "yHigh": "Periodic",
         "zLow": "Periodic", "zHigh": "Periodic"
     },
-    "timeLoop": { "endTime": 20.0, "outputInterval": 2e-1, "printInterval": 1 },
+    "timeLoop": { "endTime": 2e-1, "outputInterval": 2e-1, "printInterval": 1 },
     "restart": {
         "checkpoint": true
         //"file": "Checkpoint/checkpoint.{rank}.bin"

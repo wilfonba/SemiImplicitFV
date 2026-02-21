@@ -3,6 +3,7 @@
 #include "MixtureEOS.hpp"
 #include "Runtime.hpp"
 #include "VTKSession.hpp"
+#include "NvtxRange.hpp"
 #include <cmath>
 #include <algorithm>
 #include <limits>
@@ -309,7 +310,11 @@ void runTimeLoop(
 
         config.time = time;
         auto t0 = std::chrono::high_resolution_clock::now();
-        double dt = stepFn(targetDt);
+        double dt;
+        {
+            NvtxRange nvtxStep("TimeStep");
+            dt = stepFn(targetDt);
+        }
         auto t1 = std::chrono::high_resolution_clock::now();
         double stepWall = std::chrono::duration<double>(t1 - t0).count();
         wallTotal += stepWall;
@@ -318,6 +323,7 @@ void runTimeLoop(
         config.step++;
 
         if (time >= nextOutput - 1e-12 * params.outputInterval) {
+            NvtxRange nvtxVTK("VTK Output");
             vtk.write(state, time);
             nextOutput += params.outputInterval;
 

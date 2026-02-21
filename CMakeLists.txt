@@ -10,6 +10,7 @@ option(BUILD_EXAMPLES "Build example programs" ON)
 option(BUILD_TESTS "Build unit tests" OFF)
 option(BUILD_DRIVER "Build generic sifv driver executable" ON)
 option(ENABLE_PETSC "Enable PETSc pressure solver (KSP+GAMG)" OFF)
+option(ENABLE_NVTX "Enable NVTX profiling ranges for Nsight Systems" OFF)
 
 # Compiler flags
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -100,6 +101,11 @@ if(ENABLE_PETSC)
     )
 endif()
 
+# NVTX profiling (optional, requires CUDA Toolkit for nvToolsExt)
+if(ENABLE_NVTX)
+    find_package(CUDAToolkit REQUIRED)
+endif()
+
 # Library sources
 set(LIB_SOURCES
     src/Checkpoint.cpp
@@ -144,6 +150,17 @@ if(ENABLE_PETSC)
     target_link_libraries(SemiImplicitFV PUBLIC PETSc::PETSc)
     target_include_directories(SemiImplicitFV PUBLIC ${PETSC_INSTALL_DIR}/include)
     add_dependencies(SemiImplicitFV petsc_external)
+endif()
+
+# NVTX integration (NVTX3 is header-only in modern CUDA toolkits)
+if(ENABLE_NVTX)
+    target_compile_definitions(SemiImplicitFV PUBLIC SIFV_HAS_NVTX)
+    target_include_directories(SemiImplicitFV PUBLIC ${CUDAToolkit_INCLUDE_DIRS})
+    # CUDA 12+ removed the nvToolsExt shared library; NVTX3 is header-only.
+    # Link the library only if it exists (CUDA <=11).
+    if(TARGET CUDA::nvToolsExt)
+        target_link_libraries(SemiImplicitFV PUBLIC CUDA::nvToolsExt)
+    endif()
 endif()
 
 # ---- JSON Driver (sifv) ----

@@ -1,5 +1,6 @@
 #include "Reconstruction.hpp"
 #include "MixtureEOS.hpp"
+#include "NvtxRange.hpp"
 #include <iostream>
 #include <cassert>
 
@@ -545,6 +546,7 @@ void Reconstructor::reconstruct(
         const RectilinearMesh& mesh,
         const SolutionState& state)
 {
+    NvtxRange nvtx("Reconstruction");
     assert(config.nGhost >= requiredGhostCells());
     reconstructX(config, mesh, state);
     if (dim_ >= 2) reconstructY(config, mesh, state);
