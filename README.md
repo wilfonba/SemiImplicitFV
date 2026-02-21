@@ -17,7 +17,9 @@ A finite volume solver for the compressible Euler equations on rectilinear meshe
 - **Boundary conditions** — Periodic, Reflective, Outflow, Slip Wall, No-Slip Wall
 - **MPI parallelism** — Cartesian domain decomposition with non-blocking halo exchange
 - **Checkpoint / restart** — Periodic binary checkpoints with automatic restart for HPC wall-time resilience
-- **VTK output** — `.vtr` (serial), `.pvtr` (parallel), and `.pvd` (time series) for ParaView
+- **VTK output** — `.vtr` (serial), `.pvtr` (parallel), and `.pvd` (time series) for ParaView; ASCII or binary (appended raw) format
+- **PETSc pressure solver** — Optional CG + GAMG algebraic multigrid for mesh-independent semi-implicit pressure convergence
+- **NVTX profiling** — Nsight Systems integration with RAII-scoped NVTX ranges for performance analysis
 
 ## Convergence
 
@@ -50,6 +52,8 @@ The `run_case.sh` script handles configuring, building, and running automaticall
 ./run_case.sh --debug 1D_advection           # Debug build (enables AddressSanitizer)
 ./run_case.sh --build-only 2D_riemann        # Build without running
 ./run_case.sh --case-optimization 1D_sod     # Codegen: compile JSON into optimized C++
+./run_case.sh --petsc 3D_taylor_green_vortex # Enable PETSc pressure solver
+./run_case.sh --nsys 2D_riemann             # Profile with Nsight Systems (NVTX)
 ./run_case.sh --list                         # List available cases
 ```
 
@@ -58,6 +62,8 @@ The `run_case.sh` script handles configuring, building, and running automaticall
 - CMake 3.14+
 - C++17 compiler
 - MPI implementation (e.g., Open MPI, MPICH)
+- PETSc (optional, for `--petsc` pressure solver)
+- NVIDIA Nsight Systems (optional, for `--nsys` profiling)
 
 ### Manual Build
 
@@ -111,10 +117,11 @@ Cases are defined as JSON files in `cases/<name>/<name>.jsonc`. This is the prim
 | `config` | Yes | Solver parameters (dim, RK order, CFL, etc.) |
 | `eos` | No | Equation of state (`"IdealGas"` or `"StiffenedGas"`) |
 | `riemannSolver` | No | `"LF"`, `"Rusanov"`, or `"HLLC"` (default) |
+| `pressureSolver` | No | `"GaussSeidel"` (default) or `"PETSc"` (requires `--petsc` build flag) |
 | `mesh` | Yes | Grid dimensions and extents |
 | `boundaryConditions` | No | Per-face BC: `"Outflow"`, `"Periodic"`, `"Symmetry"`, `"SlipWall"`, `"NoSlipWall"` |
 | `timeLoop` | Yes | End time, output interval, print interval |
-| `output` | No | VTK base name and directory |
+| `output` | No | VTK base name, directory, and format (`"VTKText"` or `"VTKRaw"`) |
 | `initialConditions` | Yes | Default state and geometry-based patches |
 | `smoothing` | No | Post-initialization field smoothing iterations |
 | `restart` | No | Checkpoint/restart settings |
@@ -161,9 +168,12 @@ All simulation parameters are set through `SimulationConfig` (defined in `includ
 | Field | Description |
 |---|---|
 | `cfl` | CFL number (advective) |
+| `constDt` | Fixed time step (0 = adaptive) |
 | `maxDt` / `minDt` | Time step bounds |
+| `maxAcousticCFL` | If > 0, limits dt so acoustic CFL stays below this value |
 | `maxPressureIters` | Max pressure Poisson iterations |
 | `pressureTol` | Pressure solve convergence tolerance |
+| `singlePressureSolve` | Only solve pressure on the final RK stage (default: false) |
 
 ### Multi-Phase Configuration (`multiPhaseParams`)
 
@@ -238,33 +248,33 @@ Add an optional `"restart"` section to the JSON input file:
 
 ```jsonc
 "restart": {
-    "checkpointInterval": 0.1,              // write a checkpoint every 0.1 time units (0 = disabled)
-    "file": "VTK/checkpoint.{rank}.bin"     // restart from this file (omit for a fresh run)
+    "checkpoint": true,                          // write checkpoints at outputInterval (default: false)
+    "file": "Checkpoint/checkpoint.{rank}.bin"   // restart from this file (omit for a fresh run)
 }
 ```
 
 | Field | Default | Description |
 |---|---|---|
-| `checkpointInterval` | 0 | Time interval between checkpoint writes. 0 disables checkpointing. |
+| `checkpoint` | false | When `true`, writes checkpoint files at every `outputInterval` to a `Checkpoint/` directory. |
 | `file` | (empty) | Path to a checkpoint file to restart from. `{rank}` is replaced with the zero-padded MPI rank (e.g. `0000`). When set, initial conditions and smoothing are skipped. |
 
-Checkpoint files are written to the case's output directory as `checkpoint.NNNN.bin` (one per MPI rank). Only the latest checkpoint is kept — each write overwrites the previous file. The checkpoint stores all conservative variables and multi-phase fields in a compact binary format; primitive variables are recomputed on restart.
+Checkpoint files are written as `checkpoint.RRRR.bin` (one per MPI rank, zero-padded to 4 digits). Only the latest checkpoint is kept — each write overwrites the previous file. The checkpoint stores all conservative variables and multi-phase fields in a compact binary format; primitive variables are recomputed on restart.
 
 ### Example: restart a killed job
 
 ```bash
-# 1. Run with periodic checkpoints
-#    (add "restart": {"checkpointInterval": 0.05} to the case JSONC)
+# 1. Run with checkpoints enabled
+#    (add "restart": {"checkpoint": true} to the case JSONC)
 ./run_case.sh 1D_sod_shocktube
 
 # 2. Job is killed at the wall-time limit...
 
 # 3. Add the restart file path and re-run
-#    (add "file": "VTK/checkpoint.{rank}.bin" to the "restart" section)
+#    (add "file": "Checkpoint/checkpoint.{rank}.bin" to the "restart" section)
 ./run_case.sh 1D_sod_shocktube
 ```
 
-The simulation resumes from the saved time and step count. Output from the restarted run is bitwise identical to an uninterrupted run.
+The simulation resumes from the saved time and step count.
 
 ## Writing Compiled Cases (C++)
 
@@ -291,7 +301,8 @@ The `Runtime` class handles domain decomposition, halo exchange, and parallel VT
 ```
 SemiImplicitFV/
 ├── cases/                 Case definitions (JSON input files)
-│   ├── 1D_advection/
+│   ├── 1D_advection_E/
+│   ├── 1D_advection_SI/
 │   ├── 1D_sod_shocktube/
 │   ├── 1D_gas_gas_shocktube/
 │   ├── 1D_liquid_gas_shocktube/
@@ -301,7 +312,8 @@ SemiImplicitFV/
 │   ├── 2D_laplace_pressure_jump/
 │   ├── 2D_quasi1D_sod/
 │   ├── 2D_riemann/
-│   └── 2D_rising_bubble/
+│   ├── 2D_rising_bubble/
+│   └── 3D_taylor_green_vortex/
 ├── driver/                Generic JSON driver (sifv)
 ├── include/               Header files
 ├── src/                   Library source files
