@@ -180,8 +180,10 @@ static InputData parseJson(const json& root) {
         if (c.contains("semiImplicitParams")) {
             const auto& sp = c["semiImplicitParams"];
             cfg.semiImplicitParams.cfl              = get<double>(sp, "cfl", cfg.semiImplicitParams.cfl);
+            cfg.semiImplicitParams.constDt           = get<double>(sp, "constDt", cfg.semiImplicitParams.constDt);
             cfg.semiImplicitParams.maxDt             = get<double>(sp, "maxDt", cfg.semiImplicitParams.maxDt);
             cfg.semiImplicitParams.minDt             = get<double>(sp, "minDt", cfg.semiImplicitParams.minDt);
+            cfg.semiImplicitParams.maxAcousticCFL    = get<double>(sp, "maxAcousticCFL", cfg.semiImplicitParams.maxAcousticCFL);
             cfg.semiImplicitParams.maxPressureIters  = get<int>(sp, "maxPressureIters", cfg.semiImplicitParams.maxPressureIters);
             cfg.semiImplicitParams.pressureTol       = get<double>(sp, "pressureTol", cfg.semiImplicitParams.pressureTol);
         }

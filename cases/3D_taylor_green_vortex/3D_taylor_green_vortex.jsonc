@@ -1,0 +1,66 @@
+{
+    // 3D Taylor-Green Vortex — canonical benchmark for vortex dynamics and
+    // turbulence transition in compressible flow.
+    //
+    // Reference: Taylor & Green (1937), Brachet et al. (1983)
+    //
+    // Domain: [0, 2*pi]^3, fully periodic
+    // Mach = 0.1, gamma = 1.4, V0 = 1.0, rho0 = 1.0
+    // p0 = rho0 / (gamma * M^2) = 1.0 / (1.4 * 0.01) = 71.4285714285714
+    //
+    // IC:
+    //   rho = 1
+    //   u   =  V0 * sin(x) * cos(y) * cos(z)
+    //   v   = -V0 * cos(x) * sin(y) * cos(z)
+    //   w   =  0
+    //   p   = p0 + (rho0/16) * (cos(2x) + cos(2y)) * (cos(2z) + 2)
+    "config": {
+        "dim": 3,
+        "nGhost": 3,
+        "RKOrder": 3,
+        "reconOrder": "WENO5",
+        "semiImplicit": true,
+        "explicitParams": { "cfl": 0.1, "maxDt": 1e-2 },
+        //"explicitParams": { "cfl": 0.5, "maxDt": 1e-2 }
+        "semiImplicitParams": {
+            "cfl": 0.5,
+            //"constDt": 2e-2,
+            "maxDt": 1.0,
+            "pressureTol": 1e-12,
+            "maxPressureIters": 50
+        },
+        "viscousParams": { "mu": 0.000625 }
+    },
+    "eos": { "type": "IdealGas", "gamma": 1.4, "R": 1.0 },
+    "riemannSolver": "HLLC",
+    "pressureSolver": "PETSc",
+    "mesh": {
+        "nx": 128, "xMin": 0.0, "xMax": 6.283185307179586,
+        "ny": 128, "yMin": 0.0, "yMax": 6.283185307179586,
+        "nz": 128, "zMin": 0.0, "zMax": 6.283185307179586
+    },
+    "boundaryConditions": {
+        "xLow": "Periodic", "xHigh": "Periodic",
+        "yLow": "Periodic", "yHigh": "Periodic",
+        "zLow": "Periodic", "zHigh": "Periodic"
+    },
+    "timeLoop": { "endTime": 20.0, "outputInterval": 2e-1, "printInterval": 1 },
+    "restart": {
+        "checkpoint": true
+        //"file": "Checkpoint/checkpoint.{rank}.bin"
+    },
+    "output": { "baseName": "3D_taylor_green_vortex" },
+    "initialConditions": {
+        "default": { "rho": 1.0, "u": 0.0, "v": 0.0, "w": 0.0, "p": 71.4285714285714 },
+        "patches": [
+            {
+                "geometry": { "type": "analytic" },
+                "expressions": {
+                    "u":  "sin(x) * cos(y) * cos(z)",
+                    "v":  "-cos(x) * sin(y) * cos(z)",
+                    "p":  "71.4285714285714 + (1.0/16.0) * (cos(2*x) + cos(2*y)) * (cos(2*z) + 2)"
+                }
+            }
+        ]
+    }
+}

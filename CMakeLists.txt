@@ -9,7 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(BUILD_EXAMPLES "Build example programs" ON)
 option(BUILD_TESTS "Build unit tests" OFF)
 option(BUILD_DRIVER "Build generic sifv driver executable" ON)
-option(ENABLE_HYPRE "Enable Hypre pressure solver (PCG+PFMG)" OFF)
+option(ENABLE_PETSC "Enable PETSc pressure solver (KSP+GAMG)" OFF)
 
 # Compiler flags
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -25,18 +25,79 @@ endif()
 # MPI
 find_package(MPI REQUIRED)
 
-# Hypre (optional, fetched automatically)
-if(ENABLE_HYPRE)
-    include(FetchContent)
-    FetchContent_Declare(
-        hypre
-        GIT_REPOSITORY https://github.com/hypre-space/hypre.git
-        GIT_TAG v2.31.0
-        SOURCE_SUBDIR src
+# PETSc (optional, built from source via ExternalProject)
+if(ENABLE_PETSC)
+    include(ExternalProject)
+
+    set(PETSC_INSTALL_DIR ${CMAKE_BINARY_DIR}/petsc-install)
+
+    # Find MPI compiler wrappers for PETSc configure
+    find_program(MPI_CC_WRAPPER NAMES mpicc HINTS ENV PATH)
+    find_program(MPI_CXX_WRAPPER NAMES mpicxx mpic++ mpiCC HINTS ENV PATH)
+    if(NOT MPI_CC_WRAPPER)
+        set(MPI_CC_WRAPPER "mpicc")
+    endif()
+    if(NOT MPI_CXX_WRAPPER)
+        set(MPI_CXX_WRAPPER "mpicxx")
+    endif()
+
+    ExternalProject_Add(petsc_external
+        GIT_REPOSITORY https://gitlab.com/petsc/petsc.git
+        GIT_TAG v3.22.2
+        GIT_SHALLOW TRUE
+        PREFIX ${CMAKE_BINARY_DIR}/petsc-prefix
+        CONFIGURE_COMMAND ${CMAKE_BINARY_DIR}/petsc-prefix/src/petsc_external/configure
+            --prefix=${PETSC_INSTALL_DIR}
+            --with-cc=${MPI_CC_WRAPPER}
+            --with-cxx=${MPI_CXX_WRAPPER}
+            --with-fc=0
+            --with-x=0
+            --with-debugging=0
+            --with-shared-libraries=0
+            --download-f2cblaslapack=yes
+            "COPTFLAGS=-O3"
+            "CXXOPTFLAGS=-O3"
+        BUILD_COMMAND ${CMAKE_COMMAND} -E env --unset=MAKEFLAGS
+            make PETSC_DIR=<SOURCE_DIR> PETSC_ARCH=arch-linux-c-opt all
+        INSTALL_COMMAND ${CMAKE_COMMAND} -E env --unset=MAKEFLAGS
+            make PETSC_DIR=<SOURCE_DIR> PETSC_ARCH=arch-linux-c-opt install
+        BUILD_IN_SOURCE TRUE
+        LOG_CONFIGURE TRUE
+        LOG_BUILD TRUE
+        LOG_INSTALL TRUE
     )
-    set(HYPRE_ENABLE_SHARED OFF CACHE BOOL "" FORCE)
-    set(HYPRE_ENABLE_BIGINT OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(hypre)
+
+    # Create the install directory so CMake doesn't complain about non-existent paths
+    # at configure time (PETSc is built later during the build step)
+    file(MAKE_DIRECTORY ${PETSC_INSTALL_DIR}/include)
+
+    # Create imported target for PETSc
+    add_library(PETSc::PETSc STATIC IMPORTED)
+    set_target_properties(PETSc::PETSc PROPERTIES
+        IMPORTED_LOCATION ${PETSC_INSTALL_DIR}/lib/libpetsc.a
+        INTERFACE_INCLUDE_DIRECTORIES ${PETSC_INSTALL_DIR}/include
+    )
+
+    # PETSc static lib dependencies
+    find_library(DL_LIBRARY dl)
+    find_library(M_LIBRARY m)
+    find_library(RT_LIBRARY rt)
+    set(PETSC_EXTRA_LIBS "")
+    if(DL_LIBRARY)
+        list(APPEND PETSC_EXTRA_LIBS ${DL_LIBRARY})
+    endif()
+    if(M_LIBRARY)
+        list(APPEND PETSC_EXTRA_LIBS ${M_LIBRARY})
+    endif()
+    if(RT_LIBRARY)
+        list(APPEND PETSC_EXTRA_LIBS ${RT_LIBRARY})
+    endif()
+
+    # f2cblaslapack is downloaded by PETSc configure
+    set_target_properties(PETSc::PETSc PROPERTIES
+        INTERFACE_LINK_LIBRARIES
+        "${PETSC_INSTALL_DIR}/lib/libf2clapack.a;${PETSC_INSTALL_DIR}/lib/libf2cblas.a;${PETSC_EXTRA_LIBS};MPI::MPI_CXX"
+    )
 endif()
 
 # Library sources
@@ -76,12 +137,13 @@ target_include_directories(SemiImplicitFV PUBLIC
 
 target_link_libraries(SemiImplicitFV PUBLIC MPI::MPI_CXX)
 
-# Hypre integration
-if(ENABLE_HYPRE)
-    target_sources(SemiImplicitFV PRIVATE src/HyprePressureSolver.cpp)
-    target_compile_definitions(SemiImplicitFV PUBLIC SIFV_HAS_HYPRE)
-    target_link_libraries(SemiImplicitFV PUBLIC HYPRE)
-    target_include_directories(SemiImplicitFV PUBLIC ${hypre_BINARY_DIR}/include)
+# PETSc integration
+if(ENABLE_PETSC)
+    target_sources(SemiImplicitFV PRIVATE src/PETScPressureSolver.cpp)
+    target_compile_definitions(SemiImplicitFV PUBLIC SIFV_HAS_PETSC)
+    target_link_libraries(SemiImplicitFV PUBLIC PETSc::PETSc)
+    target_include_directories(SemiImplicitFV PUBLIC ${PETSC_INSTALL_DIR}/include)
+    add_dependencies(SemiImplicitFV petsc_external)
 endif()
 
 # ---- JSON Driver (sifv) ----

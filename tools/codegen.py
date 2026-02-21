@@ -438,15 +438,12 @@ def generate(data, input_filename):
         includes.append("IdealGasEOS.hpp")
 
     pressure_solver_type = data.get("pressureSolver", "GaussSeidel") if is_semi else None
-    if pressure_solver_type == "Hypre" and dim == 1:
-        print("Error: Hypre pressure solver is not supported for 1D cases. Use GaussSeidel or Jacobi instead.")
-        sys.exit(1)
 
     if is_semi:
         includes.append("SemiImplicitSolver.hpp")
         if pressure_solver_type == "Jacobi":
             includes.append("JacobiPressureSolver.hpp")
-        elif pressure_solver_type != "Hypre":
+        elif pressure_solver_type != "PETSc":
             includes.append("GaussSeidelPressureSolver.hpp")
     else:
         includes.append("ExplicitSolver.hpp")
@@ -462,10 +459,10 @@ def generate(data, input_filename):
 
     include_str = "\n".join(f'#include "{h}"' for h in includes)
 
-    # Hypre include is conditional on SIFV_HAS_HYPRE (matches driver pattern)
-    if pressure_solver_type == "Hypre":
-        include_str += ("\n#ifdef SIFV_HAS_HYPRE\n"
-                        '#include "HyprePressureSolver.hpp"\n'
+    # PETSc include is conditional on SIFV_HAS_PETSC (matches driver pattern)
+    if pressure_solver_type == "PETSc":
+        include_str += ("\n#ifdef SIFV_HAS_PETSC\n"
+                        '#include "PETScPressureSolver.hpp"\n'
                         "#endif")
 
     # Standard includes
@@ -484,19 +481,28 @@ def generate(data, input_filename):
     # Config code
     config_code = generate_config(cfg)
 
+    # Derive periodic flags from BCs for MPI topology
+    px = 1 if bc_cfg.get("xLow", "") == "Periodic" else 0
+    py = 1 if bc_cfg.get("yLow", "") == "Periodic" else 0
+    pz = 1 if bc_cfg.get("zLow", "") == "Periodic" else 0
+    periods_arg = f", std::array<int,3>{{{{{px}, {py}, {pz}}}}})"
+
     # Mesh creation
     if dim == 1:
         mesh_code = (f"    RectilinearMesh mesh = rt.createUniformMesh(config, "
-                     f"{mesh_cfg.get('nx', 100)}, {mesh_cfg.get('xMin', 0.0)}, {mesh_cfg.get('xMax', 1.0)});")
+                     f"{mesh_cfg.get('nx', 100)}, {mesh_cfg.get('xMin', 0.0)}, {mesh_cfg.get('xMax', 1.0)}"
+                     f"{periods_arg};")
     elif dim == 2:
         mesh_code = (f"    RectilinearMesh mesh = rt.createUniformMesh(config, "
                      f"{mesh_cfg.get('nx', 100)}, {mesh_cfg.get('xMin', 0.0)}, {mesh_cfg.get('xMax', 1.0)}, "
-                     f"{mesh_cfg.get('ny', 1)}, {mesh_cfg.get('yMin', 0.0)}, {mesh_cfg.get('yMax', 1.0)});")
+                     f"{mesh_cfg.get('ny', 1)}, {mesh_cfg.get('yMin', 0.0)}, {mesh_cfg.get('yMax', 1.0)}"
+                     f"{periods_arg};")
     else:
         mesh_code = (f"    RectilinearMesh mesh = rt.createUniformMesh(config, "
                      f"{mesh_cfg.get('nx', 100)}, {mesh_cfg.get('xMin', 0.0)}, {mesh_cfg.get('xMax', 1.0)}, "
                      f"{mesh_cfg.get('ny', 1)}, {mesh_cfg.get('yMin', 0.0)}, {mesh_cfg.get('yMax', 1.0)}, "
-                     f"{mesh_cfg.get('nz', 1)}, {mesh_cfg.get('zMin', 0.0)}, {mesh_cfg.get('zMax', 1.0)});")
+                     f"{mesh_cfg.get('nz', 1)}, {mesh_cfg.get('zMin', 0.0)}, {mesh_cfg.get('zMax', 1.0)}"
+                     f"{periods_arg};")
 
     # BCs
     face_names = ["xLow", "xHigh", "yLow", "yHigh", "zLow", "zHigh"]
@@ -531,20 +537,25 @@ def generate(data, input_filename):
     # Solver
     if is_semi:
         igr = "igrSolver" if cfg.get("useIGR") else "nullptr"
-        if pressure_solver_type == "Hypre":
+        if pressure_solver_type == "PETSc":
+            # Detect periodic flags from BCs
+            px = 1 if bc_cfg.get("xLow", "") == "Periodic" else 0
+            py = 1 if bc_cfg.get("yLow", "") == "Periodic" else 0
+            pz = 1 if bc_cfg.get("zLow", "") == "Periodic" else 0
             ps_lines = [
-                "#ifdef SIFV_HAS_HYPRE",
+                "#ifdef SIFV_HAS_PETSC",
                 "    std::shared_ptr<PressureSolver> pressureSolver;",
                 "    if (rt.size() > 1) {",
-                "        pressureSolver = std::make_shared<HyprePressureSolver>(",
+                "        pressureSolver = std::make_shared<PETScPressureSolver>(",
                 "            rt.mpiContext().comm(),",
                 "            rt.mpiContext().localExtent(),",
-                "            std::array<int,3>{0, 0, 0});",
+                f"            std::array<int,3>{{{px}, {py}, {pz}}},",
+                "            rt.mpiContext().dims());",
                 "    } else {",
-                "        pressureSolver = std::make_shared<HyprePressureSolver>();",
+                "        pressureSolver = std::make_shared<PETScPressureSolver>();",
                 "    }",
                 '#else',
-                '    #error "This case requires Hypre. Build with -DENABLE_HYPRE=ON."',
+                '    #error "This case requires PETSc. Build with -DENABLE_PETSC=ON."',
                 "#endif",
             ]
             ps_code = "\n".join(ps_lines)

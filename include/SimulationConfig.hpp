@@ -28,8 +28,10 @@ struct ExplicitParams {
 
 struct SemiImplicitParams {
     double cfl = 0.8;            // CFL based on material velocity only
+    double constDt = -1.0;       // if > 0, overrides CFL-based time step
     double maxDt = 1e-2;
     double minDt = 1e-12;
+    double maxAcousticCFL = -1.0; // if > 0, limits dt so acoustic CFL <= this value
     int maxPressureIters = 100;
     double pressureTol = 1e-8;
 };

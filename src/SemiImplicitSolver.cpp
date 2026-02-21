@@ -107,15 +107,26 @@ double SemiImplicitSolver::step(const SimulationConfig& config,
         const RectilinearMesh& mesh,
         SolutionState& state,
         double targetDt) {
-    double dt = SemiImplicitFV::computeAdvectiveTimeStep(
-        mesh, state, params_.cfl, params_.maxDt, halo_->mpi().comm());
-    if (config.hasViscosity()) {
-        dt = std::min(dt, computeViscousDt(mesh, state,
-            config, params_.cfl, params_.maxDt, halo_->mpi().comm()));
+    double dt;
+    if (params_.constDt > 0) {
+        dt = params_.constDt;
+    } else {
+        dt = SemiImplicitFV::computeAdvectiveTimeStep(
+            mesh, state, params_.cfl, params_.maxDt, halo_->mpi().comm());
+        if (config.hasViscosity()) {
+            dt = std::min(dt, computeViscousDt(mesh, state,
+                config, params_.cfl, params_.maxDt, halo_->mpi().comm()));
+        }
+        if (config.hasSurfaceTension()) {
+            dt = std::min(dt, computeCapillaryDt(mesh, state,
+                config.surfaceTensionParams.sigma, params_.cfl, params_.maxDt, halo_->mpi().comm()));
+        }
     }
-    if (config.hasSurfaceTension()) {
-        dt = std::min(dt, computeCapillaryDt(mesh, state,
-            config.surfaceTensionParams.sigma, params_.cfl, params_.maxDt, halo_->mpi().comm()));
+    if (params_.maxAcousticCFL > 0) {
+        double acousticDt = SemiImplicitFV::computeAcousticTimeStep(
+            mesh, state, *eos_, config, params_.maxAcousticCFL, params_.maxDt,
+            halo_->mpi().comm());
+        dt = std::min(dt, acousticDt);
     }
     if (targetDt > 0) {
         dt = std::min(dt, targetDt);
@@ -229,6 +240,7 @@ double SemiImplicitSolver::step(const SimulationConfig& config,
         mesh.applyBoundaryConditions(state, VarSet::PRIM, *halo_);
 
         solvePressure(config, mesh, state, dt);
+
         correctionStep(config, mesh, state, dt);
     }
 

@@ -23,7 +23,7 @@
     },
     "eos": { "type": "IdealGas", "gamma": 1.4, "R": 287.0 },
     "riemannSolver": "HLLC",
-    "pressureSolver": "Hypre",
+    "pressureSolver": "PETSc",
     "mesh": {
         "nx": 200, "xMin": 0.0, "xMax": 1.0,
         "ny": 400, "yMin": 0.0, "yMax": 2.0

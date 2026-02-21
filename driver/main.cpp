@@ -12,8 +12,8 @@
 #include "SemiImplicitSolver.hpp"
 #include "GaussSeidelPressureSolver.hpp"
 #include "JacobiPressureSolver.hpp"
-#ifdef SIFV_HAS_HYPRE
-#include "HyprePressureSolver.hpp"
+#ifdef SIFV_HAS_PETSC
+#include "PETScPressureSolver.hpp"
 #endif
 #include "IGR.hpp"
 #include "SimulationConfig.hpp"
@@ -82,16 +82,25 @@ int main(int argc, char** argv) {
 
     // ---- Create mesh ----
     const auto& mp = input.meshParams;
+
+    // Derive periodic flags from boundary conditions for MPI topology
+    const auto& bc = input.bcParams.bc;
+    std::array<int,3> periods = {
+        (bc[0] == BoundaryCondition::Periodic) ? 1 : 0,
+        (bc[2] == BoundaryCondition::Periodic) ? 1 : 0,
+        (bc[4] == BoundaryCondition::Periodic) ? 1 : 0
+    };
+
     RectilinearMesh mesh = [&]() {
         if (config.dim == 1) {
-            return rt.createUniformMesh(config, mp.nx, mp.xMin, mp.xMax);
+            return rt.createUniformMesh(config, mp.nx, mp.xMin, mp.xMax, periods);
         } else if (config.dim == 2) {
             return rt.createUniformMesh(config, mp.nx, mp.xMin, mp.xMax,
-                                         mp.ny, mp.yMin, mp.yMax);
+                                         mp.ny, mp.yMin, mp.yMax, periods);
         } else {
             return rt.createUniformMesh(config, mp.nx, mp.xMin, mp.xMax,
                                          mp.ny, mp.yMin, mp.yMax,
-                                         mp.nz, mp.zMin, mp.zMax);
+                                         mp.nz, mp.zMin, mp.zMax, periods);
         }
     }();
 
@@ -175,27 +184,21 @@ int main(int argc, char** argv) {
         std::shared_ptr<PressureSolver> pressureSolver;
         if (input.pressureSolverType == "Jacobi") {
             pressureSolver = std::make_shared<JacobiPressureSolver>();
-        } else if (input.pressureSolverType == "Hypre") {
-#ifdef SIFV_HAS_HYPRE
-            if (config.dim == 1) {
-                if (rt.isRoot()) {
-                    std::cerr << "Error: Hypre pressure solver is not supported for 1D cases.\n"
-                              << "  Use GaussSeidel or Jacobi instead.\n";
-                }
-                return 1;
-            }
+        } else if (input.pressureSolverType == "PETSc") {
+#ifdef SIFV_HAS_PETSC
             if (rt.size() > 1) {
-                pressureSolver = std::make_shared<HyprePressureSolver>(
+                pressureSolver = std::make_shared<PETScPressureSolver>(
                     rt.mpiContext().comm(),
                     rt.mpiContext().localExtent(),
-                    std::array<int,3>{0, 0, 0});
+                    periods,
+                    rt.mpiContext().dims());
             } else {
-                pressureSolver = std::make_shared<HyprePressureSolver>();
+                pressureSolver = std::make_shared<PETScPressureSolver>();
             }
 #else
             if (rt.isRoot()) {
-                std::cerr << "Error: Hypre pressure solver requested but not built.\n"
-                          << "  Rebuild with: ./run_case.sh --hypre ...\n";
+                std::cerr << "Error: PETSc pressure solver requested but not built.\n"
+                          << "  Rebuild with: ./run_case.sh --petsc ...\n";
             }
             return 1;
 #endif

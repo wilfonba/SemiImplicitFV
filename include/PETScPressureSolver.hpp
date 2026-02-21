@@ -1,5 +1,5 @@
-#ifndef HYPRE_PRESSURE_SOLVER_HPP
-#define HYPRE_PRESSURE_SOLVER_HPP
+#ifndef PETSC_PRESSURE_SOLVER_HPP
+#define PETSC_PRESSURE_SOLVER_HPP
 
 #include "PressureSolver.hpp"
 #include "RectilinearMesh.hpp"
@@ -7,38 +7,41 @@
 #include <vector>
 #include <mpi.h>
 
-// Forward-declare Hypre opaque types to avoid leaking HYPRE.h
-struct hypre_StructGrid_struct;
-struct hypre_StructStencil_struct;
-struct hypre_StructMatrix_struct;
-struct hypre_StructVector_struct;
-struct hypre_StructSolver_struct;
+// Forward-declare PETSc opaque types to avoid leaking petsc.h
+typedef struct _p_DM*  DM;
+typedef struct _p_Mat* Mat;
+typedef struct _p_Vec* Vec;
+typedef struct _p_KSP* KSP;
 
 namespace SemiImplicitFV {
 
-/// PCG + PFMG (structured multigrid) pressure solver via Hypre.
+/// CG + GAMG (algebraic multigrid) pressure solver via PETSc.
 ///
 /// Drop-in replacement for GaussSeidelPressureSolver that provides
 /// mesh-independent O(1) convergence for the semi-implicit pressure equation
 /// (I + dt^2 * rho*c^2 * L) p = rhs.
-class HyprePressureSolver : public PressureSolver {
+///
+/// Works in 1D, 2D, and 3D. DMDA handles periodic boundary conditions natively.
+class PETScPressureSolver : public PressureSolver {
 public:
     /// Serial constructor (uses MPI_COMM_SELF).
-    HyprePressureSolver();
+    PETScPressureSolver();
 
     /// MPI-aware constructor.
     /// @param comm       MPI communicator (typically from MPIContext::comm()).
     /// @param localExtent  {i0, i1, j0, j1, k0, k1} global cell extents for this rank.
     /// @param periodic   Periodic flags per direction (0 or 1).
-    HyprePressureSolver(MPI_Comm comm,
+    /// @param procDims   Number of MPI ranks per direction (must match domain decomposition).
+    PETScPressureSolver(MPI_Comm comm,
                         const std::array<int,6>& localExtent,
-                        const std::array<int,3>& periodic);
+                        const std::array<int,3>& periodic,
+                        const std::array<int,3>& procDims);
 
-    ~HyprePressureSolver();
+    ~PETScPressureSolver();
 
-    // Non-copyable, non-movable (Hypre handles are not trivially relocatable)
-    HyprePressureSolver(const HyprePressureSolver&) = delete;
-    HyprePressureSolver& operator=(const HyprePressureSolver&) = delete;
+    // Non-copyable, non-movable (PETSc handles are not trivially relocatable)
+    PETScPressureSolver(const PETScPressureSolver&) = delete;
+    PETScPressureSolver& operator=(const PETScPressureSolver&) = delete;
 
     int solve(
         const RectilinearMesh& mesh,
@@ -63,34 +66,29 @@ public:
         HaloExchange& halo
     ) override;
 
-    std::string name() const override { return "HyprePCG+PFMG"; }
+    std::string name() const override { return "PETScCG+GAMG"; }
 
 private:
     MPI_Comm comm_;
+    MPI_Comm petscComm_ = MPI_COMM_NULL;  // remapped communicator for DMDA
     std::array<int,3> ilower_;
     std::array<int,3> iupper_;
     std::array<int,3> periodic_;
+    std::array<int,3> procDims_;
     bool useMPI_;
 
-    // Hypre handles (opaque pointers)
-    hypre_StructGrid_struct*    grid_    = nullptr;
-    hypre_StructStencil_struct* stencil_ = nullptr;
-    hypre_StructMatrix_struct*  matrix_  = nullptr;
-    hypre_StructVector_struct*  bVec_    = nullptr;
-    hypre_StructVector_struct*  xVec_    = nullptr;
-    hypre_StructSolver_struct*  solver_  = nullptr;
-    hypre_StructSolver_struct*  precond_ = nullptr;
+    // PETSc handles (opaque pointers)
+    DM   dm_  = nullptr;
+    Mat  A_   = nullptr;
+    Vec  b_   = nullptr;
+    Vec  x_   = nullptr;
+    KSP  ksp_ = nullptr;
 
     bool initialized_ = false;
     int dim_ = 0;
 
-    // Scratch buffers (avoid per-step allocation)
-    std::vector<double> matValues_;
-    std::vector<double> rhsValues_;
-    std::vector<double> solValues_;
-
-    void setupHypre(int dim, int nLocalCells);
-    void destroyHypre();
+    void setupPETSc(const RectilinearMesh& mesh);
+    void destroyPETSc();
 
     void assembleSystem(
         const RectilinearMesh& mesh,
@@ -117,4 +115,4 @@ private:
 
 } // namespace SemiImplicitFV
 
-#endif // HYPRE_PRESSURE_SOLVER_HPP
+#endif // PETSC_PRESSURE_SOLVER_HPP

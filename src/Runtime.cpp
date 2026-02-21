@@ -3,6 +3,9 @@
 #include "SemiImplicitSolver.hpp"
 
 #include <mpi.h>
+#ifdef SIFV_HAS_PETSC
+#include <petsc.h>
+#endif
 
 #include <vector>
 
@@ -19,6 +22,9 @@ static std::vector<double> linspace(double a, double b, int n) {
 
 Runtime::Runtime(int& argc, char**& argv) {
     MPI_Init(&argc, &argv);
+#ifdef SIFV_HAS_PETSC
+    PetscInitialize(&argc, &argv, NULL, NULL);
+#endif
     MPI_Comm_rank(MPI_COMM_WORLD, &rank_);
     MPI_Comm_size(MPI_COMM_WORLD, &size_);
 }
@@ -26,6 +32,9 @@ Runtime::Runtime(int& argc, char**& argv) {
 Runtime::~Runtime() {
     halo_.reset();
     mpiCtx_.reset();
+#ifdef SIFV_HAS_PETSC
+    PetscFinalize();
+#endif
     int finalized = 0;
     MPI_Finalized(&finalized);
     if (!finalized) {

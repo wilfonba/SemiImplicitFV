@@ -31,7 +31,7 @@ Options:
   --compiled              Force using the compiled C++ source instead of JSON
   --case-optimization     Generate and compile a custom C++ main() from the
                           JSON input for maximum performance (codegen path)
-  --hypre                 Enable Hypre pressure solver (PCG+PFMG)
+  --petsc                 Enable PETSc pressure solver (KSP+GAMG)
   -j <N>                  Parallel build jobs (default: number of cores)
   -o, --output-dir <dir>  Override the run directory (default: cases/<case_name>)
   -h, --help              Show this help
@@ -42,7 +42,7 @@ Examples:
   ./run_case.sh --compiled 1D_sod_shocktube            # compiled C++ source
   ./run_case.sh -n 4 2D_rising_bubble
   ./run_case.sh -d 1D_sod_shocktube
-  ./run_case.sh --hypre 2D_rising_bubble -- --semi-implicit
+  ./run_case.sh --petsc 2D_rising_bubble
 EOF
     exit "${1:-0}"
 }
@@ -82,7 +82,7 @@ list_cases() {
 # --- Parse arguments ---
 CLEAN=false
 BUILD_ONLY=false
-ENABLE_HYPRE=false
+ENABLE_PETSC=false
 CASE_OPTIMIZATION=false
 FORCE_COMPILED=false
 MPI_RANKS=1
@@ -125,8 +125,8 @@ while [[ $# -gt 0 ]]; do
             FORCE_COMPILED=true
             shift
             ;;
-        --hypre)
-            ENABLE_HYPRE=true
+        --petsc)
+            ENABLE_PETSC=true
             shift
             ;;
         -j)
@@ -233,10 +233,10 @@ if $CLEAN && [[ -d "$BUILD_DIR" ]]; then
 fi
 
 # --- Resolve cmake option values ---
-if $ENABLE_HYPRE; then
-    HYPRE_OPT="ON"
+if $ENABLE_PETSC; then
+    PETSC_OPT="ON"
 else
-    HYPRE_OPT="OFF"
+    PETSC_OPT="OFF"
 fi
 
 # --- Configure if needed or if build type / options changed ---
@@ -245,7 +245,7 @@ if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
     NEED_CONFIGURE=true
 elif ! grep -q "CMAKE_BUILD_TYPE:STRING=${BUILD_TYPE}$" "$BUILD_DIR/CMakeCache.txt"; then
     NEED_CONFIGURE=true
-elif ! grep -q "ENABLE_HYPRE:BOOL=${HYPRE_OPT}$" "$BUILD_DIR/CMakeCache.txt"; then
+elif ! grep -q "ENABLE_PETSC:BOOL=${PETSC_OPT}$" "$BUILD_DIR/CMakeCache.txt"; then
     NEED_CONFIGURE=true
 elif ! $USE_JSON && [[ -n "$COMPILED_DIR" ]]; then
     # Always reconfigure for compiled cases so file(GLOB) picks up new directories
@@ -253,10 +253,10 @@ elif ! $USE_JSON && [[ -n "$COMPILED_DIR" ]]; then
 fi
 
 if $NEED_CONFIGURE; then
-    echo "Configuring (${BUILD_TYPE}, HYPRE=${HYPRE_OPT})..."
+    echo "Configuring (${BUILD_TYPE}, PETSC=${PETSC_OPT})..."
     cmake -S "$ROOT_DIR" -B "$BUILD_DIR" \
         -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-        -DENABLE_HYPRE="$HYPRE_OPT"
+        -DENABLE_PETSC="$PETSC_OPT"
 fi
 
 # --- Build and run ---
@@ -283,22 +283,22 @@ if $USE_JSON; then
         MPI_CFLAGS="$(pkg-config --cflags ompi 2>/dev/null || mpiCC --showme:compile 2>/dev/null || true)"
         MPI_LDFLAGS="$(pkg-config --libs ompi 2>/dev/null || mpiCC --showme:link 2>/dev/null || echo "-lmpi")"
 
-        # Hypre flags for codegen builds (static lib not transitively linked)
-        HYPRE_CFLAGS=""
-        HYPRE_LDFLAGS=""
-        if $ENABLE_HYPRE; then
-            HYPRE_CFLAGS="-DSIFV_HAS_HYPRE"
-            HYPRE_BUILD="$BUILD_DIR/_deps/hypre-build"
-            HYPRE_LDFLAGS="-L$HYPRE_BUILD -L$HYPRE_BUILD/lib -lHYPRE"
+        # PETSc flags for codegen builds (static lib not transitively linked)
+        PETSC_CFLAGS=""
+        PETSC_LDFLAGS=""
+        if $ENABLE_PETSC; then
+            PETSC_INSTALL="$BUILD_DIR/petsc-install"
+            PETSC_CFLAGS="-DSIFV_HAS_PETSC -I$PETSC_INSTALL/include"
+            PETSC_LDFLAGS="-L$PETSC_INSTALL/lib -lpetsc -lf2clapack -lf2cblas -lm -ldl"
         fi
 
         "$COMPILE_CMD" -std=c++17 -O3 -march=native \
             $INCLUDE_FLAGS \
-            $HYPRE_CFLAGS \
+            $PETSC_CFLAGS \
             $MPI_CFLAGS \
             "$GEN_SRC" \
             -L"$BUILD_DIR" -lSemiImplicitFV \
-            $HYPRE_LDFLAGS \
+            $PETSC_LDFLAGS \
             $MPI_LDFLAGS \
             -o "$BUILD_DIR/$GEN_TARGET" \
             2>&1
