@@ -40,12 +40,12 @@ public:
     void solveEntropicPressure(const SimulationConfig& config,
             const RectilinearMesh& mesh,
             SolutionState& state,
-            std::vector<GradientTensor> gradU);
+            const std::vector<GradientTensor>& gradU);
 
     void solveEntropicPressure(const SimulationConfig& config,
             const RectilinearMesh& mesh,
             SolutionState& state,
-            std::vector<GradientTensor> gradU,
+            const std::vector<GradientTensor>& gradU,
             HaloExchange& halo);
 
     // Compute velocity gradient tensor from cell-centered velocities
