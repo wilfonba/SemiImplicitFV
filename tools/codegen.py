@@ -591,6 +591,8 @@ def generate(data, input_filename):
     # VTK + time loop
     base = out_cfg.get("baseName", "output")
     vtk_dir = out_cfg.get("directory", "VTK")
+    vtk_format = out_cfg.get("format", "VTKText")
+    vtk_format_enum = f"VTKFormat::{vtk_format}"
     end_time = tl_cfg.get("endTime", 1.0)
     out_int = tl_cfg.get("outputInterval", 0.01)
     print_int = tl_cfg.get("printInterval", 1)
@@ -650,7 +652,7 @@ int main(int argc, char** argv) {{
 
 {smooth_code if not restart_file else ""}
 
-    VTKSession vtk(rt, "{base}", mesh, config, "{vtk_dir}");
+    VTKSession vtk(rt, "{base}", mesh, config, "{vtk_dir}", {vtk_format_enum});
 
     TimeLoopParams tlp;
     tlp.endTime = {end_time};

@@ -228,7 +228,7 @@ int main(int argc, char** argv) {
 
     // ---- VTK output ----
     VTKSession vtk(rt, input.outputParams.baseName, mesh, config,
-                   input.outputParams.directory);
+                   input.outputParams.directory, input.outputParams.format);
 
     // ---- Run time loop ----
     TimeLoopParams tlp;

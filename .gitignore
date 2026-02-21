@@ -142,3 +142,4 @@ VTK/*
 __pycache__
 *.bin
 *.nsys-rep
+*.txt

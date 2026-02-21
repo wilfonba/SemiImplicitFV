@@ -290,6 +290,15 @@ static InputData parseJson(const json& root) {
         const auto& o = root["output"];
         data.outputParams.baseName  = get<std::string>(o, "baseName", data.outputParams.baseName);
         data.outputParams.directory = get<std::string>(o, "directory", data.outputParams.directory);
+        std::string fmt = get<std::string>(o, "format", "VTKText");
+        if (fmt == "VTKRaw") {
+            data.outputParams.format = VTKFormat::VTKRaw;
+        } else if (fmt == "VTKText") {
+            data.outputParams.format = VTKFormat::VTKText;
+        } else {
+            throw std::runtime_error("Unknown output format: \"" + fmt
+                                     + "\" (expected \"VTKText\" or \"VTKRaw\")");
+        }
     }
 
     // --- Smoothing ---

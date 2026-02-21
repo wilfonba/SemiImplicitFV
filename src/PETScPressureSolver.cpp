@@ -209,10 +209,10 @@ void PETScPressureSolver::setupPETSc(const RectilinearMesh& mesh) {
     // causing premature convergence while the actual residual is still large.
     KSPSetNormType(ksp_, KSP_NORM_UNPRECONDITIONED);
 
-//#ifndef NDEBUG
+#ifndef NDEBUG
     // Enable residual monitoring: print true residual norm at each KSP iteration
     PetscOptionsInsertString(nullptr, "-ksp_monitor");
-//#endif
+#endif
 
     // Allow runtime override via command-line options (-ksp_type, -pc_type, etc.)
     KSPSetFromOptions(ksp_);

@@ -10,8 +10,9 @@ namespace SemiImplicitFV {
 
 VTKSession::VTKSession(Runtime& rt, const std::string& baseName,
                        const RectilinearMesh& mesh, const SimulationConfig& config,
-                       const std::string& dir)
-    : rt_(rt), mesh_(mesh), baseName_(baseName), config_(config), dir_(dir)
+                       const std::string& dir, VTKFormat format)
+    : rt_(rt), mesh_(mesh), baseName_(baseName), config_(config), dir_(dir),
+      format_(format)
 {
     localExtent_ = rt_.mpiContext().localExtent();
 
@@ -29,7 +30,7 @@ void VTKSession::write(const SolutionState& state, double time) {
     std::string vtrFile = baseName_ + "_" + std::to_string(fileNum_)
                         + "_r" + std::to_string(rank) + ".vtr";
     VTKWriter::writeVTR(dir_ + "/" + snapshotDir + "/" + vtrFile,
-                        mesh_, state, config_, localExtent_, rank);
+                        mesh_, state, config_, localExtent_, rank, format_);
 
     // Gather all extents on rank 0
     std::vector<int> allExtBuf(nprocs * 6);
@@ -48,7 +49,7 @@ void VTKSession::write(const SolutionState& state, double time) {
         std::string pvtrFile = baseName_ + "_" + std::to_string(fileNum_) + ".pvtr";
         VTKWriter::writePVTR(dir_ + "/" + snapshotDir + "/" + pvtrFile,
                              rt_.globalNx(), rt_.globalNy(), rt_.globalNz(),
-                             allExtents, allFiles, config_);
+                             allExtents, allFiles, config_, format_);
         VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "a",
                             time, snapshotDir + "/" + pvtrFile);
     }

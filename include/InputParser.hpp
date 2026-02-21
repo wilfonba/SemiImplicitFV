@@ -3,6 +3,7 @@
 
 #include "SimulationConfig.hpp"
 #include "RectilinearMesh.hpp"
+#include "VTKWriter.hpp"
 #include "ICPatch.hpp"
 
 #include <array>
@@ -42,6 +43,7 @@ struct TimeLoopInputParams {
 struct OutputParams {
     std::string baseName  = "output";
     std::string directory = "VTK";
+    VTKFormat format      = VTKFormat::VTKText;
 };
 
 struct SmoothingParams {

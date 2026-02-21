@@ -7,6 +7,12 @@
 
 namespace SemiImplicitFV {
 
+/// Output encoding for VTK XML files.
+enum class VTKFormat {
+    VTKText,  ///< ASCII (human-readable, large files)
+    VTKRaw    ///< Appended raw binary (compact, fast I/O)
+};
+
 class RectilinearMesh;
 class SolutionState;
 struct SimulationConfig;
@@ -26,7 +32,8 @@ public:
                          const SolutionState& state,
                          const SimulationConfig& config,
                          const std::array<int,6>& pieceExtent = {},
-                         int rank = -1);
+                         int rank = -1,
+                         VTKFormat format = VTKFormat::VTKText);
 
     /// Write .pvtr parallel meta-file referencing piece files.
     /// Only rank 0 calls this in MPI.
@@ -35,7 +42,8 @@ public:
                           int globalNx, int globalNy, int globalNz,
                           const std::vector<std::array<int,6>>& pieceExtents,
                           const std::vector<std::string>& pieceFiles,
-                          const SimulationConfig& config);
+                          const SimulationConfig& config,
+                          VTKFormat format = VTKFormat::VTKText);
 
     /// Three-phase .pvd time-series file:
     ///   mode="w"     -- write header
