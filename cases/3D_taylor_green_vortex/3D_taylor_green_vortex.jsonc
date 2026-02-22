@@ -36,9 +36,9 @@
     "riemannSolver": "HLLC",
     "pressureSolver": "PETSc",
     "mesh": {
-        "nx": 128, "xMin": 0.0, "xMax": 6.283185307179586,
-        "ny": 128, "yMin": 0.0, "yMax": 6.283185307179586,
-        "nz": 128, "zMin": 0.0, "zMax": 6.283185307179586
+        "nx": 512, "xMin": 0.0, "xMax": 6.283185307179586,
+        "ny": 512, "yMin": 0.0, "yMax": 6.283185307179586,
+        "nz": 512, "zMin": 0.0, "zMax": 6.283185307179586
     },
     "boundaryConditions": {
         "xLow": "Periodic", "xHigh": "Periodic",
