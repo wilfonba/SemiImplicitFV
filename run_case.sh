@@ -33,6 +33,7 @@ Options:
                           JSON input for maximum performance (codegen path)
   --petsc                 Enable PETSc pressure solver (KSP+GAMG)
   --nsys                  Profile with Nsight Systems (enables NVTX ranges)
+  --srun                  Use srun instead of mpirun (for Slurm-managed systems)
   -j <N>                  Parallel build jobs (default: number of cores)
   -o, --output-dir <dir>  Override the run directory (default: cases/<case_name>)
   -h, --help              Show this help
@@ -86,6 +87,7 @@ CLEAN=false
 BUILD_ONLY=false
 ENABLE_PETSC=false
 ENABLE_NSYS=false
+USE_SRUN=false
 CASE_OPTIMIZATION=false
 FORCE_COMPILED=false
 MPI_RANKS=1
@@ -134,6 +136,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --nsys)
             ENABLE_NSYS=true
+            shift
+            ;;
+        --srun)
+            USE_SRUN=true
             shift
             ;;
         -j)
@@ -285,6 +291,13 @@ if $ENABLE_NSYS; then
     NSYS_PREFIX=(nsys profile --trace=mpi,nvtx --output="${OUTPUT_DIR}/${BARE_NAME}.nsys-rep" --force-overwrite=true)
 fi
 
+# --- MPI launcher ---
+if $USE_SRUN; then
+    MPI_LAUNCHER=(srun -n "$MPI_RANKS")
+else
+    MPI_LAUNCHER=(mpirun -np "$MPI_RANKS")
+fi
+
 # --- Build and run ---
 if $USE_JSON; then
     if $CASE_OPTIMIZATION; then
@@ -337,7 +350,7 @@ if $USE_JSON; then
             echo ""
             cd "$OUTPUT_DIR"
             "${NSYS_PREFIX[@]+"${NSYS_PREFIX[@]}"}" \
-                mpirun -np "$MPI_RANKS" "$BUILD_DIR/$GEN_TARGET" \
+                "${MPI_LAUNCHER[@]}" "$BUILD_DIR/$GEN_TARGET" \
                 "${PROGRAM_ARGS[@]+"${PROGRAM_ARGS[@]}"}"
         fi
     else
@@ -352,7 +365,7 @@ if $USE_JSON; then
             echo ""
             cd "$OUTPUT_DIR"
             "${NSYS_PREFIX[@]+"${NSYS_PREFIX[@]}"}" \
-                mpirun -np "$MPI_RANKS" "$BUILD_DIR/sifv" "$JSON_FILE" \
+                "${MPI_LAUNCHER[@]}" "$BUILD_DIR/sifv" "$JSON_FILE" \
                 "${PROGRAM_ARGS[@]+"${PROGRAM_ARGS[@]}"}"
         fi
     fi
@@ -371,7 +384,7 @@ else
         echo ""
         cd "$OUTPUT_DIR"
         "${NSYS_PREFIX[@]+"${NSYS_PREFIX[@]}"}" \
-            mpirun -np "$MPI_RANKS" "$BUILD_DIR/$TARGET_NAME" \
+            "${MPI_LAUNCHER[@]}" "$BUILD_DIR/$TARGET_NAME" \
             "${PROGRAM_ARGS[@]+"${PROGRAM_ARGS[@]}"}"
     fi
 fi

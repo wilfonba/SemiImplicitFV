@@ -191,22 +191,26 @@ def main():
         c = colors[i % len(colors)]
         s = styles[i % len(styles)]
         ax1.plot(times, ke, s, color=c, markersize=3, label=label)
-        ax2.plot(times, enst, s, color=c, markersize=3, label=label)
-        ax3.plot(times, diss, s, color=c, markersize=3, label=label)
+        ax2.plot(times, diss, s, color=c, markersize=3, label=label)
+        ax3.plot(times, enst, s, color=c, markersize=3, label=label)
 
     ax1.set_ylabel("Kinetic Energy")
     ax1.set_title("3D Taylor-Green Vortex")
     ax1.grid(True)
     ax1.legend()
 
-    ax2.set_ylabel("Enstrophy")
+    ax2.set_xlabel("Time")
+    ax2.set_ylabel(r"KE Dissipation Rate ($-dKE/dt$)")
     ax2.grid(True)
     ax2.legend()
+    ax2.set_ylim(0, 0.016)
+    ax2.set_xlim(0,20)
 
-    ax3.set_xlabel("Time")
-    ax3.set_ylabel(r"KE Dissipation Rate ($-dKE/dt$)")
+    ax3.set_ylabel("Enstrophy")
     ax3.grid(True)
     ax3.legend()
+    ax3.set_ylim(0, 13)
+    ax3.set_xlim(0,20)
 
     plt.tight_layout()
     plot_path = args.output + ".png"
