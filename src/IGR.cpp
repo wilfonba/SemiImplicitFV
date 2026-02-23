@@ -36,7 +36,7 @@ double IGRSolver::computeIGRRhs(const SimulationConfig& config, const GradientTe
 void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
         const RectilinearMesh& mesh,
         SolutionState& state,
-        std::vector<GradientTensor> gradU) {
+        const std::vector<GradientTensor>& gradU) {
     // Solve: sigma/rho - alpha nabla . ((1/rho) nabla sigma) = rhs
     // Gauss-Seidel iteration with warm start
     int maxIters = config.step == 0 ? params_.IGRWarmStartIters : params_.IGRIters;
@@ -99,7 +99,7 @@ void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
 void IGRSolver::solveEntropicPressure(const SimulationConfig& config,
         const RectilinearMesh& mesh,
         SolutionState& state,
-        std::vector<GradientTensor> gradU,
+        const std::vector<GradientTensor>& gradU,
         HaloExchange& halo) {
     int maxIters = config.step == 0 ? params_.IGRWarmStartIters : params_.IGRIters;
     double alpha = params_.alphaCoeff * mesh.dx(0) * mesh.dx(0);

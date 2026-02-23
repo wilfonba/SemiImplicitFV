@@ -12,6 +12,8 @@ Use `run_case.sh` to configure, build, and run cases automatically:
 ./run_case.sh -n 4 <case>                    # Run with 4 MPI ranks
 ./run_case.sh --case-optimization <case>     # Codegen optimized build
 ./run_case.sh --compiled <case>              # Build compiled C++ case
+./run_case.sh --petsc <case>                 # Enable PETSc pressure solver
+./run_case.sh --nsys <case>                  # Profile with Nsight Systems (NVTX)
 ./run_case.sh --list                         # List available cases
 ```
 
@@ -30,7 +32,6 @@ make -j
 - `driver/` — generic JSON driver (`sifv`), the main entry point for running cases
 - `cases/` — case definitions as JSON/JSONC input files (the primary way to define simulations)
 - `tools/` — code generation (`codegen.py`: JSON → optimized C++) and utilities
-- `examples/` — legacy compiled example programs (standalone C++ files)
 
 ## Case System
 
@@ -45,7 +46,11 @@ When adding new cases, prefer JSON input files. Use compiled C++ only when the c
 
 ### JSON Schema
 
-Top-level sections: `config`, `eos`, `riemannSolver`, `mesh`, `boundaryConditions`, `timeLoop`, `output`, `initialConditions`, `smoothing`, `restart`. All sections except `config`, `mesh`, `timeLoop`, and `initialConditions` are optional.
+Top-level sections: `config`, `eos`, `riemannSolver`, `pressureSolver`, `mesh`, `boundaryConditions`, `timeLoop`, `output`, `initialConditions`, `smoothing`, `restart`. All sections except `config`, `mesh`, `timeLoop`, and `initialConditions` are optional.
+
+The `pressureSolver` key selects the pressure solver for semi-implicit runs: `"GaussSeidel"` (default) or `"PETSc"` (CG + GAMG algebraic multigrid via PETSc; requires `--petsc` build flag).
+
+The `output` section supports a `"format"` field: `"VTKText"` (default, ASCII) or `"VTKRaw"` (appended raw binary, compact and fast).
 
 Initial condition patches support `"box"`, `"sphere"`, `"plane"`, and `"analytic"` geometry types. Patch states inherit from the default state.
 
@@ -117,9 +122,13 @@ Only conservative variables are saved. Primitives are recomputed on restart via 
 
 **IGR**: `IGRSolver` computes entropic pressure via Gauss-Seidel iteration on the elliptic equation. Controlled by `SimulationConfig::useIGR` and `IGRParams`.
 
+**Pressure solvers**: `GaussSeidelPressureSolver` (default) for the semi-implicit pressure equation. `PETScPressureSolver` uses CG + GAMG algebraic multigrid via PETSc for mesh-independent convergence; enabled with `--petsc` build flag and `"pressureSolver": "PETSc"` in JSON.
+
 **Mesh**: `RectilinearMesh` with ghost cells and boundary conditions (Periodic, Reflective, Outflow).
 
-**Output**: `VTKWriter` produces `.vtr` and `.pvd` files. Multi-phase fields (`Alpha_k`, `AlphaRho_k`) are written automatically when present.
+**Output**: `VTKWriter` produces `.vtr` and `.pvd` files in ASCII (`VTKText`) or appended raw binary (`VTKRaw`) format. Multi-phase fields (`Alpha_k`, `AlphaRho_k`) are written automatically when present.
+
+**Profiling**: `NvtxRange.hpp` provides RAII-scoped NVTX ranges for Nsight Systems profiling. Enabled with `--nsys` build/run flag which sets `ENABLE_NVTX=ON` and wraps execution with `nsys profile`.
 
 **Input parsing**: `InputParser` (`InputParser.hpp/cpp`) reads JSON/JSONC files into `InputData` structs. This includes `SimulationConfig`, mesh/EOS/BC parameters, and initial condition patches. The driver (`driver/main.cpp`) converts these data structs into runtime objects.
 
@@ -130,7 +139,7 @@ Only conservative variables are saved. Primitives are recomputed on restart via 
 All simulation parameters live in `SimulationConfig` (see `include/SimulationConfig.hpp`):
 - `dim` (1-3), `nGhost`, `RKOrder` (1-3), `reconOrder`, `useIGR`, `semiImplicit`
 - `ExplicitParams`: cfl, constDt, maxDt, minDt
-- `SemiImplicitParams`: cfl, maxDt, minDt, maxPressureIters, pressureTol
+- `SemiImplicitParams`: cfl, constDt, maxDt, minDt, maxAcousticCFL, maxPressureIters, pressureTol, singlePressureSolve
 - `IGRParams`: alphaCoeff, IGRIters, IGRWarmStartIters
 - `MultiPhaseParams`: nPhases (0=single-phase), phases (vector of `PhaseEOS{gamma, pInf}`), alphaMin
 - `RestartParams` (in `InputData`): file, checkpoint
