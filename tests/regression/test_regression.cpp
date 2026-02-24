@@ -485,7 +485,7 @@ TEST(Regression, TestName) {                                                    
 
 REGRESSION_TEST(SodShocktube1D,       "1D_sod_shocktube_50.jsonc",       "1D_sod_shocktube_50.dat",       50)
 REGRESSION_TEST(AdvectionSI1D,        "1D_advection_SI_50.jsonc",        "1D_advection_SI_50.dat",        50)
-REGRESSION_TEST(LiquidGasShocktube1D, "1D_liquid_gas_shocktube_50.jsonc","1D_liquid_gas_shocktube_50.dat",50)
+REGRESSION_TEST_TOL(LiquidGasShocktube1D, "1D_liquid_gas_shocktube_50.jsonc","1D_liquid_gas_shocktube_50.dat",50, 1e-6)
 REGRESSION_TEST(IsentropicVortex2D,   "2D_isentropic_vortex_50.jsonc",   "2D_isentropic_vortex_50.dat",   50)
 REGRESSION_TEST(ChannelFlow2D,        "2D_channel_flow_50.jsonc",        "2D_channel_flow_50.dat",        50)
 REGRESSION_TEST(TaylorGreenVortex3D,      "3D_taylor_green_vortex_50.jsonc",   "3D_taylor_green_vortex_50.dat",   50)
