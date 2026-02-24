@@ -135,6 +135,7 @@ Thumbs.db
 
 # Data files
 *.dat
+!tests/regression/references/*.dat
 *.pvd
 *.vtr
 *.pvtr
