@@ -160,8 +160,8 @@ if(ENABLE_NVTX)
     endif()
 endif()
 
-# ---- JSON Driver (sifv) ----
-if(BUILD_DRIVER)
+# ---- Input parsing library (needed by driver and tests) ----
+if(BUILD_DRIVER OR BUILD_TESTS)
     include(FetchContent)
 
     # nlohmann/json (header-only)
@@ -193,8 +193,10 @@ if(BUILD_DRIVER)
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     )
     target_include_directories(SemiImplicitFV_input PRIVATE ${exprtk_SOURCE_DIR})
+endif()
 
-    # Generic driver executable
+# ---- JSON Driver (sifv) ----
+if(BUILD_DRIVER)
     add_executable(sifv driver/main.cpp)
     target_link_libraries(sifv PRIVATE SemiImplicitFV_input)
 endif()
@@ -212,6 +214,12 @@ if(BUILD_EXAMPLES)
             endif()
         endif()
     endforeach()
+endif()
+
+# Tests
+if(BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
 endif()
 
 # Install

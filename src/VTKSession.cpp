@@ -39,6 +39,7 @@ void vtk_session_write(VTKSession* s,
                        const SolutionState* state,
                        double time)
 {
+    if (!s) return;
     int rank = s->rt->rank;
     int nprocs = s->rt->size;
 
@@ -83,6 +84,7 @@ void vtk_session_write(VTKSession* s,
 
 void vtk_session_finalize(VTKSession* s)
 {
+    if (!s) return;
     if (s->rt->rank == 0) {
         std::string pvdPath = std::string(s->dir) + "/" + s->baseName + ".pvd";
         vtk_write_pvd(pvdPath.c_str(), 'c', 0.0, NULL);

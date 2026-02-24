@@ -1,0 +1,27 @@
+{
+    // 2D Channel Flow — 50 steps on small mesh for regression testing
+    "config": {
+        "dim": 2,
+        "nGhost": 3,
+        "RKOrder": 3,
+        "reconOrder": "WENO5",
+        "semiImplicit": false,
+        "explicitParams": { "constDt": 2e-3 },
+        "bodyForceParams": { "a": [0.1, 0, 0] },
+        "viscousParams": { "mu": 0.1 }
+    },
+    "eos": { "type": "IdealGas", "gamma": 1.4, "R": 1.0 },
+    "riemannSolver": "HLLC",
+    "mesh": {
+        "nx": 8, "xMin": 0.0, "xMax": 1.0,
+        "ny": 50, "yMin": 0.0, "yMax": 1.0
+    },
+    "boundaryConditions": {
+        "xLow": "Periodic", "xHigh": "Periodic",
+        "yLow": "NoSlipWall", "yHigh": "NoSlipWall"
+    },
+    "timeLoop": { "endTime": 0.1, "outputInterval": 1e10, "printInterval": 100000 },
+    "initialConditions": {
+        "default": { "rho": 1.0, "u": 0.0, "v": 0.0, "p": 100.0 }
+    }
+}

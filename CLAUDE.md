@@ -4,17 +4,20 @@ Finite volume solver for compressible Euler equations on rectilinear meshes (1D/
 
 ## Build and Run
 
-Use `run_case.sh` to configure, build, and run cases automatically:
+Use `sifv.sh` to configure, build, and run cases or tests automatically:
 
 ```bash
-./run_case.sh <case>                         # Build and run a JSON case
-./run_case.sh --debug <case>                 # Debug build (AddressSanitizer)
-./run_case.sh -n 4 <case>                    # Run with 4 MPI ranks
-./run_case.sh --case-optimization <case>     # Codegen optimized build
-./run_case.sh --compiled <case>              # Build compiled C++ case
-./run_case.sh --petsc <case>                 # Enable PETSc pressure solver
-./run_case.sh --nsys <case>                  # Profile with Nsight Systems (NVTX)
-./run_case.sh --list                         # List available cases
+./sifv.sh run <case>                         # Build and run a JSON case
+./sifv.sh run --debug <case>                 # Debug build (AddressSanitizer)
+./sifv.sh run -n 4 <case>                    # Run with 4 MPI ranks
+./sifv.sh run --case-optimization <case>     # Codegen optimized build
+./sifv.sh run --compiled <case>              # Build compiled C++ case
+./sifv.sh run --petsc <case>                 # Enable PETSc pressure solver
+./sifv.sh run --nsys <case>                  # Profile with Nsight Systems (NVTX)
+./sifv.sh list                               # List available cases
+./sifv.sh test                               # Run all tests
+./sifv.sh test unit                          # Run unit tests only
+./sifv.sh test -j 8                          # Parallel build and test execution
 ```
 
 Manual build (if needed):
@@ -31,16 +34,18 @@ make -j
 - `src/` — library source files
 - `driver/` — generic JSON driver (`sifv`), the main entry point for running cases
 - `cases/` — case definitions as JSON/JSONC input files (the primary way to define simulations)
+- `tests/` — three-tier test suite (unit, integration, regression) using GoogleTest + CTest
 - `tools/` — code generation (`codegen.py`: JSON → optimized C++) and utilities
+- `.github/workflows/` — GitHub Actions CI pipeline
 
 ## Case System
 
 **JSON input files** in `cases/<name>/<name>.jsonc` are the standard way to define simulations. The `sifv` driver reads a JSON file and runs the simulation without any C++ coding. VTK output is written into the case's own directory (e.g. `cases/1D_sod_shocktube/VTK/`).
 
-Run cases via `run_case.sh`:
-- `./run_case.sh <case>` — build `sifv` and run the JSON case
-- `./run_case.sh --case-optimization <case>` — generate optimized C++ from JSON via `tools/codegen.py`, compile, and run
-- `./run_case.sh --compiled <case>` — build and run a compiled `.cpp` source directly (for cases with custom post-processing)
+Run cases via `sifv.sh run`:
+- `./sifv.sh run <case>` — build `sifv` and run the JSON case
+- `./sifv.sh run --case-optimization <case>` — generate optimized C++ from JSON via `tools/codegen.py`, compile, and run
+- `./sifv.sh run --compiled <case>` — build and run a compiled `.cpp` source directly (for cases with custom post-processing)
 
 When adding new cases, prefer JSON input files. Use compiled C++ only when the case requires logic not expressible in JSON (custom diagnostics, drag/lift computation, convergence studies, etc.).
 
@@ -58,7 +63,7 @@ Initial condition patches support `"box"`, `"sphere"`, `"plane"`, and `"analytic
 
 1. Create `cases/<name>/<name>.jsonc`
 2. Define config, mesh, BCs, ICs, and any optional sections
-3. Run: `./run_case.sh <name>`
+3. Run: `./sifv.sh run <name>`
 4. VTK output appears in `cases/<name>/VTK/`
 
 ## Checkpoint / Restart
@@ -100,13 +105,35 @@ Only conservative variables are saved. Primitives are recomputed on restart via 
 
 ```bash
 # 1. Run with checkpoints enabled (add "restart": {"checkpoint": true} to the JSONC)
-./run_case.sh 1D_sod_shocktube
+./sifv.sh run 1D_sod_shocktube
 
 # 2. Job gets killed at wall-time limit...
 
 # 3. Restart: add "file": "Checkpoint/checkpoint.{rank}.bin" to the "restart" section
-./run_case.sh 1D_sod_shocktube
+./sifv.sh run 1D_sod_shocktube
 ```
+
+## Testing
+
+Three-tier test suite using GoogleTest + CTest. All tests run through `mpirun` since the solver requires MPI initialization. Each GoogleTest `TEST()` case is registered as an individual CTest entry for granular pass/fail reporting.
+
+```bash
+./sifv.sh test                          # Build and run all tests
+./sifv.sh test unit                     # Unit tests only
+./sifv.sh test integration              # Integration tests only
+./sifv.sh test regression               # Regression tests (np=1 and np=4)
+./sifv.sh test -j 8                     # Parallel build (-j) and test execution (-j)
+./sifv.sh test -d unit                  # Debug build
+./sifv.sh test -c                       # Clean build directory first
+./sifv.sh test --build-only             # Build without running
+./sifv.sh test --generate-references    # Regenerate regression reference data
+```
+
+- **Unit tests** (`tests/unit/`): Individual functions — EOS, Riemann solvers, reconstruction, mixture EOS, IGR
+- **Integration tests** (`tests/integration/`): Multi-module — BCs, state conversion, explicit stepping, pressure solvers
+- **Regression tests** (`tests/regression/`): Full 50-step simulations compared pointwise against committed reference data at both np=1 and np=4. Tolerance: 1e-8. Cases are listed in `REGRESSION_CASES` in `tests/CMakeLists.txt`.
+
+CI runs all tiers on every push/PR to master via `.github/workflows/tests.yml`.
 
 ## Architecture
 

@@ -1,0 +1,38 @@
+{
+    // 2D Isentropic Vortex — 50 steps on small mesh for regression testing
+    "config": {
+        "dim": 2,
+        "nGhost": 3,
+        "RKOrder": 3,
+        "reconOrder": "WENO3",
+        "semiImplicit": true,
+        "semiImplicitParams": {
+            "constDt": 0.01, "pressureTol": 1e-8, "maxPressureIters": 500
+        }
+    },
+    "eos": { "type": "IdealGas", "gamma": 1.4, "R": 1.0 },
+    "riemannSolver": "HLLC",
+    "mesh": {
+        "nx": 50, "xMin": 0.0, "xMax": 10.0,
+        "ny": 50, "yMin": 0.0, "yMax": 10.0
+    },
+    "boundaryConditions": {
+        "xLow": "Periodic", "xHigh": "Periodic",
+        "yLow": "Periodic", "yHigh": "Periodic"
+    },
+    "timeLoop": { "endTime": 0.5, "outputInterval": 1e10, "printInterval": 100000 },
+    "initialConditions": {
+        "default": { "rho": 1.0, "u": 1.0, "v": 1.0, "p": 142.857142857143 },
+        "patches": [
+            {
+                "geometry": { "type": "analytic" },
+                "expressions": {
+                    "rho": "var r := sqrt((x-5)^2 + (y-5)^2); var f := exp((1 - r^2)/2); var dT := -10 / (8 * 1.4 * pi^2) * f^2; var Tinf := 142.857142857143; var T := Tinf + dT; (T / Tinf)^2.5",
+                    "u":   "var r := sqrt((x-5)^2 + (y-5)^2); var f := exp((1 - r^2)/2); 1.0 + (-5 / (2*pi)) * (y - 5) * f",
+                    "v":   "var r := sqrt((x-5)^2 + (y-5)^2); var f := exp((1 - r^2)/2); 1.0 + ( 5 / (2*pi)) * (x - 5) * f",
+                    "p":   "var r := sqrt((x-5)^2 + (y-5)^2); var f := exp((1 - r^2)/2); var dT := -10 / (8 * 1.4 * pi^2) * f^2; var Tinf := 142.857142857143; var T := Tinf + dT; var rho := (T / Tinf)^2.5; rho * T"
+                }
+            }
+        ]
+    }
+}

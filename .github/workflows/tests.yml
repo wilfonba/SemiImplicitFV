@@ -1,0 +1,65 @@
+name: Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenmpi-dev openmpi-bin cmake build-essential
+
+      - name: Unit tests
+        id: unit
+        continue-on-error: true
+        run: ./sifv.sh test unit
+
+      - name: Integration tests
+        id: integration
+        continue-on-error: true
+        run: ./sifv.sh test integration
+
+      - name: Regression tests
+        id: regression
+        continue-on-error: true
+        run: ./sifv.sh test regression
+
+      - name: Check results
+        run: |
+          echo ""
+          echo "=== Test Results ==="
+          echo ""
+          FAILED=0
+          if [ "${{ steps.unit.outcome }}" = "success" ]; then
+            echo "  unit:        PASS"
+          else
+            echo "  unit:        FAIL"
+            FAILED=1
+          fi
+          if [ "${{ steps.integration.outcome }}" = "success" ]; then
+            echo "  integration: PASS"
+          else
+            echo "  integration: FAIL"
+            FAILED=1
+          fi
+          if [ "${{ steps.regression.outcome }}" = "success" ]; then
+            echo "  regression:  PASS"
+          else
+            echo "  regression:  FAIL"
+            FAILED=1
+          fi
+          echo ""
+          if [ "$FAILED" -ne 0 ]; then
+            echo "Some test tiers FAILED."
+            exit 1
+          fi
+          echo "All test tiers PASSED."
