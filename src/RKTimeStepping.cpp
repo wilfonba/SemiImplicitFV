@@ -292,7 +292,7 @@ void run_time_loop(
     /* Write initial VTK */
     vtk_session_write(vtk, state, params->startTime);
 
-    {
+    if (params->printInterval > 0) {
         std::ostringstream oss;
         oss << "Running simulation to t = " << params->endTime << "...\n";
         runtime_print(rt, oss.str().c_str());
@@ -386,7 +386,8 @@ void run_time_loop(
             runtime_print(rt, oss.str().c_str());
         }
 
-        if (config->step % params->printInterval == 0 || config->step == 1) {
+        if (params->printInterval > 0 &&
+            (config->step % params->printInterval == 0 || config->step == 1)) {
             double pct = 100.0 * time / params->endTime;
 
             std::ostringstream oss;
@@ -419,7 +420,7 @@ void run_time_loop(
         }
     }
 
-    {
+    if (params->printInterval > 0) {
         std::ostringstream summary;
         summary << "\nSimulation complete: " << config->step << " steps, wall time = "
                 << std::fixed << std::setprecision(3) << wallTotal << " s\n";

@@ -3,6 +3,7 @@
 
 #include "State.hpp"
 #include "SimulationConfig.hpp"
+#include <algorithm>
 #include <cmath>
 
 enum RiemannSolverType { RS_LF, RS_RUSANOV, RS_HLLC };

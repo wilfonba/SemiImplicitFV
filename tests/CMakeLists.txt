@@ -77,7 +77,7 @@ target_compile_definitions(test_regression PRIVATE
 set(REGRESSION_CASES
     SodShocktube1D
     AdvectionSI1D
-    LiquidGasShocktube1D
+    GasGasShocktube1D
     IsentropicVortex2D
     ChannelFlow2D
     TaylorGreenVortex3D
