@@ -356,38 +356,6 @@ Then re-run the full suite to verify:
 ./sifv.sh test regression
 ```
 
-## Project Structure
-
-```
-SemiImplicitFV/
-├── cases/                 Case definitions (JSON input files)
-│   ├── 1D_advection_E/
-│   ├── 1D_advection_SI/
-│   ├── 1D_sod_shocktube/
-│   ├── 1D_gas_gas_shocktube/
-│   ├── 1D_liquid_gas_shocktube/
-│   ├── 1D_hydrostatic_water/
-│   ├── 2D_channel_flow/
-│   ├── 2D_isentropic_vortex/
-│   ├── 2D_laplace_pressure_jump/
-│   ├── 2D_quasi1D_sod/
-│   ├── 2D_riemann/
-│   ├── 2D_rising_bubble/
-│   └── 3D_taylor_green_vortex/
-├── driver/                Generic JSON driver (sifv)
-├── include/               Header files
-├── src/                   Library source files
-├── tests/                 Test suite (GoogleTest + CTest)
-│   ├── unit/              Unit tests (EOS, Riemann, reconstruction, etc.)
-│   ├── integration/       Integration tests (BCs, solvers, state conversion)
-│   └── regression/        Regression tests (50-step runs with reference data)
-├── tools/                 Code generation and utilities
-│   └── codegen.py         JSON → optimized C++ source generator
-├── .github/workflows/     GitHub Actions CI
-├── CMakeLists.txt
-└── sifv.sh                Build, run, and test helper script
-```
-
 ## Visualization
 
 Output files are VTK XML RectilinearGrid format, viewable in [ParaView](https://www.paraview.org/):
