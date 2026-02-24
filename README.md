@@ -19,7 +19,8 @@ A finite volume solver for the compressible Euler equations on rectilinear meshe
 - **Checkpoint / restart** — Periodic binary checkpoints with automatic restart for HPC wall-time resilience
 - **VTK output** — `.vtr` (serial), `.pvtr` (parallel), and `.pvd` (time series) for ParaView; ASCII or binary (appended raw) format
 - **PETSc pressure solver** — Optional CG + GAMG algebraic multigrid for mesh-independent semi-implicit pressure convergence
-- **NVTX profiling** — Nsight Systems integration with RAII-scoped NVTX ranges for performance analysis
+- **NVTX profiling** — Nsight Systems integration with NVTX push/pop macros for performance analysis
+- **GPU-ready architecture** — C-style structs, free functions, enum+switch dispatch, flat arrays — no virtual dispatch, no heap allocations in hot loops
 
 ## Convergence
 
@@ -117,7 +118,7 @@ Cases are defined as JSON files in `cases/<name>/<name>.jsonc`. This is the prim
 | `config` | Yes | Solver parameters (dim, RK order, CFL, etc.) |
 | `eos` | No | Equation of state (`"IdealGas"` or `"StiffenedGas"`) |
 | `riemannSolver` | No | `"LF"`, `"Rusanov"`, or `"HLLC"` (default) |
-| `pressureSolver` | No | `"GaussSeidel"` (default) or `"PETSc"` (requires `--petsc` build flag) |
+| `pressureSolver` | No | `"GaussSeidel"` (default), `"Jacobi"`, or `"PETSc"` (requires `--petsc` build flag) |
 | `mesh` | Yes | Grid dimensions and extents |
 | `boundaryConditions` | No | Per-face BC: `"Outflow"`, `"Periodic"`, `"Symmetry"`, `"SlipWall"`, `"NoSlipWall"` |
 | `timeLoop` | Yes | End time, output interval, print interval |
@@ -140,7 +141,7 @@ This eliminates runtime parsing overhead and enables the compiler to optimize ag
 
 ## Configuration Reference
 
-All simulation parameters are set through `SimulationConfig` (defined in `include/SimulationConfig.hpp`). In JSON cases, these appear under the `"config"` section. In compiled C++ cases, they are set directly on the struct.
+All simulation parameters are set through `SimulationConfig` (defined in `include/SimulationConfig.hpp`). In JSON cases, these appear under the `"config"` section. In compiled C++ cases, they are set directly on the struct via `config_defaults()` followed by field assignment.
 
 ### Config Fields
 
@@ -286,6 +287,8 @@ Use `--compiled` to build and run a compiled case:
 ./run_case.sh --compiled 2D_flow_over_circle
 ```
 
+Compiled cases use the C-style API directly — call `config_defaults()` to initialize a `SimulationConfig`, set fields, then use `runtime_init()` / `run_time_loop()` / `runtime_free()`.
+
 ## MPI Execution
 
 Run with multiple MPI ranks using the `-n` flag:
@@ -294,7 +297,7 @@ Run with multiple MPI ranks using the `-n` flag:
 ./run_case.sh -n 4 2D_riemann
 ```
 
-The `Runtime` class handles domain decomposition, halo exchange, and parallel VTK output automatically. Each rank writes its own `.vtr` piece file, and rank 0 writes the `.pvtr` and `.pvd` metadata files.
+The `Runtime` struct and associated free functions handle domain decomposition, halo exchange, and parallel VTK output automatically. Each rank writes its own `.vtr` piece file, and rank 0 writes the `.pvtr` and `.pvd` metadata files.
 
 ## Project Structure
 

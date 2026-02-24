@@ -2,115 +2,112 @@
 #define RK_TIME_STEPPING_HPP
 
 #include "SimulationConfig.hpp"
-#include "RectilinearMesh.hpp"
-#include "SolutionState.hpp"
 #include "EquationOfState.hpp"
-
-#include <functional>
 #include <mpi.h>
+#include <stddef.h>
 
-namespace SemiImplicitFV {
+struct RectilinearMesh;
+struct SolutionState;
+struct Runtime;
+struct VTKSession;
 
-class Runtime;
-class VTKSession;
-
-// Advective time step: CFL based on material velocity only (no sound speed).
-// Used by the semi-implicit solver where pressure is handled implicitly.
-double computeAdvectiveTimeStep(const RectilinearMesh& mesh,
-                                const SolutionState& state,
+/* Advective time step: CFL based on material velocity only (no sound speed). */
+double computeAdvectiveTimeStep(const struct RectilinearMesh* mesh,
+                                const struct SolutionState* state,
                                 double cfl, double maxDt);
 
-// Acoustic time step: CFL based on |u| + c (velocity + sound speed).
-// Used by the explicit solver.
-double computeAcousticTimeStep(const RectilinearMesh& mesh,
-                               const SolutionState& state,
-                               const EquationOfState& eos,
+/* Acoustic time step: CFL based on |u| + c. */
+double computeAcousticTimeStep(const struct RectilinearMesh* mesh,
+                               const struct SolutionState* state,
+                               const struct EOSData* eos,
                                double cfl, double maxDt);
 
-// Acoustic time step with config for multi-phase sound speed via Wood's formula.
-double computeAcousticTimeStep(const RectilinearMesh& mesh,
-                               const SolutionState& state,
-                               const EquationOfState& eos,
-                               const SimulationConfig& config,
-                               double cfl, double maxDt);
+/* Acoustic time step with config for multi-phase sound speed via Wood's formula. */
+double computeAcousticTimeStep_config(const struct RectilinearMesh* mesh,
+                                      const struct SolutionState* state,
+                                      const struct EOSData* eos,
+                                      const struct SimulationConfig* config,
+                                      double cfl, double maxDt);
 
-// MPI-aware advective time step with global reduction.
-double computeAdvectiveTimeStep(const RectilinearMesh& mesh,
-                                const SolutionState& state,
-                                double cfl, double maxDt,
-                                MPI_Comm comm);
+/* MPI-aware variants (global reduction). */
+double computeAdvectiveTimeStep_mpi(const struct RectilinearMesh* mesh,
+                                    const struct SolutionState* state,
+                                    double cfl, double maxDt,
+                                    MPI_Comm comm);
 
-// MPI-aware acoustic time step with global reduction.
-double computeAcousticTimeStep(const RectilinearMesh& mesh,
-                               const SolutionState& state,
-                               const EquationOfState& eos,
-                               double cfl, double maxDt,
-                               MPI_Comm comm);
+double computeAcousticTimeStep_mpi(const struct RectilinearMesh* mesh,
+                                   const struct SolutionState* state,
+                                   const struct EOSData* eos,
+                                   double cfl, double maxDt,
+                                   MPI_Comm comm);
 
-// MPI-aware acoustic time step with config for multi-phase.
-double computeAcousticTimeStep(const RectilinearMesh& mesh,
-                               const SolutionState& state,
-                               const EquationOfState& eos,
-                               const SimulationConfig& config,
-                               double cfl, double maxDt,
-                               MPI_Comm comm);
+double computeAcousticTimeStep_config_mpi(const struct RectilinearMesh* mesh,
+                                          const struct SolutionState* state,
+                                          const struct EOSData* eos,
+                                          const struct SimulationConfig* config,
+                                          double cfl, double maxDt,
+                                          MPI_Comm comm);
 
-// Viscous time step: dt <= cfl * dx_min^2 / (2 * dim * nu), nu = mu/rho.
-double computeViscousDt(const RectilinearMesh& mesh,
-                        const SolutionState& state,
+/* Viscous time step */
+double computeViscousDt(const struct RectilinearMesh* mesh,
+                        const struct SolutionState* state,
                         double mu, double cfl, double maxDt);
 
-double computeViscousDt(const RectilinearMesh& mesh,
-                        const SolutionState& state,
-                        double mu, double cfl, double maxDt,
-                        MPI_Comm comm);
+double computeViscousDt_mpi(const struct RectilinearMesh* mesh,
+                            const struct SolutionState* state,
+                            double mu, double cfl, double maxDt,
+                            MPI_Comm comm);
 
-// Viscous time step using per-cell effective viscosity from config
-// (supports per-phase phaseMu via alpha-weighted average).
-double computeViscousDt(const RectilinearMesh& mesh,
-                        const SolutionState& state,
-                        const SimulationConfig& config,
-                        double cfl, double maxDt);
+double computeViscousDt_config(const struct RectilinearMesh* mesh,
+                               const struct SolutionState* state,
+                               const struct SimulationConfig* config,
+                               double cfl, double maxDt);
 
-double computeViscousDt(const RectilinearMesh& mesh,
-                        const SolutionState& state,
-                        const SimulationConfig& config,
-                        double cfl, double maxDt,
-                        MPI_Comm comm);
+double computeViscousDt_config_mpi(const struct RectilinearMesh* mesh,
+                                   const struct SolutionState* state,
+                                   const struct SimulationConfig* config,
+                                   double cfl, double maxDt,
+                                   MPI_Comm comm);
 
-// Capillary time step: dt <= cfl * sqrt(rho * dx_min^3 / sigma).
-double computeCapillaryDt(const RectilinearMesh& mesh,
-                          const SolutionState& state,
+/* Capillary time step */
+double computeCapillaryDt(const struct RectilinearMesh* mesh,
+                          const struct SolutionState* state,
                           double sigma, double cfl, double maxDt);
 
-double computeCapillaryDt(const RectilinearMesh& mesh,
-                          const SolutionState& state,
-                          double sigma, double cfl, double maxDt,
-                          MPI_Comm comm);
+double computeCapillaryDt_mpi(const struct RectilinearMesh* mesh,
+                              const struct SolutionState* state,
+                              double sigma, double cfl, double maxDt,
+                              MPI_Comm comm);
 
-// ---- Time loop ----
+/* ---- Time loop ---- */
+
+/* Step function: takes targetDt and context, returns actual dt used. */
+typedef double (*StepFn)(double targetDt, void* ctx);
+
+/* Acoustic Dt callback: returns acoustic dt with CFL=1. */
+typedef double (*AcousticDtFn)(void* ctx);
 
 struct TimeLoopParams {
     double endTime;
     double outputInterval;
-    int printInterval = 1;
-    bool checkNaN = true;           // Abort if NaNs detected at I/O steps
-    // If set, prints acoustic CFL = dt / acousticDtFn() at each print step.
-    // The callback should return the acoustic time step with CFL=1.
-    std::function<double()> acousticDtFn;
-    bool checkpoint = false;         // write checkpoints to Checkpoint/ at outputInterval
-    double startTime = 0.0;          // non-zero when restarting from checkpoint
+    int printInterval;
+    int checkNaN;
+    AcousticDtFn acousticDtFn;
+    void* acousticDtCtx;
+    int checkpoint;
+    double startTime;
 };
 
-void runTimeLoop(
-    Runtime& rt,
-    SimulationConfig& config,
-    const RectilinearMesh& mesh,
-    SolutionState& state,
-    VTKSession& vtk,
-    const std::function<double(double)>& stepFn,
-    const TimeLoopParams& params);
+struct TimeLoopParams time_loop_params_defaults(void);
 
-} // namespace SemiImplicitFV
+void run_time_loop(
+    struct Runtime* rt,
+    struct SimulationConfig* config,
+    const struct RectilinearMesh* mesh,
+    struct SolutionState* state,
+    struct VTKSession* vtk,
+    StepFn stepFn,
+    void* stepCtx,
+    const struct TimeLoopParams* params);
 
-#endif // RK_TIME_STEPPING_HPP
+#endif /* RK_TIME_STEPPING_HPP */

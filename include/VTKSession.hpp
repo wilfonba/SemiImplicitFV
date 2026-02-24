@@ -2,42 +2,37 @@
 #define VTK_SESSION_HPP
 
 #include "VTKWriter.hpp"
-#include "Runtime.hpp"
-#include <string>
-#include <array>
 
-namespace SemiImplicitFV {
+struct Runtime;
+struct RectilinearMesh;
+struct SolutionState;
+struct SimulationConfig;
 
-class RectilinearMesh;
-class SolutionState;
-
-/// Encapsulates the entire VTK output lifecycle: PVD open/append/close,
-/// per-rank VTR writing, and MPI gather + PVTR meta-file generation.
-class VTKSession {
-public:
-    VTKSession(Runtime& rt, const std::string& baseName,
-               const RectilinearMesh& mesh, const SimulationConfig& config,
-               const std::string& dir = "VTK",
-               VTKFormat format = VTKFormat::VTKText);
-
-    /// Write current state at the given time.  Collective in MPI mode.
-    void write(const SolutionState& state, double time);
-
-    /// Close the PVD time-series file.
-    void finalize();
-
-private:
-    Runtime& rt_;
-    const RectilinearMesh& mesh_;
-    std::string baseName_;
-    const SimulationConfig& config_;
-    std::string dir_;
-    VTKFormat format_;
-    int fileNum_ = 0;
-
-    std::array<int,6> localExtent_ = {};
+struct VTKSession {
+    char baseName[256];
+    char dir[256];
+    enum VTKFormat format;
+    int fileNum;
+    int localExtent[6];
+    struct Runtime* rt;
+    const struct RectilinearMesh* mesh;
+    const struct SimulationConfig* config;
 };
 
-} // namespace SemiImplicitFV
+void vtk_session_init(struct VTKSession* s,
+                      struct Runtime* rt,
+                      const char* baseName,
+                      const struct RectilinearMesh* mesh,
+                      const struct SimulationConfig* config,
+                      const char* dir,
+                      enum VTKFormat format);
 
-#endif // VTK_SESSION_HPP
+/* Write current state at the given time. Collective in MPI mode. */
+void vtk_session_write(struct VTKSession* s,
+                       const struct SolutionState* state,
+                       double time);
+
+/* Close the PVD time-series file. */
+void vtk_session_finalize(struct VTKSession* s);
+
+#endif /* VTK_SESSION_HPP */

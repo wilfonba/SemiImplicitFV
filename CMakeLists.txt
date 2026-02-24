@@ -109,24 +109,21 @@ endif()
 # Library sources
 set(LIB_SOURCES
     src/Checkpoint.cpp
+    src/SimulationConfig.cpp
+    src/EquationOfState.cpp
     src/SolutionState.cpp
     src/RectilinearMesh.cpp
     src/Reconstruction.cpp
-    src/LFSolver.cpp
-    src/RusanovSolver.cpp
-    src/HLLCSolver.cpp
+    src/RiemannSolver.cpp
     src/IGR.cpp
     src/SemiImplicitSolver.cpp
     src/ExplicitSolver.cpp
     src/RKTimeStepping.cpp
     src/PressureLaplacian.cpp
-    src/GaussSeidelPressureSolver.cpp
-    src/JacobiPressureSolver.cpp
+    src/PressureSolver.cpp
     src/MixtureEOS.cpp
     src/ViscousFlux.cpp
     src/SurfaceTension.cpp
-    src/StiffenedGasEOS.cpp
-    src/IdealGasEOS.cpp
     src/VTKWriter.cpp
     src/MPIContext.cpp
     src/HaloExchange.cpp

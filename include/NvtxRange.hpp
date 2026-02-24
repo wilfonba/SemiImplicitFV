@@ -1,38 +1,17 @@
-#ifndef SIFV_NVTX_RANGE_HPP
-#define SIFV_NVTX_RANGE_HPP
+#ifndef NVTX_RANGE_HPP
+#define NVTX_RANGE_HPP
 
 #ifdef SIFV_HAS_NVTX
 #include <nvtx3/nvToolsExt.h>
 
-#define SIFV_NVTX_PUSH(name) nvtxRangePushA(name)
-#define SIFV_NVTX_POP()      nvtxRangePop()
+#define NVTX_PUSH(name) nvtxRangePushA(name)
+#define NVTX_POP()      nvtxRangePop()
 
-namespace SemiImplicitFV {
+#else /* SIFV_HAS_NVTX not defined */
 
-class NvtxRange {
-public:
-    explicit NvtxRange(const char* name) { nvtxRangePushA(name); }
-    ~NvtxRange() { nvtxRangePop(); }
-    NvtxRange(const NvtxRange&) = delete;
-    NvtxRange& operator=(const NvtxRange&) = delete;
-};
+#define NVTX_PUSH(name) ((void)0)
+#define NVTX_POP()      ((void)0)
 
-} // namespace SemiImplicitFV
+#endif /* SIFV_HAS_NVTX */
 
-#else // SIFV_HAS_NVTX not defined
-
-#define SIFV_NVTX_PUSH(name) ((void)0)
-#define SIFV_NVTX_POP()      ((void)0)
-
-namespace SemiImplicitFV {
-
-class NvtxRange {
-public:
-    explicit NvtxRange(const char*) {}
-};
-
-} // namespace SemiImplicitFV
-
-#endif // SIFV_HAS_NVTX
-
-#endif // SIFV_NVTX_RANGE_HPP
+#endif /* NVTX_RANGE_HPP */

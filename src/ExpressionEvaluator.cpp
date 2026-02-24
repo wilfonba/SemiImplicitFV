@@ -6,8 +6,6 @@
 #include <string>
 #include <map>
 
-namespace SemiImplicitFV {
-
 struct ExpressionEvaluator::Impl {
     using symbol_table_t = exprtk::symbol_table<double>;
     using expression_t   = exprtk::expression<double>;
@@ -53,5 +51,3 @@ double ExpressionEvaluator::evaluate(const std::string& name) const {
     }
     return it->second.value();
 }
-
-} // namespace SemiImplicitFV

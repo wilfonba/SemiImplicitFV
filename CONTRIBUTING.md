@@ -47,12 +47,14 @@ Example (`cases/my_case/my_case.jsonc`):
 | `config` | Yes | Solver parameters: `dim`, `nGhost`, `RKOrder`, `reconOrder`, `semiImplicit`, `useIGR`, CFL/time-step params, multi-phase, viscosity, body forces, surface tension, IGR |
 | `eos` | No | Equation of state: `"IdealGas"` (default) or `"StiffenedGas"` with `gamma`, `R`, `pInf` |
 | `riemannSolver` | No | `"LF"`, `"Rusanov"`, or `"HLLC"` (default) |
+| `pressureSolver` | No | `"GaussSeidel"` (default), `"Jacobi"`, or `"PETSc"` (requires `--petsc` build flag) |
 | `mesh` | Yes | `nx`/`ny`/`nz` and `xMin`/`xMax`/`yMin`/`yMax`/`zMin`/`zMax` |
 | `boundaryConditions` | No | Per-face: `"Outflow"`, `"Periodic"`, `"Symmetry"`, `"SlipWall"`, `"NoSlipWall"` |
 | `timeLoop` | Yes | `endTime`, `outputInterval`, `printInterval`, `checkNaN` |
-| `output` | No | `baseName` and `directory` for VTK output |
+| `output` | No | `baseName`, `directory`, and `format` (`"VTKText"` or `"VTKRaw"`) for VTK output |
 | `initialConditions` | Yes | `default` state + `patches` array with geometry and state overrides |
 | `smoothing` | No | `iterations` for post-initialization field smoothing |
+| `restart` | No | `checkpoint` (bool) and `file` (path) for checkpoint/restart |
 
 ### Initial Condition Geometries
 
@@ -65,8 +67,10 @@ Example (`cases/my_case/my_case.jsonc`):
 
 Use compiled cases only when you need logic not expressible in JSON — custom diagnostics, convergence studies, drag/lift computation, etc.
 
-1. Create `cases/<name>/<name>.cpp` (or use `examples/<name>/`)
+1. Create `cases/<name>/<name>.cpp`
 2. Build and run: `./run_case.sh --compiled <name>`
+
+Compiled cases use the C-style API: call `config_defaults()` to initialize a `SimulationConfig`, set fields, then use `runtime_init()` / `run_time_loop()` / `runtime_free()`.
 
 ### Code Generation
 
@@ -80,9 +84,15 @@ This hardcodes all parameters at compile time for maximum performance.
 
 ## Code Style
 
-- C++17, namespace `SemiImplicitFV`
+- C++17, no namespaces (except `ExpressionEvaluator` class which uses pimpl)
 - Headers use `#ifndef` include guards (not `#pragma once`)
-- Solver classes take shared pointers to EOS and Riemann solver
+- Plain C structs with `_init()` / `_free()` lifecycle functions for heap-allocated resources
+- Free functions with `module_action()` naming (e.g. `config_validate()`, `eos_pressure()`, `mesh_index()`)
+- Enums are plain `enum` (not `enum class`) with `UPPER_CASE` values (e.g. `EOS_IDEAL_GAS`, `RS_HLLC`, `BC_OUTFLOW`, `WENO5`)
+- Flat `double*` arrays for field data; multi-phase uses stride-based access (`alpha[phase * totalCells + cell]`)
+- `#define MAX_PHASES 8` for fixed-size phase arrays in structs
+- No virtual dispatch — use enum + switch
+- No `std::shared_ptr` or `std::unique_ptr` in data structs (except `ExpressionEvaluator` pimpl)
 
 ## Building and Running
 

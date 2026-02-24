@@ -1,99 +1,76 @@
 #ifndef RUNTIME_HPP
 #define RUNTIME_HPP
 
+#include "MPIContext.hpp"
+#include "HaloExchange.hpp"
 #include "RectilinearMesh.hpp"
 #include "SolutionState.hpp"
 #include "SimulationConfig.hpp"
-#include <array>
-#include <iostream>
-#include <sstream>
-#include <memory>
-#include "MPIContext.hpp"
-#include "HaloExchange.hpp"
 
-namespace SemiImplicitFV {
+struct ExplicitSolverWork;
+struct SemiImplicitSolverWork;
 
-class ExplicitSolver;
-class SemiImplicitSolver;
-
-/// Unified initialization / utility class that abstracts MPI vs serial.
-/// In serial mode it is a thin passthrough.  In MPI mode it owns
-/// MPIContext and HaloExchange internally.
-class Runtime {
-public:
-    Runtime(int& argc, char**& argv);
-    ~Runtime();
-
-    // Non-copyable, non-movable (owns MPI lifecycle)
-    Runtime(const Runtime&) = delete;
-    Runtime& operator=(const Runtime&) = delete;
-
-    int rank() const { return rank_; }
-    int size() const { return size_; }
-    bool isRoot() const { return rank_ == 0; }
-
-    // --- Mesh creation (1D) ---
-    RectilinearMesh createUniformMesh(
-        const SimulationConfig& config,
-        int globalNx, double xMin, double xMax,
-        const std::array<int,3>& periods = {0,0,0});
-
-    // --- Mesh creation (2D) ---
-    RectilinearMesh createUniformMesh(
-        const SimulationConfig& config,
-        int globalNx, double xMin, double xMax,
-        int globalNy, double yMin, double yMax,
-        const std::array<int,3>& periods = {0,0,0});
-
-    // --- Mesh creation (3D) ---
-    RectilinearMesh createUniformMesh(
-        const SimulationConfig& config,
-        int globalNx, double xMin, double xMax,
-        int globalNy, double yMin, double yMax,
-        int globalNz, double zMin, double zMax,
-        const std::array<int,3>& periods = {0,0,0});
-
-    // --- BC setup ---
-    void setBoundaryCondition(RectilinearMesh& mesh, int face, BoundaryCondition bc);
-
-    // --- Solver attachment ---
-    void attachSolver(ExplicitSolver& solver, const RectilinearMesh& mesh);
-    void attachSolver(SemiImplicitSolver& solver, const RectilinearMesh& mesh);
-
-    // --- Field smoothing ---
-    void smoothFields(SolutionState& state, const RectilinearMesh& mesh, int nIters);
-    void smoothFields(SolutionState& state, const RectilinearMesh& mesh, int nIters,
-                      const SimulationConfig& config);
-
-    // --- Reductions ---
-    double reduceMax(double localValue);
-
-    // --- Console output (rank 0 only) ---
-    template <typename... Args>
-    void print(Args&&... args) {
-        if (rank_ != 0) return;
-        std::ostringstream oss;
-        (oss << ... << std::forward<Args>(args));
-        std::cout << oss.str();
-    }
-
-    // --- Accessors for VTKSession ---
-    int globalNx() const { return globalNx_; }
-    int globalNy() const { return globalNy_; }
-    int globalNz() const { return globalNz_; }
-
-    const MPIContext& mpiContext() const { return *mpiCtx_; }
-    HaloExchange* haloExchange() { return halo_.get(); }
-
-private:
-    int rank_ = 0;
-    int size_ = 1;
-    int globalNx_ = 0, globalNy_ = 0, globalNz_ = 0;
-
-    std::unique_ptr<MPIContext> mpiCtx_;
-    std::unique_ptr<HaloExchange> halo_;
+struct Runtime {
+    int rank;
+    int size;
+    int globalNx;
+    int globalNy;
+    int globalNz;
+    struct MPIContext* mpiCtx;
+    struct HaloExchange* halo;
 };
 
-} // namespace SemiImplicitFV
+void runtime_init(struct Runtime* rt, int* argc, char*** argv);
+void runtime_free(struct Runtime* rt);
 
-#endif // RUNTIME_HPP
+/* Mesh creation (1D) */
+void runtime_create_uniform_mesh_1d(
+    struct Runtime* rt,
+    struct RectilinearMesh* mesh,
+    const struct SimulationConfig* config,
+    int globalNx, double xMin, double xMax,
+    const int periods[3]);
+
+/* Mesh creation (2D) */
+void runtime_create_uniform_mesh_2d(
+    struct Runtime* rt,
+    struct RectilinearMesh* mesh,
+    const struct SimulationConfig* config,
+    int globalNx, double xMin, double xMax,
+    int globalNy, double yMin, double yMax,
+    const int periods[3]);
+
+/* Mesh creation (3D) */
+void runtime_create_uniform_mesh_3d(
+    struct Runtime* rt,
+    struct RectilinearMesh* mesh,
+    const struct SimulationConfig* config,
+    int globalNx, double xMin, double xMax,
+    int globalNy, double yMin, double yMax,
+    int globalNz, double zMin, double zMax,
+    const int periods[3]);
+
+/* Boundary condition setup (only applies if this rank owns the boundary) */
+void runtime_set_bc(struct Runtime* rt, struct RectilinearMesh* mesh,
+                    int face, enum BoundaryCondition bc);
+
+/* Solver attachment: creates HaloExchange and sets it on the solver */
+void runtime_attach_explicit(struct Runtime* rt, struct ExplicitSolverWork* solver,
+                             const struct RectilinearMesh* mesh);
+void runtime_attach_semi_implicit(struct Runtime* rt, struct SemiImplicitSolverWork* solver,
+                                  const struct RectilinearMesh* mesh);
+
+/* Field smoothing */
+void runtime_smooth_fields(struct Runtime* rt, struct SolutionState* state,
+                           const struct RectilinearMesh* mesh, int nIters);
+void runtime_smooth_fields_config(struct Runtime* rt, struct SolutionState* state,
+                                  const struct RectilinearMesh* mesh, int nIters,
+                                  const struct SimulationConfig* config);
+
+/* Global reduction */
+double runtime_reduce_max(struct Runtime* rt, double localValue);
+
+/* Console output (rank 0 only) */
+void runtime_print(struct Runtime* rt, const char* msg);
+
+#endif /* RUNTIME_HPP */

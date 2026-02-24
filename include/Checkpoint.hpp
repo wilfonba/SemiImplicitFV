@@ -2,36 +2,31 @@
 #define CHECKPOINT_HPP
 
 #include "SimulationConfig.hpp"
-#include "RectilinearMesh.hpp"
-#include "SolutionState.hpp"
+#include <stdint.h>
 
-#include <string>
-#include <cstdint>
+struct RectilinearMesh;
+struct SolutionState;
 
-namespace SemiImplicitFV {
+/* Magic number: ASCII "SIFV_CKP" as uint64_t (little-endian) */
+static const uint64_t CHECKPOINT_MAGIC   = 0x504B435F56464953ULL;
+static const int32_t  CHECKPOINT_VERSION = 1;
 
-/// Magic number: ASCII "SIFV_CKP" as uint64_t (little-endian)
-static constexpr uint64_t CHECKPOINT_MAGIC = 0x504B435F56464953ULL;
-static constexpr int32_t  CHECKPOINT_VERSION = 1;
-
-/// Write a binary checkpoint file to dir/checkpoint.RRRR.bin.
-/// Only conservative variables and multi-phase fields are written.
-void writeCheckpoint(
-    const std::string& dir,
-    const RectilinearMesh& mesh,
-    const SolutionState& state,
-    const SimulationConfig& config,
+/* Write a binary checkpoint file to dir/checkpoint.RRRR.bin.
+   Only conservative variables and multi-phase fields are written. */
+void write_checkpoint(
+    const char* dir,
+    const struct RectilinearMesh* mesh,
+    const struct SolutionState* state,
+    const struct SimulationConfig* config,
     int rank);
 
-/// Load a binary checkpoint file and populate state + config.time/step.
-/// Validates that dim, nx, ny, nz, nGhost match the current mesh.
-/// Caller must call convertConservativeToPrimitiveVariables() and apply BCs after.
-void loadCheckpoint(
-    const std::string& filepath,
-    const RectilinearMesh& mesh,
-    SolutionState& state,
-    SimulationConfig& config);
+/* Load a binary checkpoint file and populate state + config.time/step.
+   Validates that dim, nx, ny, nz, nGhost match the current mesh.
+   Caller must call state_cons_to_prim() and apply BCs after. */
+void load_checkpoint(
+    const char* filepath,
+    const struct RectilinearMesh* mesh,
+    struct SolutionState* state,
+    struct SimulationConfig* config);
 
-} // namespace SemiImplicitFV
-
-#endif // CHECKPOINT_HPP
+#endif /* CHECKPOINT_HPP */

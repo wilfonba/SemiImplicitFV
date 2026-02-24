@@ -3,250 +3,314 @@
 #include "RectilinearMesh.hpp"
 #include "SolutionState.hpp"
 #include "State.hpp"
-#include "IdealGasEOS.hpp"
-#include "StiffenedGasEOS.hpp"
-#include "LFSolver.hpp"
-#include "RusanovSolver.hpp"
-#include "HLLCSolver.hpp"
+#include "EquationOfState.hpp"
+#include "RiemannSolver.hpp"
 #include "ExplicitSolver.hpp"
 #include "SemiImplicitSolver.hpp"
-#include "GaussSeidelPressureSolver.hpp"
-#include "JacobiPressureSolver.hpp"
-#ifdef SIFV_HAS_PETSC
-#include "PETScPressureSolver.hpp"
-#endif
-#include "IGR.hpp"
+#include "PressureSolver.hpp"
 #include "SimulationConfig.hpp"
 #include "Runtime.hpp"
 #include "VTKSession.hpp"
 #include "RKTimeStepping.hpp"
 #include "Checkpoint.hpp"
+#include "MPIContext.hpp"
 
-#include <iostream>
-#include <iomanip>
-#include <memory>
-#include <sstream>
-#include <string>
-#include <functional>
-
-using namespace SemiImplicitFV;
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <stdexcept>
 
 static void printUsage(const char* progName) {
-    std::cerr << "Usage: " << progName << " <input.jsonc>\n";
-    std::cerr << "\nGeneric driver for SemiImplicitFV simulations.\n";
-    std::cerr << "Reads a JSON/JSONC input file and runs the simulation.\n";
+    std::fprintf(stderr, "Usage: %s <input.jsonc>\n", progName);
+    std::fprintf(stderr, "\nGeneric driver for SemiImplicitFV simulations.\n");
+    std::fprintf(stderr, "Reads a JSON/JSONC input file and runs the simulation.\n");
+}
+
+/* Context for the step function callback */
+struct StepContext {
+    ExplicitSolverWork* explSolver;
+    SemiImplicitSolverWork* siSolver;
+    SimulationConfig* config;
+    RectilinearMesh* mesh;
+    SolutionState* state;
+};
+
+static double step_callback(double targetDt, void* ctx) {
+    StepContext* sc = (StepContext*)ctx;
+    if (sc->explSolver)
+        return explicit_step(sc->explSolver, sc->config, sc->mesh, sc->state, targetDt);
+    else
+        return semi_implicit_step(sc->siSolver, sc->config, sc->mesh, sc->state, targetDt);
+}
+
+/* Context for the acoustic dt callback */
+struct AcousticDtContext {
+    RectilinearMesh* mesh;
+    SolutionState* state;
+    EOSData* eos;
+    SimulationConfig* config;
+    MPI_Comm comm;
+};
+
+static double acoustic_dt_callback(void* ctx) {
+    AcousticDtContext* ac = (AcousticDtContext*)ctx;
+    return computeAcousticTimeStep_config_mpi(ac->mesh, ac->state, ac->eos,
+                                              ac->config, 1.0, 1e30, ac->comm);
 }
 
 int main(int argc, char** argv) {
-    Runtime rt(argc, argv);
+    Runtime rt;
+    runtime_init(&rt, &argc, &argv);
 
-    // Find the input file argument (skip MPI-injected args)
-    std::string inputFile;
+    /* Find the input file argument (skip MPI-injected args) */
+    const char* inputFile = NULL;
     for (int i = 1; i < argc; ++i) {
-        std::string arg(argv[i]);
-        // Skip common MPI launcher args
-        if (arg[0] != '-') {
-            inputFile = arg;
+        if (argv[i][0] != '-') {
+            inputFile = argv[i];
             break;
         }
     }
 
-    if (inputFile.empty()) {
-        if (rt.isRoot()) printUsage(argv[0]);
+    if (!inputFile) {
+        if (rt.rank == 0) printUsage(argv[0]);
+        runtime_free(&rt);
         return 1;
     }
 
-    // ---- Parse input ----
+    /* ---- Parse input ---- */
     InputData input;
     try {
-        input = InputParser::parseFile(inputFile);
+        input = parse_input_file(inputFile);
     } catch (const std::exception& e) {
-        if (rt.isRoot()) {
-            std::cerr << "Error parsing input file '" << inputFile << "':\n"
-                      << "  " << e.what() << "\n";
+        if (rt.rank == 0) {
+            std::fprintf(stderr, "Error parsing input file '%s':\n  %s\n",
+                         inputFile, e.what());
         }
+        runtime_free(&rt);
         return 1;
     }
 
-    auto& config = input.config;
+    SimulationConfig* config = &input.config;
 
-    // ---- Validate config ----
+    /* ---- Validate config ---- */
     try {
-        config.validate();
+        config_validate(config);
     } catch (const std::exception& e) {
-        if (rt.isRoot()) {
-            std::cerr << "Configuration error: " << e.what() << "\n";
+        if (rt.rank == 0) {
+            std::fprintf(stderr, "Configuration error: %s\n", e.what());
         }
+        input_data_free(&input);
+        runtime_free(&rt);
         return 1;
     }
 
-    // ---- Create mesh ----
-    const auto& mp = input.meshParams;
+    /* ---- Create mesh ---- */
+    MeshParams* mp = &input.meshParams;
 
-    // Derive periodic flags from boundary conditions for MPI topology
-    const auto& bc = input.bcParams.bc;
-    std::array<int,3> periods = {
-        (bc[0] == BoundaryCondition::Periodic) ? 1 : 0,
-        (bc[2] == BoundaryCondition::Periodic) ? 1 : 0,
-        (bc[4] == BoundaryCondition::Periodic) ? 1 : 0
+    /* Derive periodic flags from boundary conditions for MPI topology */
+    int periods[3] = {
+        (input.bc[XLOW] == BC_PERIODIC) ? 1 : 0,
+        (input.bc[YLOW] == BC_PERIODIC) ? 1 : 0,
+        (input.bc[ZLOW] == BC_PERIODIC) ? 1 : 0
     };
 
-    RectilinearMesh mesh = [&]() {
-        if (config.dim == 1) {
-            return rt.createUniformMesh(config, mp.nx, mp.xMin, mp.xMax, periods);
-        } else if (config.dim == 2) {
-            return rt.createUniformMesh(config, mp.nx, mp.xMin, mp.xMax,
-                                         mp.ny, mp.yMin, mp.yMax, periods);
-        } else {
-            return rt.createUniformMesh(config, mp.nx, mp.xMin, mp.xMax,
-                                         mp.ny, mp.yMin, mp.yMax,
-                                         mp.nz, mp.zMin, mp.zMax, periods);
-        }
-    }();
+    RectilinearMesh mesh;
+    if (config->dim == 1) {
+        runtime_create_uniform_mesh_1d(&rt, &mesh, config,
+                                       mp->nx, mp->xMin, mp->xMax, periods);
+    } else if (config->dim == 2) {
+        runtime_create_uniform_mesh_2d(&rt, &mesh, config,
+                                       mp->nx, mp->xMin, mp->xMax,
+                                       mp->ny, mp->yMin, mp->yMax, periods);
+    } else {
+        runtime_create_uniform_mesh_3d(&rt, &mesh, config,
+                                       mp->nx, mp->xMin, mp->xMax,
+                                       mp->ny, mp->yMin, mp->yMax,
+                                       mp->nz, mp->zMin, mp->zMax, periods);
+    }
 
-    // ---- Set boundary conditions ----
+    /* ---- Set boundary conditions ---- */
     for (int f = 0; f < 6; ++f) {
-        rt.setBoundaryCondition(mesh, f, input.bcParams.bc[f]);
+        runtime_set_bc(&rt, &mesh, f, input.bc[f]);
     }
 
-    rt.print("=== SemiImplicitFV Driver ===\n");
-    rt.print("  Input file: ", inputFile, "\n");
-    rt.print("  Dimension:  ", config.dim, "D\n");
-    rt.print("  Grid:       ", mp.nx);
-    if (config.dim >= 2) rt.print(" x ", mp.ny);
-    if (config.dim >= 3) rt.print(" x ", mp.nz);
-    rt.print("\n");
-    rt.print("  Solver:     ", config.semiImplicit ? "Semi-implicit" : "Explicit", "\n");
-    rt.print("  Riemann:    ", input.riemannSolverType, "\n");
-    rt.print("  End time:   ", input.timeLoopParams.endTime, "\n");
-    if (config.isMultiPhase()) {
-        rt.print("  Phases:     ", config.multiPhaseParams.nPhases, "\n");
-    }
-    rt.print("\n");
-
-    // ---- Allocate solution state ----
-    SolutionState state;
-    state.allocate(mesh.totalCells(), config);
-
-    // ---- Create EOS ----
-    std::shared_ptr<EquationOfState> eos;
-    if (input.eosParams.type == "StiffenedGas") {
-        eos = std::make_shared<StiffenedGasEOS>(
-            input.eosParams.gamma, input.eosParams.pInf, input.eosParams.R, config);
-    } else {
-        eos = std::make_shared<IdealGasEOS>(
-            input.eosParams.gamma, input.eosParams.R, config);
-    }
-
-    // ---- Create Riemann solver ----
-    std::shared_ptr<RiemannSolver> riemannSolver;
-    if (input.riemannSolverType == "LF") {
-        riemannSolver = std::make_shared<LFSolver>(eos, config);
-    } else if (input.riemannSolverType == "Rusanov") {
-        riemannSolver = std::make_shared<RusanovSolver>(eos, config);
-    } else {
-        riemannSolver = std::make_shared<HLLCSolver>(eos, config);
-    }
-
-    // ---- Create IGR solver (if enabled) ----
-    std::shared_ptr<IGRSolver> igrSolver;
-    if (config.useIGR) {
-        igrSolver = std::make_shared<IGRSolver>(config.igrParams);
-    }
-
-    // ---- Apply initial conditions or load checkpoint ----
-    const bool restarting = !input.restartParams.file.empty();
-    if (restarting) {
-        // Replace {rank} placeholder with zero-padded MPI rank
-        std::string ckptFile = input.restartParams.file;
-        std::string placeholder = "{rank}";
-        auto pos = ckptFile.find(placeholder);
-        if (pos != std::string::npos) {
-            std::ostringstream rankStr;
-            rankStr << std::setw(4) << std::setfill('0') << rt.rank();
-            ckptFile.replace(pos, placeholder.size(), rankStr.str());
+    {
+        char buf[512];
+        runtime_print(&rt, "=== SemiImplicitFV Driver ===\n");
+        std::snprintf(buf, sizeof(buf), "  Input file: %s\n", inputFile);
+        runtime_print(&rt, buf);
+        std::snprintf(buf, sizeof(buf), "  Dimension:  %dD\n", config->dim);
+        runtime_print(&rt, buf);
+        if (config->dim == 1) {
+            std::snprintf(buf, sizeof(buf), "  Grid:       %d\n", mp->nx);
+        } else if (config->dim == 2) {
+            std::snprintf(buf, sizeof(buf), "  Grid:       %d x %d\n", mp->nx, mp->ny);
+        } else {
+            std::snprintf(buf, sizeof(buf), "  Grid:       %d x %d x %d\n", mp->nx, mp->ny, mp->nz);
         }
-        loadCheckpoint(ckptFile, mesh, state, config);
-        state.convertConservativeToPrimitiveVariables(mesh, eos);
-        rt.print("  Restarting from checkpoint: ", ckptFile, "\n");
-        rt.print("  Restart time: ", config.time, ", step: ", config.step, "\n\n");
-    } else {
-        applyInitialConditions(mesh, state, *eos, config, input.defaultState, input.patches);
+        runtime_print(&rt, buf);
+        std::snprintf(buf, sizeof(buf), "  Solver:     %s\n",
+                      config->semiImplicit ? "Semi-implicit" : "Explicit");
+        runtime_print(&rt, buf);
+        const char* rsNames[] = {"LF", "Rusanov", "HLLC"};
+        std::snprintf(buf, sizeof(buf), "  Riemann:    %s\n", rsNames[input.riemannSolverType]);
+        runtime_print(&rt, buf);
+        std::snprintf(buf, sizeof(buf), "  End time:   %g\n", input.timeLoopParams.endTime);
+        runtime_print(&rt, buf);
+        if (config_is_multi_phase(config)) {
+            std::snprintf(buf, sizeof(buf), "  Phases:     %d\n", config->multiPhaseParams.nPhases);
+            runtime_print(&rt, buf);
+        }
+        runtime_print(&rt, "\n");
     }
 
-    // ---- Build solver and step function ----
-    std::function<double(double)> stepFn;
-    std::unique_ptr<ExplicitSolver> explicitSolver;
-    std::unique_ptr<SemiImplicitSolver> semiImplicitSolver;
+    /* ---- Allocate solution state ---- */
+    SolutionState state;
+    solution_state_init(&state, mesh_total_cells(&mesh), config);
 
-    if (config.semiImplicit) {
-        // Create pressure solver
-        std::shared_ptr<PressureSolver> pressureSolver;
-        if (input.pressureSolverType == "Jacobi") {
-            pressureSolver = std::make_shared<JacobiPressureSolver>();
-        } else if (input.pressureSolverType == "PETSc") {
+    /* ---- Create EOS ---- */
+    EOSData eos;
+    if (std::strcmp(input.eosParams.type, "StiffenedGas") == 0) {
+        eos = eos_create_stiffened_gas(input.eosParams.gamma, input.eosParams.pInf,
+                                       input.eosParams.R, config->dim);
+    } else {
+        eos = eos_create_ideal_gas(input.eosParams.gamma, input.eosParams.R, config->dim);
+    }
+
+    /* ---- Apply initial conditions or load checkpoint ---- */
+    int restarting = (input.restartParams.file[0] != '\0') ? 1 : 0;
+    if (restarting) {
+        /* Replace {rank} placeholder with zero-padded MPI rank */
+        char ckptFile[256];
+        std::strncpy(ckptFile, input.restartParams.file, sizeof(ckptFile) - 1);
+        ckptFile[sizeof(ckptFile) - 1] = '\0';
+
+        char* pos = std::strstr(ckptFile, "{rank}");
+        if (pos) {
+            char rankStr[8];
+            std::snprintf(rankStr, sizeof(rankStr), "%04d", rt.rank);
+            /* Build replacement string */
+            char tmp[256];
+            size_t prefix_len = (size_t)(pos - ckptFile);
+            std::memcpy(tmp, ckptFile, prefix_len);
+            std::memcpy(tmp + prefix_len, rankStr, 4);
+            std::strcpy(tmp + prefix_len + 4, pos + 6); /* 6 = strlen("{rank}") */
+            std::strcpy(ckptFile, tmp);
+        }
+        load_checkpoint(ckptFile, &mesh, &state, config);
+        state_cons_to_prim(&state, &mesh, &eos);
+
+        char buf[512];
+        std::snprintf(buf, sizeof(buf), "  Restarting from checkpoint: %s\n", ckptFile);
+        runtime_print(&rt, buf);
+        std::snprintf(buf, sizeof(buf), "  Restart time: %g, step: %d\n\n", config->time, config->step);
+        runtime_print(&rt, buf);
+    } else {
+        apply_initial_conditions(&mesh, &state, &eos, config,
+                                 &input.defaultState, input.patches, input.nPatches);
+    }
+
+    /* ---- Build solver and step function ---- */
+    ExplicitSolverWork explSolver;
+    SemiImplicitSolverWork siSolver;
+    int useSemiImplicit = config->semiImplicit;
+
+    StepContext stepCtx;
+    std::memset(&stepCtx, 0, sizeof(stepCtx));
+    stepCtx.config = config;
+    stepCtx.mesh   = &mesh;
+    stepCtx.state  = &state;
+
+    PressureSolverData pressureSolver;
+
+    if (useSemiImplicit) {
+        /* Create pressure solver */
+        if (input.pressureSolverType == PS_JACOBI) {
+            pressure_solver_init(&pressureSolver, PS_JACOBI);
+        } else if (input.pressureSolverType == PS_PETSC) {
 #ifdef SIFV_HAS_PETSC
-            if (rt.size() > 1) {
-                pressureSolver = std::make_shared<PETScPressureSolver>(
-                    rt.mpiContext().comm(),
-                    rt.mpiContext().localExtent(),
-                    periods,
-                    rt.mpiContext().dims());
+            if (rt.size > 1) {
+                pressure_solver_init_petsc_mpi(&pressureSolver,
+                                               (void*)&rt.mpiCtx->cartComm,
+                                               rt.mpiCtx->localExtent,
+                                               periods,
+                                               rt.mpiCtx->dims);
             } else {
-                pressureSolver = std::make_shared<PETScPressureSolver>();
+                pressure_solver_init_petsc(&pressureSolver);
             }
 #else
-            if (rt.isRoot()) {
-                std::cerr << "Error: PETSc pressure solver requested but not built.\n"
-                          << "  Rebuild with: ./run_case.sh --petsc ...\n";
+            if (rt.rank == 0) {
+                std::fprintf(stderr, "Error: PETSc pressure solver requested but not built.\n"
+                                     "  Rebuild with: ./run_case.sh --petsc ...\n");
             }
+            input_data_free(&input);
+            mesh_free(&mesh);
+            solution_state_free(&state);
+            runtime_free(&rt);
             return 1;
 #endif
         } else {
-            pressureSolver = std::make_shared<GaussSeidelPressureSolver>();
+            pressure_solver_init(&pressureSolver, PS_GAUSS_SEIDEL);
         }
 
-        semiImplicitSolver = std::make_unique<SemiImplicitSolver>(
-            mesh, riemannSolver, pressureSolver, eos, igrSolver, config);
-        rt.attachSolver(*semiImplicitSolver, mesh);
-        stepFn = [&](double targetDt) {
-            return semiImplicitSolver->step(config, mesh, state, targetDt);
-        };
+        semi_implicit_solver_init(&siSolver, &mesh, &eos,
+                                  input.riemannSolverType,
+                                  &pressureSolver, NULL, config);
+        runtime_attach_semi_implicit(&rt, &siSolver, &mesh);
+        stepCtx.siSolver = &siSolver;
     } else {
-        explicitSolver = std::make_unique<ExplicitSolver>(
-            mesh, riemannSolver, eos, igrSolver, config);
-        rt.attachSolver(*explicitSolver, mesh);
-        stepFn = [&](double targetDt) {
-            return explicitSolver->step(config, mesh, state, targetDt);
-        };
+        explicit_solver_init(&explSolver, &mesh, &eos,
+                             input.riemannSolverType, NULL, config);
+        runtime_attach_explicit(&rt, &explSolver, &mesh);
+        stepCtx.explSolver = &explSolver;
     }
 
-    // ---- Smoothing (after attachSolver creates HaloExchange) ----
+    /* ---- Smoothing (after attach creates HaloExchange) ---- */
     if (!restarting && input.smoothingParams.iterations > 0) {
-        rt.smoothFields(state, mesh, input.smoothingParams.iterations, config);
+        runtime_smooth_fields_config(&rt, &state, &mesh,
+                                     input.smoothingParams.iterations, config);
     }
 
-    // ---- VTK output ----
-    VTKSession vtk(rt, input.outputParams.baseName, mesh, config,
-                   input.outputParams.directory, input.outputParams.format);
+    /* ---- VTK output ---- */
+    VTKSession vtk;
+    vtk_session_init(&vtk, &rt, input.outputParams.baseName, &mesh, config,
+                     input.outputParams.directory, input.outputParams.format);
 
-    // ---- Run time loop ----
-    TimeLoopParams tlp;
+    /* ---- Run time loop ---- */
+    TimeLoopParams tlp = time_loop_params_defaults();
     tlp.endTime        = input.timeLoopParams.endTime;
     tlp.outputInterval = input.timeLoopParams.outputInterval;
     tlp.printInterval  = input.timeLoopParams.printInterval;
     tlp.checkNaN       = input.timeLoopParams.checkNaN;
-    tlp.checkpoint         = input.restartParams.checkpoint;
-    tlp.startTime          = config.time;
+    tlp.checkpoint     = input.restartParams.checkpoint;
+    tlp.startTime      = config->time;
 
-    if (config.semiImplicit) {
-        tlp.acousticDtFn = [&]() {
-            return computeAcousticTimeStep(mesh, state, *eos, config,
-                                           1.0, 1e30, rt.mpiContext().comm());
-        };
+    AcousticDtContext acousticCtx;
+    if (useSemiImplicit) {
+        acousticCtx.mesh   = &mesh;
+        acousticCtx.state  = &state;
+        acousticCtx.eos    = &eos;
+        acousticCtx.config = config;
+        acousticCtx.comm   = (rt.mpiCtx) ? rt.mpiCtx->cartComm : MPI_COMM_WORLD;
+        tlp.acousticDtFn   = acoustic_dt_callback;
+        tlp.acousticDtCtx  = &acousticCtx;
     }
 
-    runTimeLoop(rt, config, mesh, state, vtk, stepFn, tlp);
+    run_time_loop(&rt, config, &mesh, &state, &vtk,
+                  step_callback, &stepCtx, &tlp);
+
+    /* ---- Cleanup ---- */
+    vtk_session_finalize(&vtk);
+    if (useSemiImplicit) {
+        semi_implicit_solver_free(&siSolver);
+        pressure_solver_free(&pressureSolver);
+    } else {
+        explicit_solver_free(&explSolver);
+    }
+    solution_state_free(&state);
+    mesh_free(&mesh);
+    input_data_free(&input);
+    runtime_free(&rt);
 
     return 0;
 }

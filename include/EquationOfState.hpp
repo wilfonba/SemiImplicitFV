@@ -3,52 +3,29 @@
 
 #include "State.hpp"
 #include "SimulationConfig.hpp"
-#include <string>
 
-namespace SemiImplicitFV {
-
-// Abstract equation of state interface
-class EquationOfState {
-public:
-    explicit EquationOfState(const SimulationConfig& config = {}) : config_(config) {}
-    virtual ~EquationOfState() = default;
-
-    const SimulationConfig& config() const { return config_; }
-    int dim() const { return config_.dim; }
-
-    // Compute pressure from conservative state
-    virtual double pressure(const ConservativeState& U) const = 0;
-
-    // Compute temperature from primitive state
-    virtual double temperature(const PrimitiveState& W) const = 0;
-
-    // Compute sound speed
-    virtual double soundSpeed(const PrimitiveState& W) const = 0;
-
-    // Compute specific internal energy
-    virtual double internalEnergy(const PrimitiveState& W) const = 0;
-
-    // Compute total energy from primitives
-    virtual double totalEnergy(const PrimitiveState& W) const = 0;
-
-    // Convert conservative to primitive
-    virtual PrimitiveState toPrimitive(const ConservativeState& U) const = 0;
-
-    // Convert primitive to conservative
-    virtual ConservativeState toConservative(const PrimitiveState& W) const = 0;
-
-    virtual std::string name() const = 0;
-
-    // Scalar EOS parameters for inline computation (no virtual dispatch needed).
-    // Both IdealGas and StiffenedGas use gamma; pInf is 0 for ideal gas.
-    virtual double gamma() const = 0;
-    virtual double pInf() const { return 0.0; }
-
-protected:
-    SimulationConfig config_;
+enum EOSType {
+    EOS_IDEAL_GAS,
+    EOS_STIFFENED_GAS
 };
 
-} // namespace SemiImplicitFV
+struct EOSData {
+    enum EOSType type;
+    double gamma;
+    double pInf;
+    double R;
+    int dim;
+};
 
-#endif // EQUATION_OF_STATE_HPP
+EOSData eos_create_ideal_gas(double gamma, double R, int dim);
+EOSData eos_create_stiffened_gas(double gamma, double pInf, double R, int dim);
 
+double eos_pressure(const EOSData* eos, const ConservativeState* U);
+double eos_temperature(const EOSData* eos, const PrimitiveState* W);
+double eos_sound_speed(const EOSData* eos, const PrimitiveState* W);
+double eos_internal_energy(const EOSData* eos, const PrimitiveState* W);
+double eos_total_energy(const EOSData* eos, const PrimitiveState* W);
+PrimitiveState eos_to_primitive(const EOSData* eos, const ConservativeState* U);
+ConservativeState eos_to_conservative(const EOSData* eos, const PrimitiveState* W);
+
+#endif /* EQUATION_OF_STATE_HPP */

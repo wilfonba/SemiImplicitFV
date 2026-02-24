@@ -2,188 +2,81 @@
 #define IC_PATCH_HPP
 
 #include "SimulationConfig.hpp"
-#include "RectilinearMesh.hpp"
-#include "SolutionState.hpp"
 #include "EquationOfState.hpp"
-
-#include <algorithm>
-#include <array>
 #include <cmath>
-#include <map>
-#include <memory>
-#include <string>
-#include <vector>
+#include <cstring>
 
-namespace SemiImplicitFV {
+/* Forward declarations - these headers will be included by the .cpp */
+struct RectilinearMesh;
+struct SolutionState;
 
-class ExpressionEvaluator;
+enum ICGeometryType {
+    IC_GEOM_BOX,
+    IC_GEOM_SPHERE,
+    IC_GEOM_PLANE,
+    IC_GEOM_ANALYTIC
+};
 
-// -----------------------------------------------------------------
-//  ICState: primitive state for initial conditions
-// -----------------------------------------------------------------
+struct ICGeometryBox {
+    double lo[3];
+    double hi[3];
+};
+
+struct ICGeometrySphere {
+    double center[3];
+    double radius;
+};
+
+struct ICGeometryPlane {
+    double point[3];
+    double normal[3];
+};
+
+struct ICGeometry {
+    enum ICGeometryType type;
+    union {
+        ICGeometryBox box;
+        ICGeometrySphere sphere;
+        ICGeometryPlane plane;
+    };
+    /* For analytic type: sub-geometry for region check. NULL means all cells. */
+    ICGeometry* subRegion;
+};
+
+int ic_geometry_contains(const ICGeometry* geom, double x, double y, double z);
+
 struct ICState {
-    double rho = 1.0;
-    double u   = 0.0;
-    double v   = 0.0;
-    double w   = 0.0;
-    double p   = 1.0;
-    double sigma = 0.0;
-
-    // Multi-phase fields (empty for single-phase)
-    std::vector<double> alpha;     // volume fractions [nPhases]
-    std::vector<double> alphaRho;  // partial densities [nPhases]
+    double rho;
+    double u, v, w;
+    double p;
+    double sigma;
+    double alpha[MAX_PHASES];
+    double alphaRho[MAX_PHASES];
+    int nAlpha;
+    int nAlphaRho;
 };
 
-// -----------------------------------------------------------------
-//  ICGeometry: abstract base for patch region definition
-// -----------------------------------------------------------------
-class ICGeometry {
-public:
-    virtual ~ICGeometry() = default;
+ICState ic_state_defaults(void);
 
-    /// Returns true if the point (x,y,z) is inside this geometry.
-    virtual bool contains(double x, double y, double z) const = 0;
-
-    /// Clone for value semantics via unique_ptr.
-    virtual std::unique_ptr<ICGeometry> clone() const = 0;
-};
-
-// -----------------------------------------------------------------
-//  BoxGeometry
-// -----------------------------------------------------------------
-class BoxGeometry : public ICGeometry {
-public:
-    BoxGeometry(const std::array<double,3>& lo, const std::array<double,3>& hi)
-        : lo_(lo), hi_(hi) {}
-
-    bool contains(double x, double y, double z) const override {
-        return x >= lo_[0] && x <= hi_[0]
-            && y >= lo_[1] && y <= hi_[1]
-            && z >= lo_[2] && z <= hi_[2];
-    }
-
-    std::unique_ptr<ICGeometry> clone() const override {
-        return std::make_unique<BoxGeometry>(*this);
-    }
-
-private:
-    std::array<double,3> lo_, hi_;
-};
-
-// -----------------------------------------------------------------
-//  SphereGeometry
-// -----------------------------------------------------------------
-class SphereGeometry : public ICGeometry {
-public:
-    SphereGeometry(const std::array<double,3>& center, double radius)
-        : center_(center), radius_(radius) {}
-
-    bool contains(double x, double y, double z) const override {
-        double dx = x - center_[0], dy = y - center_[1], dz = z - center_[2];
-        return (dx*dx + dy*dy + dz*dz) <= radius_ * radius_;
-    }
-
-    std::unique_ptr<ICGeometry> clone() const override {
-        return std::make_unique<SphereGeometry>(*this);
-    }
-
-private:
-    std::array<double,3> center_;
-    double radius_;
-};
-
-// -----------------------------------------------------------------
-//  PlaneGeometry: inside if dot(cellCenter - point, normal) > 0
-// -----------------------------------------------------------------
-class PlaneGeometry : public ICGeometry {
-public:
-    PlaneGeometry(const std::array<double,3>& point, const std::array<double,3>& normal)
-        : point_(point), normal_(normal) {
-        // Normalize
-        double mag = std::sqrt(normal_[0]*normal_[0] + normal_[1]*normal_[1] + normal_[2]*normal_[2]);
-        if (mag > 0.0) {
-            normal_[0] /= mag; normal_[1] /= mag; normal_[2] /= mag;
-        }
-    }
-
-    bool contains(double x, double y, double z) const override {
-        return dot(x, y, z) > 0.0;
-    }
-
-    std::unique_ptr<ICGeometry> clone() const override {
-        return std::make_unique<PlaneGeometry>(*this);
-    }
-
-private:
-    double dot(double x, double y, double z) const {
-        return (x - point_[0]) * normal_[0]
-             + (y - point_[1]) * normal_[1]
-             + (z - point_[2]) * normal_[2];
-    }
-    std::array<double,3> point_, normal_;
-};
-
-// -----------------------------------------------------------------
-//  AnalyticGeometry: uses a sub-geometry for region + expressions
-// -----------------------------------------------------------------
-class AnalyticGeometry : public ICGeometry {
-public:
-    explicit AnalyticGeometry(std::unique_ptr<ICGeometry> region)
-        : region_(std::move(region)) {}
-
-    AnalyticGeometry(const AnalyticGeometry& other)
-        : region_(other.region_ ? other.region_->clone() : nullptr) {}
-
-    bool contains(double x, double y, double z) const override {
-        return region_ ? region_->contains(x, y, z) : true;
-    }
-
-    std::unique_ptr<ICGeometry> clone() const override {
-        return std::make_unique<AnalyticGeometry>(*this);
-    }
-
-    const ICGeometry* region() const { return region_.get(); }
-
-private:
-    std::unique_ptr<ICGeometry> region_;
-};
-
-// -----------------------------------------------------------------
-//  ICPatch: geometry + state + optional expressions
-// -----------------------------------------------------------------
 struct ICPatch {
-    std::unique_ptr<ICGeometry> geometry;
+    ICGeometry geometry;
     ICState state;
-
-    // For analytic patches: map from field name to expression string
-    // e.g., {"rho": "1.0 + 0.5*sin(2*pi*x)", "p": "1.0"}
-    std::map<std::string, std::string> expressions;
-
-    ICPatch() = default;
-    ICPatch(ICPatch&& other) = default;
-    ICPatch& operator=(ICPatch&& other) = default;
-
-    // Copy constructor (deep copies geometry)
-    ICPatch(const ICPatch& other)
-        : geometry(other.geometry ? other.geometry->clone() : nullptr),
-          state(other.state),
-          expressions(other.expressions) {}
+    /* Expression strings for analytic patches: parallel arrays */
+    char** exprNames;
+    char** exprStrings;
+    int nExpressions;
 };
 
-// -----------------------------------------------------------------
-//  Apply initial conditions to the mesh
-// -----------------------------------------------------------------
+void ic_patch_init(ICPatch* patch);
+void ic_patch_free(ICPatch* patch);
 
-/// Fill all cells with defaultState, then apply patches in order.
-/// For multi-phase: computes rhoE via MixtureEOS or single-phase EOS.
-void applyInitialConditions(
-    const RectilinearMesh& mesh,
-    SolutionState& state,
-    const EquationOfState& eos,
-    const SimulationConfig& config,
-    const ICState& defaultState,
-    const std::vector<ICPatch>& patches);
+void apply_initial_conditions(
+    const RectilinearMesh* mesh,
+    SolutionState* state,
+    const EOSData* eos,
+    const SimulationConfig* config,
+    const ICState* defaultState,
+    const ICPatch* patches,
+    int nPatches);
 
-} // namespace SemiImplicitFV
-
-#endif // IC_PATCH_HPP
+#endif /* IC_PATCH_HPP */

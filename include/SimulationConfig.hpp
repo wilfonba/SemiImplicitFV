@@ -1,217 +1,96 @@
 #ifndef SIMULATION_CONFIG_HPP
 #define SIMULATION_CONFIG_HPP
 
-#include <mpi.h>
-#include <array>
-#include <cmath>
-#include <stdexcept>
-#include <string>
-#include <vector>
+#include "State.hpp"
 
-namespace SemiImplicitFV {
-
-enum class ReconstructionOrder {
-    WENO1,        // piecewise constant (copies cell values)
-    WENO3,        // 3rd order WENO (r=2, needs 2 ghost cells)
-    WENO5,        // 5th order WENO (r=3, needs 3 ghost cells)
-    UPWIND1,      // piecewise constant (copies cell values)
-    UPWIND3,      // 3rd order upwind (WENO without shock capturing)
-    UPWIND5,      // 5th order upwind (WENO without shock capturing)
+enum ReconstructionOrder {
+    WENO1,
+    WENO3,
+    WENO5,
+    UPWIND1,
+    UPWIND3,
+    UPWIND5
 };
 
 struct ExplicitParams {
-    double cfl = 0.8;
-    double constDt = -1.0;       // if > 0, overrides CFL-based time step
-    double maxDt = 1e-2;
-    double minDt = 1e-12;
+    double cfl;
+    double constDt;
+    double maxDt;
+    double minDt;
 };
 
 struct SemiImplicitParams {
-    double cfl = 0.8;            // CFL based on material velocity only
-    double constDt = -1.0;       // if > 0, overrides CFL-based time step
-    double maxDt = 1e-2;
-    double minDt = 1e-12;
-    double maxAcousticCFL = -1.0; // if > 0, limits dt so acoustic CFL <= this value
-    int maxPressureIters = 100;
-    double pressureTol = 1e-8;
-    bool singlePressureSolve = false; // only solve pressure on final RK stage
+    double cfl;
+    double constDt;
+    double maxDt;
+    double minDt;
+    double maxAcousticCFL;
+    int maxPressureIters;
+    double pressureTol;
+    int singlePressureSolve;
 };
 
 struct IGRParams {
-    double alphaCoeff = 1.0;     // alpha = alphaCoeff * dx^2
-    int IGRIters = 5;
-    int IGRWarmStartIters = 50;
+    double alphaCoeff;
+    int IGRIters;
+    int IGRWarmStartIters;
 };
 
 struct PhaseEOS {
-    double gamma = 1.4;
-    double pInf = 0.0;           // stiffened gas reference pressure
+    double gamma;
+    double pInf;
 };
 
 struct MultiPhaseParams {
-    int nPhases = 0;             // 0 means single-phase (all existing code unchanged)
-    std::vector<PhaseEOS> phases;
-    double alphaMin = 1e-8;      // minimum volume fraction clamp
+    int nPhases;
+    PhaseEOS phases[MAX_PHASES];
+    double alphaMin;
 };
 
 struct BodyForceParams {
-    // Per-dimension: accel(t) = a + b * cos(c * t + d)
-    std::array<double, 3> a = {0.0, 0.0, 0.0};
-    std::array<double, 3> b = {0.0, 0.0, 0.0};
-    std::array<double, 3> c = {0.0, 0.0, 0.0};
-    std::array<double, 3> d = {0.0, 0.0, 0.0};
+    double a[3];
+    double b[3];
+    double c[3];
+    double d[3];
 };
 
 struct ViscousParams {
-    double mu = 0.0;             // dynamic viscosity (0 = inviscid, single-phase)
-    std::vector<double> phaseMu; // per-phase viscosity (empty = use scalar mu)
+    double mu;
+    double phaseMu[MAX_PHASES];
+    int nPhaseMu;
 };
 
 struct SurfaceTensionParams {
-    double sigma = 0.0;          // surface tension coefficient (0 = disabled)
-    double epsGradAlpha = 1e-8;  // regularization for |grad(alpha)|
+    double sigma;
+    double epsGradAlpha;
 };
 
 struct SimulationConfig {
-    // Global parameters
-    int dim = 3;
-    int nGhost = 2;
-    int RKOrder = 1;
-    bool useIGR = false;
-    bool semiImplicit = false;
-    ReconstructionOrder reconOrder = ReconstructionOrder::WENO1;
-    double wenoEps = 1e-6;
-    int step = 0;
-    double time = 0.0;
+    int dim;
+    int nGhost;
+    int RKOrder;
+    int useIGR;
+    int semiImplicit;
+    enum ReconstructionOrder reconOrder;
+    double wenoEps;
+    int step;
+    double time;
 
-    // Solver-specific parameters
-    ExplicitParams explicitParams;
-    SemiImplicitParams semiImplicitParams;
-    IGRParams igrParams;
-    MultiPhaseParams multiPhaseParams;
-    BodyForceParams bodyForceParams;
-    ViscousParams viscousParams;
-    SurfaceTensionParams surfaceTensionParams;
-
-    bool isMultiPhase() const { return multiPhaseParams.nPhases > 0; }
-
-    bool hasViscosity() const {
-        return viscousParams.mu > 0.0 || !viscousParams.phaseMu.empty();
-    }
-
-    bool hasSurfaceTension() const { return surfaceTensionParams.sigma > 0.0; }
-
-    bool hasBodyForce() const {
-        for (int i = 0; i < 3; ++i)
-            if (bodyForceParams.a[i] != 0.0 || bodyForceParams.b[i] != 0.0)
-                return true;
-        return false;
-    }
-
-    int requiredGhostCells() const {
-        switch (reconOrder) {
-            case ReconstructionOrder::WENO1:
-            case ReconstructionOrder::UPWIND1:
-                return 1;
-            case ReconstructionOrder::WENO3:
-            case ReconstructionOrder::UPWIND3:
-                return 2;
-            case ReconstructionOrder::WENO5:
-            case ReconstructionOrder::UPWIND5:
-                return 3;
-        }
-        return 1;
-    }
-
-    void validate() const {
-        int mpiInitialized = 0;
-        MPI_Initialized(&mpiInitialized);
-        if (mpiInitialized) {
-            int rank = 0;
-            MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-            if (rank != 0) return;
-        }
-
-        if (dim < 1 || dim > 3)
-            throw std::invalid_argument("dim must be 1, 2, or 3 (got " + std::to_string(dim) + ")");
-
-        if (RKOrder < 1 || RKOrder > 3)
-            throw std::invalid_argument("RKOrder must be 1, 2, or 3 (got " + std::to_string(RKOrder) + ")");
-
-        int reqGhost = requiredGhostCells();
-        if (nGhost < reqGhost)
-            throw std::invalid_argument("nGhost=" + std::to_string(nGhost)
-                + " is too small for chosen reconOrder (need >= " + std::to_string(reqGhost) + ")");
-
-        if (semiImplicit) {
-            const auto& p = semiImplicitParams;
-            if (p.cfl <= 0)
-                throw std::invalid_argument("semiImplicitParams.cfl must be > 0");
-            if (p.minDt <= 0)
-                throw std::invalid_argument("semiImplicitParams.minDt must be > 0");
-            if (p.maxDt <= p.minDt)
-                throw std::invalid_argument("semiImplicitParams.maxDt must be > minDt");
-            if (p.pressureTol <= 0)
-                throw std::invalid_argument("semiImplicitParams.pressureTol must be > 0");
-            if (p.maxPressureIters <= 0)
-                throw std::invalid_argument("semiImplicitParams.maxPressureIters must be > 0");
-        } else {
-            const auto& p = explicitParams;
-            if (p.cfl <= 0)
-                throw std::invalid_argument("explicitParams.cfl must be > 0");
-            if (p.minDt <= 0)
-                throw std::invalid_argument("explicitParams.minDt must be > 0");
-            if (p.maxDt <= p.minDt)
-                throw std::invalid_argument("explicitParams.maxDt must be > minDt");
-        }
-
-        if (useIGR) {
-            const auto& p = igrParams;
-            if (p.alphaCoeff <= 0)
-                throw std::invalid_argument("igrParams.alphaCoeff must be > 0");
-            if (p.IGRIters <= 0)
-                throw std::invalid_argument("igrParams.IGRIters must be > 0");
-            if (p.IGRWarmStartIters < 0)
-                throw std::invalid_argument("igrParams.IGRWarmStartIters must be >= 0");
-        }
-
-        if (isMultiPhase()) {
-            const auto& mp = multiPhaseParams;
-            if (static_cast<int>(mp.phases.size()) != mp.nPhases)
-                throw std::invalid_argument("multiPhaseParams.phases.size() must equal nPhases");
-            for (int ph = 0; ph < mp.nPhases; ++ph) {
-                if (mp.phases[ph].gamma <= 1.0)
-                    throw std::invalid_argument("multiPhaseParams.phases[" + std::to_string(ph)
-                        + "].gamma must be > 1");
-                if (mp.phases[ph].pInf < 0.0)
-                    throw std::invalid_argument("multiPhaseParams.phases[" + std::to_string(ph)
-                        + "].pInf must be >= 0");
-            }
-            if (mp.alphaMin <= 0.0)
-                throw std::invalid_argument("multiPhaseParams.alphaMin must be > 0");
-        }
-
-        if (viscousParams.mu < 0.0)
-            throw std::invalid_argument("viscousParams.mu must be >= 0");
-
-        if (!viscousParams.phaseMu.empty()) {
-            if (!isMultiPhase())
-                throw std::invalid_argument("viscousParams.phaseMu requires multi-phase (nPhases >= 2)");
-            if (static_cast<int>(viscousParams.phaseMu.size()) != multiPhaseParams.nPhases)
-                throw std::invalid_argument("viscousParams.phaseMu.size() must equal nPhases");
-            for (int ph = 0; ph < multiPhaseParams.nPhases; ++ph)
-                if (viscousParams.phaseMu[ph] < 0.0)
-                    throw std::invalid_argument("viscousParams.phaseMu[" + std::to_string(ph)
-                        + "] must be >= 0");
-        }
-
-        if (surfaceTensionParams.sigma < 0.0)
-            throw std::invalid_argument("surfaceTensionParams.sigma must be >= 0");
-        if (surfaceTensionParams.epsGradAlpha <= 0.0)
-            throw std::invalid_argument("surfaceTensionParams.epsGradAlpha must be > 0");
-    }
+    struct ExplicitParams explicitParams;
+    struct SemiImplicitParams semiImplicitParams;
+    struct IGRParams igrParams;
+    struct MultiPhaseParams multiPhaseParams;
+    struct BodyForceParams bodyForceParams;
+    struct ViscousParams viscousParams;
+    struct SurfaceTensionParams surfaceTensionParams;
 };
 
-} // namespace SemiImplicitFV
+SimulationConfig config_defaults(void);
+void config_validate(const SimulationConfig* cfg);
+int config_is_multi_phase(const SimulationConfig* cfg);
+int config_has_viscosity(const SimulationConfig* cfg);
+int config_has_surface_tension(const SimulationConfig* cfg);
+int config_has_body_force(const SimulationConfig* cfg);
+int config_required_ghost_cells(const SimulationConfig* cfg);
 
-#endif // SIMULATION_CONFIG_HPP
+#endif /* SIMULATION_CONFIG_HPP */

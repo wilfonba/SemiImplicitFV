@@ -1,18 +1,13 @@
 #ifndef PRESSURE_LAPLACIAN_HPP
 #define PRESSURE_LAPLACIAN_HPP
 
-#include "RectilinearMesh.hpp"
-#include <vector>
-
-namespace SemiImplicitFV {
+struct RectilinearMesh;
 
 double pressureLaplacian(
-    const RectilinearMesh& mesh,
-    const std::vector<double>& rho,
-    const std::vector<double>& pressure,
+    const struct RectilinearMesh* mesh,
+    const double* rho,
+    const double* pressure,
     int i, int j, int k,
-    double& offDiag);
+    double* offDiag);
 
-} // namespace SemiImplicitFV
-
-#endif // PRESSURE_LAPLACIAN_HPP
+#endif /* PRESSURE_LAPLACIAN_HPP */
