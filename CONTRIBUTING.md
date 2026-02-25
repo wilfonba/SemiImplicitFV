@@ -98,9 +98,13 @@ The project has a three-tier test suite: unit, integration, and regression. All 
 ./sifv.sh test -d unit                  # Debug build (AddressSanitizer)
 ./sifv.sh test -c                       # Clean build directory first
 ./sifv.sh test --build-only             # Build without running
+./sifv.sh test -o <pattern>             # Run tests matching regex pattern
+./sifv.sh test -l                       # List all test names
+./sifv.sh test --generate               # Regenerate all regression references
+./sifv.sh test -o TaylorGreenVortex3D --generate  # Regenerate one reference
 ```
 
-`sifv.sh test` automatically configures CMake with `-DBUILD_TESTS=ON`, builds, and runs the requested tiers via CTest. The `-j` flag controls both CMake build parallelism (`cmake --build -j`) and CTest parallel test execution (`ctest -j`). Each GoogleTest `TEST()` case is registered as an individual CTest entry, giving granular pass/fail reporting (57 tests total).
+`sifv.sh test` automatically configures CMake with `-DBUILD_TESTS=ON`, builds, and runs the requested tiers via CTest. The `-j` flag controls both CMake build parallelism (`cmake --build -j`) and CTest parallel test execution (`ctest -j`). Each GoogleTest `TEST()` case is registered as an individual CTest entry, giving granular pass/fail reporting.
 
 ### Test Organization
 
@@ -243,9 +247,11 @@ Then add the test name to the `REGRESSION_CASES` list in `tests/CMakeLists.txt` 
 set(REGRESSION_CASES
     SodShocktube1D
     AdvectionSI1D
-    LiquidGasShocktube1D
+    GasGasShocktube1D
     IsentropicVortex2D
     ChannelFlow2D
+    TaylorGreenVortex3D
+    TaylorGreenVortexSI3D
     MyCaseTest              # <-- add here
 )
 ```
@@ -253,17 +259,13 @@ set(REGRESSION_CASES
 #### Step 3: Generate reference data
 
 ```bash
-cd build
-cmake --build . -j$(nproc)
-GENERATE_REFERENCES=1 mpirun -np 1 ./tests/test_regression --gtest_filter='Regression.MyCaseTest'
+./sifv.sh test -o MyCaseTest --generate
 ```
 
-This writes the reference file to `tests/regression/references/my_case_50.dat`. Copy it into the build directory and verify:
+This writes the reference file to `tests/regression/references/my_case_50.dat`. Then verify it passes:
 
 ```bash
-cp ../tests/regression/references/my_case_50.dat tests/regression/references/
-mpirun -np 1 ./tests/test_regression --gtest_filter='Regression.MyCaseTest'
-mpirun --oversubscribe -np 4 ./tests/test_regression --gtest_filter='Regression.MyCaseTest'
+./sifv.sh test -o MyCaseTest
 ```
 
 #### Step 4: Commit the reference file
@@ -314,5 +316,9 @@ GitHub Actions runs all test tiers on every push and pull request to `master`. T
 ./sifv.sh run --debug <name>                 # Debug build (AddressSanitizer)
 ./sifv.sh run -n 4 <name>                    # Run with 4 MPI ranks
 ./sifv.sh run --case-optimization <name>     # Codegen optimized build
+./sifv.sh run --petsc <name>                 # Enable PETSc (saved across runs)
+./sifv.sh run --no-petsc <name>              # Disable PETSc (saved across runs)
+./sifv.sh run --srun -n 4 <name>             # Use srun instead of mpirun (Slurm)
+./sifv.sh run -o <dir> <name>               # Override output directory
 ./sifv.sh list                               # List all cases
 ```

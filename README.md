@@ -53,9 +53,12 @@ The `sifv.sh` script handles configuring, building, and running automatically. T
 ./sifv.sh run --debug 1D_advection           # Debug build (enables AddressSanitizer)
 ./sifv.sh run --build-only 2D_riemann        # Build without running
 ./sifv.sh run --case-optimization 1D_sod     # Codegen: compile JSON into optimized C++
-./sifv.sh run --petsc 3D_taylor_green_vortex # Enable PETSc pressure solver
-./sifv.sh run --nsys 2D_riemann             # Profile with Nsight Systems (NVTX)
-./sifv.sh list                         # List available cases
+./sifv.sh run --petsc 3D_taylor_green_vortex # Enable PETSc (saved across runs)
+./sifv.sh run --no-petsc <case>              # Disable PETSc (saved across runs)
+./sifv.sh run --nsys 2D_riemann              # Profile with Nsight Systems (NVTX)
+./sifv.sh run --srun -n 4 <case>             # Use srun instead of mpirun (Slurm)
+./sifv.sh run -o <dir> <case>                # Override output directory
+./sifv.sh list                               # List available cases
 ```
 
 ### Requirements
@@ -301,7 +304,7 @@ The `Runtime` struct and associated free functions handle domain decomposition, 
 
 ## Testing
 
-The project includes a three-tier test suite built with [GoogleTest](https://github.com/google/googletest) and run via CTest. All tests are MPI-aware and executed through `mpirun`. Each GoogleTest `TEST()` case is registered as an individual CTest entry, giving granular pass/fail reporting (57 tests total across all tiers).
+The project includes a three-tier test suite built with [GoogleTest](https://github.com/google/googletest) and run via CTest. All tests are MPI-aware and executed through `mpirun`. Each GoogleTest `TEST()` case is registered as an individual CTest entry, giving granular pass/fail reporting.
 
 ### Running Tests
 
@@ -317,6 +320,10 @@ The project includes a three-tier test suite built with [GoogleTest](https://git
 ./sifv.sh test -d unit                  # Debug build (AddressSanitizer)
 ./sifv.sh test -c                       # Clean build directory first
 ./sifv.sh test --build-only             # Build without running
+./sifv.sh test -o <pattern>             # Run tests matching regex pattern
+./sifv.sh test -l                       # List all test names
+./sifv.sh test --generate               # Regenerate all regression references
+./sifv.sh test -o TaylorGreenVortex3D --generate  # Regenerate one reference
 ```
 
 The `-j` flag controls both CMake build parallelism and CTest parallel test execution.
@@ -336,7 +343,7 @@ The `-j` flag controls both CMake build parallelism and CTest parallel test exec
 |---|---|---|---|
 | `1D_sod_shocktube_50` | 1D | 100 | Explicit (HLLC, WENO5, RK3) |
 | `1D_advection_SI_50` | 1D | 100 | Semi-implicit (HLLC, WENO5, RK3) |
-| `1D_liquid_gas_shocktube_50` | 1D | 100 | Explicit multi-phase (HLLC, WENO5, RK3) |
+| `1D_gas_gas_shocktube_50` | 1D | 100 | Explicit multi-phase (HLLC, WENO5, RK3) |
 | `2D_isentropic_vortex_50` | 2D | 50x50 | Semi-implicit (HLLC, UPWIND5, RK3) |
 | `2D_channel_flow_50` | 2D | 20x20 | Explicit (HLLC, WENO5, RK3) |
 | `3D_taylor_green_vortex_50` | 3D | 40x40x40 | Explicit (HLLC, WENO5, RK3) + viscosity |

@@ -26,7 +26,8 @@ Options:
   --compiled              Force using the compiled C++ source instead of JSON
   --case-optimization     Generate and compile a custom C++ main() from the
                           JSON input for maximum performance (codegen path)
-  --petsc                 Enable PETSc pressure solver (KSP+GAMG)
+  --petsc                 Enable PETSc pressure solver (saved across runs)
+  --no-petsc              Disable PETSc pressure solver (saved across runs)
   --nsys                  Profile with Nsight Systems (enables NVTX ranges)
   --srun                  Use srun instead of mpirun (for Slurm-managed systems)
   -j <N>                  Parallel build jobs (default: number of cores)
@@ -46,9 +47,11 @@ EOF
 }
 
 cmd_run() {
+    load_toggles
+
     local CLEAN=false
     local BUILD_ONLY=false
-    local ENABLE_PETSC=false
+    local ENABLE_PETSC=$TOGGLE_PETSC
     local ENABLE_NSYS=false
     local USE_SRUN=false
     local CASE_OPTIMIZATION=false
@@ -59,7 +62,6 @@ cmd_run() {
     local CASE_NAME=""
     local OUTPUT_DIR=""
     local PROGRAM_ARGS=()
-
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -c|--clean)
@@ -92,6 +94,10 @@ cmd_run() {
                 ;;
             --petsc)
                 ENABLE_PETSC=true
+                shift
+                ;;
+            --no-petsc)
+                ENABLE_PETSC=false
                 shift
                 ;;
             --nsys)
@@ -136,6 +142,14 @@ cmd_run() {
                 ;;
         esac
     done
+
+    # Save toggles if they changed
+    if [[ "$ENABLE_PETSC" != "$TOGGLE_PETSC" ]]; then
+        TOGGLE_PETSC=$ENABLE_PETSC
+        save_toggles
+    fi
+
+    print_toggles
 
     if [[ -z "$CASE_NAME" ]]; then
         echo "Error: no case name specified" >&2
