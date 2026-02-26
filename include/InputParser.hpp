@@ -5,82 +5,64 @@
 #include "RectilinearMesh.hpp"
 #include "VTKWriter.hpp"
 #include "ICPatch.hpp"
-
-#include <array>
-#include <string>
-#include <vector>
-
-namespace SemiImplicitFV {
+#include "RiemannSolver.hpp"
+#include "PressureSolver.hpp"
 
 struct MeshParams {
-    int nx = 100;  double xMin = 0.0; double xMax = 1.0;
-    int ny = 1;    double yMin = 0.0; double yMax = 1.0;
-    int nz = 1;    double zMin = 0.0; double zMax = 1.0;
+    int nx, ny, nz;
+    double xMin, xMax;
+    double yMin, yMax;
+    double zMin, zMax;
 };
 
 struct EOSParams {
-    std::string type = "IdealGas";  // "IdealGas" or "StiffenedGas"
-    double gamma = 1.4;
-    double R     = 287.0;
-    double pInf  = 0.0;
-};
-
-struct BCParams {
-    std::array<BoundaryCondition, 6> bc = {
-        BoundaryCondition::Outflow, BoundaryCondition::Outflow,
-        BoundaryCondition::Outflow, BoundaryCondition::Outflow,
-        BoundaryCondition::Outflow, BoundaryCondition::Outflow
-    };
+    char type[64];
+    double gamma;
+    double R;
+    double pInf;
 };
 
 struct TimeLoopInputParams {
-    double endTime        = 1.0;
-    double outputInterval = 0.01;
-    int    printInterval  = 1;
-    bool   checkNaN       = true;
+    double endTime;
+    double outputInterval;
+    int printInterval;
+    int checkNaN;
 };
 
 struct OutputParams {
-    std::string baseName  = "output";
-    std::string directory = "VTK";
-    VTKFormat format      = VTKFormat::VTKText;
+    char baseName[64];
+    char directory[64];
+    enum VTKFormat format;
 };
 
 struct SmoothingParams {
-    int iterations = 0;
+    int iterations;
 };
 
 struct RestartParams {
-    std::string file;           // empty = no restart
-    bool checkpoint = false;    // write checkpoints at outputInterval
+    char file[256];
+    int checkpoint;
 };
 
 struct InputData {
     SimulationConfig config;
     MeshParams meshParams;
     EOSParams eosParams;
-    std::string riemannSolverType = "HLLC";
-    std::string pressureSolverType = "GaussSeidel";
-    BCParams bcParams;
+    enum RiemannSolverType riemannSolverType;
+    enum PressureSolverType pressureSolverType;
+    enum BoundaryCondition bc[6];
     TimeLoopInputParams timeLoopParams;
     OutputParams outputParams;
     SmoothingParams smoothingParams;
     RestartParams restartParams;
     ICState defaultState;
-    std::vector<ICPatch> patches;
+    ICPatch* patches;
+    int nPatches;
 };
 
-namespace InputParser {
+InputData input_data_defaults(void);
+void input_data_free(InputData* d);
+InputData parse_input_file(const char* filename);
+InputData parse_input_string(const char* jsonStr);
 
-/// Parse a JSON/JSONC input file and return an InputData struct.
-/// Throws std::runtime_error on parse failure.
-InputData parseFile(const std::string& filename);
-
-/// Parse a JSON string and return an InputData struct.
-InputData parseString(const std::string& jsonStr);
-
-} // namespace InputParser
-
-} // namespace SemiImplicitFV
-
-#endif // INPUT_PARSER_HPP
+#endif /* INPUT_PARSER_HPP */

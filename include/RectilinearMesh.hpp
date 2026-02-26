@@ -3,164 +3,147 @@
 
 #include "SolutionState.hpp"
 #include "SimulationConfig.hpp"
-#include <vector>
-#include <array>
-#include <cstddef>
+#include <stddef.h>
 
-namespace SemiImplicitFV { class HaloExchange; }
+struct HaloExchange;
 
-namespace SemiImplicitFV {
-
-enum class BoundaryCondition {
-    Symmetry,  // symmetry
-    Outflow,     // Zero gradient (extrapolation from nearest interior)
-    Periodic,    // Wrap around to opposite boundary
-    SlipWall,    // Wall: copy tangential velocity, reflect normal velocity, copy scalars
-    NoSlipWall  // Wall: zero velocity, copy scalars
+enum BoundaryCondition {
+    BC_SYMMETRY,
+    BC_OUTFLOW,
+    BC_PERIODIC,
+    BC_SLIP_WALL,
+    BC_NO_SLIP_WALL
 };
 
-/// Rectilinear mesh supporting 1D, 2D, and 3D grids without AMR.
-///
-/// Grid geometry is defined by 1D node-coordinate arrays along each axis.
-/// For lower-dimensional problems, unused dimensions have a single cell
-/// (ny=1 for 1D, nz=1 for 1D/2D) with unit width. Ghost cells are only
-/// added in active dimensions.
-///
-/// Indexing is x-fastest (i varies fastest).
-class RectilinearMesh {
-public:
-    /// Construct from physical node coordinates.
-    /// For 1D: pass only xNodes (yNodes/zNodes default to {0,1}).
-    /// For 2D: pass xNodes and yNodes (zNodes defaults to {0,1}).
-    RectilinearMesh(const SimulationConfig& config,
-                    const std::vector<double>& xNodes,
-                    const std::vector<double>& yNodes = {0.0, 1.0},
-                    const std::vector<double>& zNodes = {0.0, 1.0});
+#define XLOW  0
+#define XHIGH 1
+#define YLOW  2
+#define YHIGH 3
+#define ZLOW  4
+#define ZHIGH 5
 
-    /// Convenience factory for uniform grids.
-    static RectilinearMesh createUniform(const SimulationConfig& config,
-                                         int nx, double xMin, double xMax,
-                                         int ny = 1, double yMin = 0.0, double yMax = 1.0,
-                                         int nz = 1, double zMin = 0.0, double zMax = 1.0);
+struct RectilinearMesh {
+    int dim;
+    int nx, ny, nz;
+    int nGhost;
+    int ngx, ngy, ngz;
 
-    // --- Grid topology ---
+    double* xNodesExt;
+    int xNodesExtSize;
+    double* yNodesExt;
+    int yNodesExtSize;
+    double* zNodesExt;
+    int zNodesExtSize;
 
-    int dim() const { return dim_; }
-    int nx() const { return nx_; }
-    int ny() const { return ny_; }
-    int nz() const { return nz_; }
-    int nGhost() const { return nGhost_; }
-
-    /// Ghost cell count in each direction (0 for inactive dimensions).
-    int ngx() const { return ngx_; }
-    int ngy() const { return ngy_; }
-    int ngz() const { return ngz_; }
-
-    /// Total cells including ghosts per direction.
-    int nxTotal() const { return nx_ + 2 * ngx_; }
-    int nyTotal() const { return ny_ + 2 * ngy_; }
-    int nzTotal() const { return nz_ + 2 * ngz_; }
-
-    /// Total number of cells (including all ghost cells).
-    std::size_t totalCells() const;
-
-    /// Flat array index from cell indices (i,j,k).
-    /// Physical cells: i in [0,nx), j in [0,ny), k in [0,nz).
-    /// Ghost cells extend into negative indices and past nx/ny/nz.
-    std::size_t index(int i, int j, int k) const {
-        return static_cast<std::size_t>(
-            (i + ngx_) + nxTotal() * ((j + ngy_) + nyTotal() * (k + ngz_)));
-    }
-
-    // --- Geometry (computed from node arrays, not stored per-cell) ---
-
-    double dx(int i) const { return xNodesExt_[i + ngx_ + 1] - xNodesExt_[i + ngx_]; }
-    double dy(int j) const { return yNodesExt_[j + ngy_ + 1] - yNodesExt_[j + ngy_]; }
-    double dz(int k) const { return zNodesExt_[k + ngz_ + 1] - zNodesExt_[k + ngz_]; }
-
-    double cellVolume(int i, int j, int k) const {
-        return dx(i) * dy(j) * dz(k);
-    }
-
-    double cellCentroidX(int i) const {
-        return 0.5 * (xNodesExt_[i + ngx_] + xNodesExt_[i + ngx_ + 1]);
-    }
-    double cellCentroidY(int j) const {
-        return 0.5 * (yNodesExt_[j + ngy_] + yNodesExt_[j + ngy_ + 1]);
-    }
-    double cellCentroidZ(int k) const {
-        return 0.5 * (zNodesExt_[k + ngz_] + zNodesExt_[k + ngz_ + 1]);
-    }
-
-    /// Node coordinate accessors (i in [0, nx], j in [0, ny], k in [0, nz]).
-    double nodeX(int i) const { return xNodesExt_[i + ngx_]; }
-    double nodeY(int j) const { return yNodesExt_[j + ngy_]; }
-    double nodeZ(int k) const { return zNodesExt_[k + ngz_]; }
-
-    /// Face area normal to x-axis (between cells (i,j,k) and (i+1,j,k)).
-    double faceAreaX(int j, int k) const { return dy(j) * dz(k); }
-    /// Face area normal to y-axis (between cells (i,j,k) and (i,j+1,k)).
-    double faceAreaY(int i, int k) const { return dx(i) * dz(k); }
-    /// Face area normal to z-axis (between cells (i,j,k) and (i,j,k+1)).
-    double faceAreaZ(int i, int j) const { return dx(i) * dy(j); }
-
-    // --- Boundary conditions ---
-
-    /// Face identifiers for setBoundaryCondition().
-    static constexpr int XLow  = 0;
-    static constexpr int XHigh = 1;
-    static constexpr int YLow  = 2;
-    static constexpr int YHigh = 3;
-    static constexpr int ZLow  = 4;
-    static constexpr int ZHigh = 5;
-
-    void setBoundaryCondition(int face, BoundaryCondition bc);
-    BoundaryCondition boundaryCondition(int face) const { return bc_[face]; }
-
-    /// Fill ghost cells for all active dimensions based on current BCs.
-    /// Uses an onion-peel ordering so edge/corner ghosts are filled correctly.
-    void applyBoundaryConditions(SolutionState& state,
-            VarSet varSet = VarSet::PRIM) const;
-
-    /// Fill ghost cells for a single scalar field.
-    void fillScalarGhosts(std::vector<double>& field) const;
-
-    /// MPI-aware ghost fill: halo exchange + physical BCs on boundary faces only.
-    void applyBoundaryConditions(SolutionState& state,
-            VarSet varSet, HaloExchange& halo) const;
-
-    /// MPI-aware scalar ghost fill.
-    void fillScalarGhosts(std::vector<double>& field, HaloExchange& halo) const;
-
-private:
-    int dim_;
-    int nx_, ny_, nz_;
-    int nGhost_;
-    int ngx_, ngy_, ngz_;
-
-    // Extended node arrays (physical + ghost regions).
-    // Size: nTotal + 1 entries per direction (one more node than cells).
-    std::vector<double> xNodesExt_;
-    std::vector<double> yNodesExt_;
-    std::vector<double> zNodesExt_;
-
-    std::array<BoundaryCondition, 6> bc_;
-
-    /// Build an extended node array from physical nodes by mirroring cell
-    /// widths into the ghost region on each side.
-    static std::vector<double> buildExtendedNodes(
-        const std::vector<double>& physNodes, int nCells, int ng);
-
-    // Ghost-fill helpers for each direction.
-    // skipLow/skipHigh: when true, skip filling that face (MPI neighbor fills it).
-    void fillGhostX(SolutionState& state, VarSet varSet = VarSet::PRIM,
-                     bool skipLow = false, bool skipHigh = false) const;
-    void fillGhostY(SolutionState& state, VarSet varSet = VarSet::PRIM,
-                     bool skipLow = false, bool skipHigh = false) const;
-    void fillGhostZ(SolutionState& state, VarSet varSet = VarSet::PRIM,
-                     bool skipLow = false, bool skipHigh = false) const;
+    enum BoundaryCondition bc[6];
 };
 
-} // namespace SemiImplicitFV
+/* Construct from node arrays.  xNodes has (nx+1) entries, etc. */
+void mesh_init(struct RectilinearMesh* m,
+               const struct SimulationConfig* config,
+               const double* xNodes, int nxNodes,
+               const double* yNodes, int nyNodes,
+               const double* zNodes, int nzNodes);
 
-#endif // RECTILINEAR_MESH_HPP
+/* Convenience: uniform grid */
+void mesh_init_uniform(struct RectilinearMesh* m,
+                       const struct SimulationConfig* config,
+                       int nx, double xMin, double xMax,
+                       int ny, double yMin, double yMax,
+                       int nz, double zMin, double zMax);
+
+void mesh_free(struct RectilinearMesh* m);
+
+void mesh_set_bc(struct RectilinearMesh* m, int face, enum BoundaryCondition bc);
+
+/* ---------------------------------------------------------------------------
+   Inline geometry accessors
+   --------------------------------------------------------------------------- */
+
+static inline int mesh_nxTotal(const struct RectilinearMesh* m) {
+    return m->nx + 2 * m->ngx;
+}
+static inline int mesh_nyTotal(const struct RectilinearMesh* m) {
+    return m->ny + 2 * m->ngy;
+}
+static inline int mesh_nzTotal(const struct RectilinearMesh* m) {
+    return m->nz + 2 * m->ngz;
+}
+static inline size_t mesh_total_cells(const struct RectilinearMesh* m) {
+    return (size_t)mesh_nxTotal(m) * mesh_nyTotal(m) * mesh_nzTotal(m);
+}
+static inline size_t mesh_index(const struct RectilinearMesh* m,
+                                int i, int j, int k) {
+    return (size_t)((i + m->ngx) +
+                    mesh_nxTotal(m) * ((j + m->ngy) +
+                                       mesh_nyTotal(m) * (k + m->ngz)));
+}
+static inline double mesh_dx(const struct RectilinearMesh* m, int i) {
+    return m->xNodesExt[i + m->ngx + 1] - m->xNodesExt[i + m->ngx];
+}
+static inline double mesh_dy(const struct RectilinearMesh* m, int j) {
+    return m->yNodesExt[j + m->ngy + 1] - m->yNodesExt[j + m->ngy];
+}
+static inline double mesh_dz(const struct RectilinearMesh* m, int k) {
+    return m->zNodesExt[k + m->ngz + 1] - m->zNodesExt[k + m->ngz];
+}
+static inline double mesh_cell_volume(const struct RectilinearMesh* m,
+                                      int i, int j, int k) {
+    return mesh_dx(m, i) * mesh_dy(m, j) * mesh_dz(m, k);
+}
+static inline double mesh_cellCentroidX(const struct RectilinearMesh* m, int i) {
+    return 0.5 * (m->xNodesExt[i + m->ngx] + m->xNodesExt[i + m->ngx + 1]);
+}
+static inline double mesh_cellCentroidY(const struct RectilinearMesh* m, int j) {
+    return 0.5 * (m->yNodesExt[j + m->ngy] + m->yNodesExt[j + m->ngy + 1]);
+}
+static inline double mesh_cellCentroidZ(const struct RectilinearMesh* m, int k) {
+    return 0.5 * (m->zNodesExt[k + m->ngz] + m->zNodesExt[k + m->ngz + 1]);
+}
+static inline double mesh_nodeX(const struct RectilinearMesh* m, int i) {
+    return m->xNodesExt[i + m->ngx];
+}
+static inline double mesh_nodeY(const struct RectilinearMesh* m, int j) {
+    return m->yNodesExt[j + m->ngy];
+}
+static inline double mesh_nodeZ(const struct RectilinearMesh* m, int k) {
+    return m->zNodesExt[k + m->ngz];
+}
+static inline double mesh_faceAreaX(const struct RectilinearMesh* m,
+                                    int j, int k) {
+    return mesh_dy(m, j) * mesh_dz(m, k);
+}
+static inline double mesh_faceAreaY(const struct RectilinearMesh* m,
+                                    int i, int k) {
+    return mesh_dx(m, i) * mesh_dz(m, k);
+}
+static inline double mesh_faceAreaZ(const struct RectilinearMesh* m,
+                                    int i, int j) {
+    return mesh_dx(m, i) * mesh_dy(m, j);
+}
+
+/* ---------------------------------------------------------------------------
+   Ghost fill functions
+   --------------------------------------------------------------------------- */
+
+/* Fill ghost cells for all active dimensions based on current BCs. */
+void mesh_apply_bcs(const struct RectilinearMesh* m,
+                    struct SolutionState* state,
+                    enum VarSet varSet);
+
+/* MPI-aware ghost fill: halo exchange + physical BCs on boundary faces only. */
+void mesh_apply_bcs_mpi(const struct RectilinearMesh* m,
+                        struct SolutionState* state,
+                        enum VarSet varSet,
+                        struct HaloExchange* halo);
+
+/* Fill ghost cells for a single scalar field (size totalCells). */
+void mesh_fill_scalar_ghosts(const struct RectilinearMesh* m,
+                             double* field);
+
+/* MPI-aware scalar ghost fill. */
+void mesh_fill_scalar_ghosts_mpi(const struct RectilinearMesh* m,
+                                 double* field,
+                                 struct HaloExchange* halo);
+
+#endif /* RECTILINEAR_MESH_HPP */

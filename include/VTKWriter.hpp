@@ -1,60 +1,48 @@
 #ifndef VTK_WRITER_HPP
 #define VTK_WRITER_HPP
 
-#include <string>
-#include <vector>
-#include <array>
+#include "SimulationConfig.hpp"
+#include <stddef.h>
 
-namespace SemiImplicitFV {
+struct RectilinearMesh;
+struct SolutionState;
 
-/// Output encoding for VTK XML files.
-enum class VTKFormat {
-    VTKText,  ///< ASCII (human-readable, large files)
-    VTKRaw    ///< Appended raw binary (compact, fast I/O)
+enum VTKFormat {
+    VTK_TEXT,
+    VTK_RAW
 };
 
-class RectilinearMesh;
-class SolutionState;
-struct SimulationConfig;
+/* Write a single .vtr piece file.
+   pieceExtent: {i0, i1, j0, j1, k0, k1} local extent within global grid.
+   If NULL, uses full grid (serial mode).
+   rank: MPI rank for "Rank" cell data field (-1 = omit). */
+void vtk_write_vtr(const char* filename,
+                   const struct RectilinearMesh* mesh,
+                   const struct SolutionState* state,
+                   const struct SimulationConfig* config,
+                   const int* pieceExtent,
+                   int rank,
+                   enum VTKFormat format);
 
-/// VTK XML RectilinearGrid writer for ParaView visualization.
-///
-/// Supports serial .vtr files, parallel .pvtr meta-files,
-/// and .pvd time-series collection files.
-class VTKWriter {
-public:
-    /// Write a single .vtr piece file.
-    /// pieceExtent: {i0, i1, j0, j1, k0, k1} local extent within global grid.
-    /// Default (empty/zero) = full grid (serial mode).
-    /// rank: MPI rank for "Rank" cell data field (-1 = omit).
-    static void writeVTR(const std::string& filename,
-                         const RectilinearMesh& mesh,
-                         const SolutionState& state,
-                         const SimulationConfig& config,
-                         const std::array<int,6>& pieceExtent = {},
-                         int rank = -1,
-                         VTKFormat format = VTKFormat::VTKText);
+/* Write .pvtr parallel meta-file referencing piece files.
+   Only rank 0 calls this in MPI.
+   pieceExtents: flat array of nPieces*6 ints.
+   pieceFiles: array of nPieces null-terminated strings. */
+void vtk_write_pvtr(const char* filename,
+                    int globalNx, int globalNy, int globalNz,
+                    const int* pieceExtents,
+                    const char* const* pieceFiles,
+                    int nPieces,
+                    const struct SimulationConfig* config,
+                    enum VTKFormat format);
 
-    /// Write .pvtr parallel meta-file referencing piece files.
-    /// Only rank 0 calls this in MPI.
-    /// @param globalNx/Ny/Nz  Global cell counts for WholeExtent.
-    static void writePVTR(const std::string& filename,
-                          int globalNx, int globalNy, int globalNz,
-                          const std::vector<std::array<int,6>>& pieceExtents,
-                          const std::vector<std::string>& pieceFiles,
-                          const SimulationConfig& config,
-                          VTKFormat format = VTKFormat::VTKText);
+/* Three-phase .pvd time-series file:
+     mode='w' -- write header
+     mode='a' -- append timestep entry
+     mode='c' -- close (no-op, file is always valid) */
+void vtk_write_pvd(const char* filename,
+                   char mode,
+                   double time,
+                   const char* dataFile);
 
-    /// Three-phase .pvd time-series file:
-    ///   mode="w"     -- write header
-    ///   mode="a"     -- append timestep entry
-    ///   mode="close" -- write closing tags
-    static void writePVD(const std::string& filename,
-                         const std::string& mode,
-                         double time = 0.0,
-                         const std::string& dataFile = "");
-};
-
-} // namespace SemiImplicitFV
-
-#endif // VTK_WRITER_HPP
+#endif /* VTK_WRITER_HPP */

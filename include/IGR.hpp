@@ -1,71 +1,54 @@
 #ifndef IGR_HPP
 #define IGR_HPP
 
-#include "RectilinearMesh.hpp"
-#include "SolutionState.hpp"
 #include "SimulationConfig.hpp"
-#include <array>
-#include <string>
+#include <stddef.h>
 
-namespace SemiImplicitFV { class HaloExchange; }
+struct RectilinearMesh;
+struct SolutionState;
+struct HaloExchange;
 
-namespace SemiImplicitFV {
+/* Velocity gradient tensor (3x3) */
+typedef double GradientTensor[3][3];
 
-// Velocity gradient tensor (3x3)
-using GradientTensor = std::array<std::array<double, 3>, 3>;
+/* IGRParams is defined in SimulationConfig.hpp */
 
-// IGRParams is defined in SimulationConfig.hpp
+/* Compute alpha from mesh spacing */
+double igr_compute_alpha(const IGRParams* params, double dx);
 
-// Information Geometric Regularization solver
-// Computes entropic pressure Σ from the elliptic equation:
-//   α[tr(∇u)² + tr²(∇u)] = Σ/ρ - α∇·(∇Σ/ρ)
-class IGRSolver {
-public:
-    explicit IGRSolver(const IGRParams& params = IGRParams());
-    ~IGRSolver() = default;
+/* Compute the RHS of the elliptic equation from velocity gradients
+   RHS = alpha * [tr(nabla u)^2 + tr^2(nabla u)] */
+double igr_compute_rhs(const SimulationConfig* config,
+                       const GradientTensor gradU,
+                       double alpha);
 
-    void setParameters(const IGRParams& params) { params_ = params; }
-    const IGRParams& parameters() const { return params_; }
+/* Solve for entropic pressure sigma over the entire mesh.
+   Uses Gauss-Seidel iteration with warm start. */
+void igr_solve_entropic_pressure(const SimulationConfig* config,
+                                 const IGRParams* params,
+                                 const struct RectilinearMesh* mesh,
+                                 struct SolutionState* state,
+                                 const GradientTensor* gradU);
 
-    // Compute alpha from mesh spacing
-    double computeAlpha(double dx) const;
+/* MPI-aware variant with halo exchange */
+void igr_solve_entropic_pressure_mpi(const SimulationConfig* config,
+                                     const IGRParams* params,
+                                     const struct RectilinearMesh* mesh,
+                                     struct SolutionState* state,
+                                     const GradientTensor* gradU,
+                                     struct HaloExchange* halo);
 
-    // Compute the RHS of the elliptic equation from velocity gradients
-    // RHS = α[tr(∇u)² + tr²(∇u)]
-    double computeIGRRhs(const SimulationConfig& config, const GradientTensor& gradU, double alpha) const;
+/* Compute velocity gradient tensor from cell-centered velocities
+   using central differences */
+void igr_compute_velocity_gradient(
+    const double u_xm[3],  /* u at x-1 */
+    const double u_xp[3],  /* u at x+1 */
+    const double u_ym[3],  /* u at y-1 */
+    const double u_yp[3],  /* u at y+1 */
+    const double u_zm[3],  /* u at z-1 */
+    const double u_zp[3],  /* u at z+1 */
+    double dx, double dy, double dz,
+    int dim,
+    GradientTensor grad);
 
-    // Solve for entropic pressure Σ at a single cell
-    // Uses Jacobi/Gauss-Seidel iteration with warm start
-    // Returns the converged value of Σ
-    void solveEntropicPressure(const SimulationConfig& config,
-            const RectilinearMesh& mesh,
-            SolutionState& state,
-            const std::vector<GradientTensor>& gradU);
-
-    void solveEntropicPressure(const SimulationConfig& config,
-            const RectilinearMesh& mesh,
-            SolutionState& state,
-            const std::vector<GradientTensor>& gradU,
-            HaloExchange& halo);
-
-    // Compute velocity gradient tensor from cell-centered velocities
-    // Uses central differences
-    static GradientTensor computeVelocityGradient(
-        const std::array<double, 3>& u_xm,  // u at x-1
-        const std::array<double, 3>& u_xp,  // u at x+1
-        const std::array<double, 3>& u_ym,  // u at y-1
-        const std::array<double, 3>& u_yp,  // u at y+1
-        const std::array<double, 3>& u_zm,  // u at z-1
-        const std::array<double, 3>& u_zp,  // u at z+1
-        double dx, double dy, double dz,
-        int dim
-    );
-
-private:
-    IGRParams params_;
-};
-
-} // namespace SemiImplicitFV
-
-#endif // IGR_HPP
-
+#endif /* IGR_HPP */

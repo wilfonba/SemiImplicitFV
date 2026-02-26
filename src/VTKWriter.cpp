@@ -10,11 +10,10 @@
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <vector>
+#include <algorithm>
 
-namespace SemiImplicitFV {
-
-/// Ensure the parent directory of a file path exists, creating it if needed.
 static void ensureParentDir(const std::string& filepath) {
     auto parent = std::filesystem::path(filepath).parent_path();
     if (!parent.empty()) {
@@ -22,141 +21,132 @@ static void ensureParentDir(const std::string& filepath) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helper: collect interior cell values from a field into a contiguous buffer
-// (skipping ghost cells via mesh.index).
-// ---------------------------------------------------------------------------
-static std::vector<double> gatherScalar(const RectilinearMesh& mesh,
-                                        const std::vector<double>& field,
+/* Collect interior cell values from a field into a contiguous buffer. */
+static std::vector<double> gatherScalar(const RectilinearMesh* mesh,
+                                        const double* field,
                                         int nx, int ny, int nz) {
-    std::vector<double> buf(static_cast<std::size_t>(nx) * ny * nz);
-    std::size_t pos = 0;
+    std::vector<double> buf((size_t)nx * ny * nz);
+    size_t pos = 0;
     for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
             for (int i = 0; i < nx; ++i)
-                buf[pos++] = field[mesh.index(i, j, k)];
+                buf[pos++] = field[mesh_index(mesh, i, j, k)];
     return buf;
 }
 
-static std::vector<double> gatherVector(const RectilinearMesh& mesh,
-                                        const std::vector<double>& fx,
-                                        const std::vector<double>& fy,
-                                        const std::vector<double>& fz,
+static std::vector<double> gatherVector(const RectilinearMesh* mesh,
+                                        const double* fx,
+                                        const double* fy,
+                                        const double* fz,
                                         int dim, int nx, int ny, int nz) {
-    std::size_t nCells = static_cast<std::size_t>(nx) * ny * nz;
+    size_t nCells = (size_t)nx * ny * nz;
     std::vector<double> buf(nCells * 3);
-    std::size_t pos = 0;
+    size_t pos = 0;
     for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
             for (int i = 0; i < nx; ++i) {
-                std::size_t idx = mesh.index(i, j, k);
+                size_t idx = mesh_index(mesh, i, j, k);
                 buf[pos++] = fx[idx];
-                buf[pos++] = (dim >= 2) ? fy[idx] : 0.0;
-                buf[pos++] = (dim >= 3) ? fz[idx] : 0.0;
+                buf[pos++] = (dim >= 2 && fy) ? fy[idx] : 0.0;
+                buf[pos++] = (dim >= 3 && fz) ? fz[idx] : 0.0;
             }
     return buf;
 }
 
-// ---------------------------------------------------------------------------
-// ASCII (text) VTR writer — original implementation
-// ---------------------------------------------------------------------------
+/* ASCII VTR writer */
 static void writeVTR_Text(std::ofstream& file,
-                          const RectilinearMesh& mesh,
-                          const SolutionState& state,
-                          const SimulationConfig& config,
+                          const RectilinearMesh* mesh,
+                          const SolutionState* state,
+                          const SimulationConfig* config,
                           int nx, int ny, int nz,
                           int ei0, int ei1, int ej0, int ej1, int ek0, int ek1,
                           int rank)
 {
-    file << std::setprecision(15);
+    int dim = state->dim;
+    size_t tc = state->totalCells;
 
+    file << std::setprecision(15);
     file << "<?xml version=\"1.0\"?>\n";
     file << "<VTKFile type=\"RectilinearGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n";
     file << "  <RectilinearGrid WholeExtent=\""
-         << ei0 << " " << ei1 << " "
-         << ej0 << " " << ej1 << " "
-         << ek0 << " " << ek1 << "\">\n";
+         << ei0 << " " << ei1 << " " << ej0 << " " << ej1 << " " << ek0 << " " << ek1 << "\">\n";
     file << "    <Piece Extent=\""
-         << ei0 << " " << ei1 << " "
-         << ej0 << " " << ej1 << " "
-         << ek0 << " " << ek1 << "\">\n";
+         << ei0 << " " << ei1 << " " << ej0 << " " << ej1 << " " << ek0 << " " << ek1 << "\">\n";
 
-    // Coordinates
     file << "      <Coordinates>\n";
-
     file << "        <DataArray type=\"Float64\" Name=\"X\" format=\"ascii\">\n";
     file << "         ";
-    for (int i = 0; i <= nx; ++i) file << " " << mesh.nodeX(i);
+    for (int i = 0; i <= nx; ++i) file << " " << mesh_nodeX(mesh, i);
     file << "\n        </DataArray>\n";
 
     file << "        <DataArray type=\"Float64\" Name=\"Y\" format=\"ascii\">\n";
     file << "         ";
     if (ny == 1) {
-        file << " 0.0 " << mesh.dx(0);
+        file << " 0.0 " << mesh_dx(mesh, 0);
     } else {
-        for (int j = 0; j <= ny; ++j) file << " " << mesh.nodeY(j);
+        for (int j = 0; j <= ny; ++j) file << " " << mesh_nodeY(mesh, j);
     }
     file << "\n        </DataArray>\n";
 
     file << "        <DataArray type=\"Float64\" Name=\"Z\" format=\"ascii\">\n";
     file << "         ";
     if (nz == 1) {
-        file << " 0.0 " << std::min(mesh.dx(0), std::min(mesh.dy(0), 1.0));
+        file << " 0.0 " << std::min(mesh_dx(mesh, 0), std::min(mesh_dy(mesh, 0), 1.0));
     } else {
-        for (int k = 0; k <= nz; ++k) file << " " << mesh.nodeZ(k);
+        for (int k = 0; k <= nz; ++k) file << " " << mesh_nodeZ(mesh, k);
     }
     file << "\n        </DataArray>\n";
-
     file << "      </Coordinates>\n";
 
-    // Cell data
     file << "      <CellData>\n";
 
-    auto writeScalar = [&](const std::string& name, const std::vector<double>& field) {
+    auto writeScalar = [&](const char* name, const double* field) {
         file << "        <DataArray type=\"Float64\" Name=\"" << name
              << "\" format=\"ascii\">\n";
         for (int k = 0; k < nz; ++k)
             for (int j = 0; j < ny; ++j) {
                 file << "         ";
                 for (int i = 0; i < nx; ++i)
-                    file << " " << field[mesh.index(i, j, k)];
+                    file << " " << field[mesh_index(mesh, i, j, k)];
                 file << "\n";
             }
         file << "        </DataArray>\n";
     };
 
-    int dim = state.dim();
-    auto writeVector = [&](const std::string& name,
-                           const std::vector<double>& fx,
-                           const std::vector<double>& fy,
-                           const std::vector<double>& fz) {
+    auto writeVector = [&](const char* name,
+                           const double* fx, const double* fy, const double* fz) {
         file << "        <DataArray type=\"Float64\" Name=\"" << name
              << "\" NumberOfComponents=\"3\" format=\"ascii\">\n";
         for (int k = 0; k < nz; ++k)
             for (int j = 0; j < ny; ++j) {
                 file << "         ";
                 for (int i = 0; i < nx; ++i) {
-                    std::size_t idx = mesh.index(i, j, k);
+                    size_t idx = mesh_index(mesh, i, j, k);
                     file << " " << fx[idx]
-                         << " " << (dim >= 2 ? fy[idx] : 0.0)
-                         << " " << (dim >= 3 ? fz[idx] : 0.0);
+                         << " " << (dim >= 2 && fy ? fy[idx] : 0.0)
+                         << " " << (dim >= 3 && fz ? fz[idx] : 0.0);
                 }
                 file << "\n";
             }
         file << "        </DataArray>\n";
     };
 
-    writeScalar("Pressure", state.pres);
-    if (config.useIGR) writeScalar("Sigma", state.sigma);
-    writeScalar("TotalEnergy", state.rhoE);
-    writeVector("Velocity", state.velU, state.velV, state.velW);
-    writeVector("Momentum", state.rhoU, state.rhoV, state.rhoW);
+    writeScalar("Pressure", state->pres);
+    if (config->useIGR) writeScalar("Sigma", state->sigma);
+    writeScalar("TotalEnergy", state->rhoE);
+    writeVector("Velocity", state->velU, state->velV, state->velW);
+    writeVector("Momentum", state->rhoU, state->rhoV, state->rhoW);
 
-    if (state.alphaRho.empty()) writeScalar("Density", state.rho);
-    for (std::size_t ph = 0; ph < state.alphaRho.size(); ++ph)
-        writeScalar("AlphaRho_" + std::to_string(ph), state.alphaRho[ph]);
-    for (std::size_t ph = 0; ph < state.alpha.size(); ++ph)
-        writeScalar("Alpha_" + std::to_string(ph), state.alpha[ph]);
+    int nPhases = state->nPhases;
+    if (nPhases <= 0) writeScalar("Density", state->rho);
+    for (int ph = 0; ph < nPhases; ++ph) {
+        std::string n = "AlphaRho_" + std::to_string(ph);
+        writeScalar(n.c_str(), state->alphaRho + ph * tc);
+    }
+    for (int ph = 0; ph < nPhases; ++ph) {
+        std::string n = "Alpha_" + std::to_string(ph);
+        writeScalar(n.c_str(), state->alpha + ph * tc);
+    }
 
     if (rank >= 0) {
         file << "        <DataArray type=\"Int32\" Name=\"Rank\" format=\"ascii\">\n";
@@ -175,27 +165,23 @@ static void writeVTR_Text(std::ofstream& file,
     file << "</VTKFile>\n";
 }
 
-// ---------------------------------------------------------------------------
-// Appended-raw binary VTR writer
-// ---------------------------------------------------------------------------
-
-/// A data block to be appended after the XML section.
+/* Appended-raw binary VTR writer */
 struct AppendedBlock {
-    std::vector<char> data;   // raw bytes (doubles or int32s)
+    std::vector<char> data;
 };
 
 static void writeVTR_Raw(std::ofstream& file,
-                         const RectilinearMesh& mesh,
-                         const SolutionState& state,
-                         const SimulationConfig& config,
+                         const RectilinearMesh* mesh,
+                         const SolutionState* state,
+                         const SimulationConfig* config,
                          int nx, int ny, int nz,
                          int ei0, int ei1, int ej0, int ej1, int ek0, int ek1,
                          int rank)
 {
-    int dim = state.dim();
-    std::size_t nCells = static_cast<std::size_t>(nx) * ny * nz;
+    int dim = state->dim;
+    size_t nCells = (size_t)nx * ny * nz;
+    size_t tc = state->totalCells;
 
-    // ---- Phase 1: Build all data blocks ----
     std::vector<AppendedBlock> blocks;
 
     auto addDoubleBlock = [&](const std::vector<double>& buf) {
@@ -212,65 +198,67 @@ static void writeVTR_Raw(std::ofstream& file,
         blocks.push_back(std::move(blk));
     };
 
-    // Coordinate blocks (node arrays)
+    /* Coordinate blocks */
     {
         std::vector<double> xcoords(nx + 1);
-        for (int i = 0; i <= nx; ++i) xcoords[i] = mesh.nodeX(i);
+        for (int i = 0; i <= nx; ++i) xcoords[i] = mesh_nodeX(mesh, i);
         addDoubleBlock(xcoords);
     }
     {
         std::vector<double> ycoords;
         if (ny == 1) {
-            ycoords = {0.0, mesh.dx(0)};
+            ycoords = {0.0, mesh_dx(mesh, 0)};
         } else {
             ycoords.resize(ny + 1);
-            for (int j = 0; j <= ny; ++j) ycoords[j] = mesh.nodeY(j);
+            for (int j = 0; j <= ny; ++j) ycoords[j] = mesh_nodeY(mesh, j);
         }
         addDoubleBlock(ycoords);
     }
     {
         std::vector<double> zcoords;
         if (nz == 1) {
-            zcoords = {0.0, std::min(mesh.dx(0), std::min(mesh.dy(0), 1.0))};
+            zcoords = {0.0, std::min(mesh_dx(mesh, 0), std::min(mesh_dy(mesh, 0), 1.0))};
         } else {
             zcoords.resize(nz + 1);
-            for (int k = 0; k <= nz; ++k) zcoords[k] = mesh.nodeZ(k);
+            for (int k = 0; k <= nz; ++k) zcoords[k] = mesh_nodeZ(mesh, k);
         }
         addDoubleBlock(zcoords);
     }
 
-    // Cell-data blocks — track names, types, and component counts for XML tags
     struct FieldInfo {
         std::string name;
-        std::string type;     // "Float64" or "Int32"
-        int nComponents;      // 1 or 3
+        std::string type;
+        int nComponents;
     };
     std::vector<FieldInfo> fields;
 
-    auto addScalarField = [&](const std::string& name, const std::vector<double>& field) {
+    auto addScalarField = [&](const char* name, const double* field) {
         addDoubleBlock(gatherScalar(mesh, field, nx, ny, nz));
         fields.push_back({name, "Float64", 1});
     };
 
-    auto addVectorField = [&](const std::string& name,
-                              const std::vector<double>& fx,
-                              const std::vector<double>& fy,
-                              const std::vector<double>& fz) {
+    auto addVectorField = [&](const char* name,
+                              const double* fx, const double* fy, const double* fz) {
         addDoubleBlock(gatherVector(mesh, fx, fy, fz, dim, nx, ny, nz));
         fields.push_back({name, "Float64", 3});
     };
 
-    addScalarField("Pressure", state.pres);
-    if (config.useIGR) addScalarField("Sigma", state.sigma);
-    addScalarField("TotalEnergy", state.rhoE);
-    addVectorField("Velocity", state.velU, state.velV, state.velW);
-    addVectorField("Momentum", state.rhoU, state.rhoV, state.rhoW);
+    addScalarField("Pressure", state->pres);
+    if (config->useIGR) addScalarField("Sigma", state->sigma);
+    addScalarField("TotalEnergy", state->rhoE);
+    addVectorField("Velocity", state->velU, state->velV, state->velW);
+    addVectorField("Momentum", state->rhoU, state->rhoV, state->rhoW);
 
-    if (state.alphaRho.empty()) addScalarField("Density", state.rho);
-    for (std::size_t ph = 0; ph < state.alphaRho.size(); ++ph)
-        addScalarField("AlphaRho_" + std::to_string(ph), state.alphaRho[ph]);
-    for (std::size_t ph = 0; ph < state.alpha.size(); ++ph)
-        addScalarField("Alpha_" + std::to_string(ph), state.alpha[ph]);
+    int nPhases = state->nPhases;
+    if (nPhases <= 0) addScalarField("Density", state->rho);
+    for (int ph = 0; ph < nPhases; ++ph) {
+        std::string n = "AlphaRho_" + std::to_string(ph);
+        addScalarField(n.c_str(), state->alphaRho + ph * tc);
+    }
+    for (int ph = 0; ph < nPhases; ++ph) {
+        std::string n = "Alpha_" + std::to_string(ph);
+        addScalarField(n.c_str(), state->alpha + ph * tc);
+    }
 
     if (rank >= 0) {
         std::vector<int32_t> rankBuf(nCells, rank);
@@ -278,32 +266,24 @@ static void writeVTR_Raw(std::ofstream& file,
         fields.push_back({"Rank", "Int32", 1});
     }
 
-    // ---- Phase 2: Compute byte offsets ----
-    // Each block is preceded by a uint64_t header giving its byte count.
-    // offset[i] = sum of (sizeof(uint64_t) + block[j].data.size()) for j < i.
+    /* Compute byte offsets */
     std::vector<uint64_t> offsets(blocks.size());
     uint64_t running = 0;
-    for (std::size_t i = 0; i < blocks.size(); ++i) {
+    for (size_t i = 0; i < blocks.size(); ++i) {
         offsets[i] = running;
         running += sizeof(uint64_t) + blocks[i].data.size();
     }
 
-    // ---- Phase 3: Write XML header ----
-    // Build XML into a string so we write it all at once to the binary stream.
+    /* Write XML header */
     std::ostringstream xml;
     xml << "<?xml version=\"1.0\"?>\n";
     xml << "<VTKFile type=\"RectilinearGrid\" version=\"1.0\""
         << " byte_order=\"LittleEndian\" header_type=\"UInt64\">\n";
     xml << "  <RectilinearGrid WholeExtent=\""
-        << ei0 << " " << ei1 << " "
-        << ej0 << " " << ej1 << " "
-        << ek0 << " " << ek1 << "\">\n";
+        << ei0 << " " << ei1 << " " << ej0 << " " << ej1 << " " << ek0 << " " << ek1 << "\">\n";
     xml << "    <Piece Extent=\""
-        << ei0 << " " << ei1 << " "
-        << ej0 << " " << ej1 << " "
-        << ek0 << " " << ek1 << "\">\n";
+        << ei0 << " " << ei1 << " " << ej0 << " " << ej1 << " " << ek0 << " " << ek1 << "\">\n";
 
-    // Coordinates — first 3 blocks
     xml << "      <Coordinates>\n";
     xml << "        <DataArray type=\"Float64\" Name=\"X\""
         << " format=\"appended\" offset=\"" << offsets[0] << "\"/>\n";
@@ -313,10 +293,9 @@ static void writeVTR_Raw(std::ofstream& file,
         << " format=\"appended\" offset=\"" << offsets[2] << "\"/>\n";
     xml << "      </Coordinates>\n";
 
-    // Cell data — blocks starting at index 3
     xml << "      <CellData>\n";
-    for (std::size_t f = 0; f < fields.size(); ++f) {
-        std::size_t blockIdx = 3 + f;  // 3 coordinate blocks precede cell data
+    for (size_t f = 0; f < fields.size(); ++f) {
+        size_t blockIdx = 3 + f;
         xml << "        <DataArray type=\"" << fields[f].type
             << "\" Name=\"" << fields[f].name << "\"";
         if (fields[f].nComponents > 1)
@@ -329,39 +308,39 @@ static void writeVTR_Raw(std::ofstream& file,
     xml << "  </RectilinearGrid>\n";
     xml << "  <AppendedData encoding=\"raw\">\n_";
 
-    // Write the XML portion
     std::string xmlStr = xml.str();
-    file.write(xmlStr.data(), static_cast<std::streamsize>(xmlStr.size()));
+    file.write(xmlStr.data(), (std::streamsize)xmlStr.size());
 
-    // ---- Phase 4: Write binary data blocks ----
+    /* Write binary data blocks */
     for (auto& blk : blocks) {
         uint64_t nbytes = blk.data.size();
         file.write(reinterpret_cast<const char*>(&nbytes), sizeof(uint64_t));
-        file.write(blk.data.data(), static_cast<std::streamsize>(nbytes));
+        file.write(blk.data.data(), (std::streamsize)nbytes);
     }
 
-    // Close XML
     std::string footer = "\n  </AppendedData>\n</VTKFile>\n";
-    file.write(footer.data(), static_cast<std::streamsize>(footer.size()));
+    file.write(footer.data(), (std::streamsize)footer.size());
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+   Public API
+   --------------------------------------------------------------------------- */
 
-void VTKWriter::writeVTR(const std::string& filename,
-                         const RectilinearMesh& mesh,
-                         const SolutionState& state,
-                         const SimulationConfig& config,
-                         const std::array<int,6>& pieceExtent,
-                         int rank,
-                         VTKFormat format)
+void vtk_write_vtr(const char* filename,
+                   const RectilinearMesh* mesh,
+                   const SolutionState* state,
+                   const SimulationConfig* config,
+                   const int* pieceExtent,
+                   int rank,
+                   VTKFormat format)
 {
-    int nx = mesh.nx(), ny = mesh.ny(), nz = mesh.nz();
+    int nx = mesh->nx, ny = mesh->ny, nz = mesh->nz;
 
-    bool hasExtent = false;
-    for (int d = 0; d < 6; ++d) {
-        if (pieceExtent[d] != 0) { hasExtent = true; break; }
+    int hasExtent = 0;
+    if (pieceExtent) {
+        for (int d = 0; d < 6; ++d) {
+            if (pieceExtent[d] != 0) { hasExtent = 1; break; }
+        }
     }
     int ei0 = 0, ei1 = nx;
     int ej0 = 0, ej1 = ny;
@@ -372,64 +351,65 @@ void VTKWriter::writeVTR(const std::string& filename,
         ek0 = pieceExtent[4]; ek1 = pieceExtent[5];
     }
 
-    ensureParentDir(filename);
+    std::string fn(filename);
+    ensureParentDir(fn);
 
-    if (format == VTKFormat::VTKRaw) {
-        std::ofstream file(filename, std::ios::binary);
+    if (format == VTK_RAW) {
+        std::ofstream file(fn, std::ios::binary);
         if (!file.is_open())
-            throw std::runtime_error("VTKWriter::writeVTR: cannot open " + filename);
+            throw std::runtime_error("vtk_write_vtr: cannot open " + fn);
         writeVTR_Raw(file, mesh, state, config,
                      nx, ny, nz, ei0, ei1, ej0, ej1, ek0, ek1, rank);
         file.close();
     } else {
-        std::ofstream file(filename);
+        std::ofstream file(fn);
         if (!file.is_open())
-            throw std::runtime_error("VTKWriter::writeVTR: cannot open " + filename);
+            throw std::runtime_error("vtk_write_vtr: cannot open " + fn);
         writeVTR_Text(file, mesh, state, config,
                       nx, ny, nz, ei0, ei1, ej0, ej1, ek0, ek1, rank);
         file.close();
     }
 }
 
-void VTKWriter::writePVTR(const std::string& filename,
-                          int globalNx, int globalNy, int globalNz,
-                          const std::vector<std::array<int,6>>& pieceExtents,
-                          const std::vector<std::string>& pieceFiles,
-                          const SimulationConfig& config,
-                          VTKFormat format)
+void vtk_write_pvtr(const char* filename,
+                    int globalNx, int globalNy, int globalNz,
+                    const int* pieceExtents,
+                    const char* const* pieceFiles,
+                    int nPieces,
+                    const SimulationConfig* config,
+                    VTKFormat format)
 {
-    ensureParentDir(filename);
-    std::ofstream file(filename);
+    std::string fn(filename);
+    ensureParentDir(fn);
+    std::ofstream file(fn);
     if (!file.is_open()) {
-        throw std::runtime_error("VTKWriter::writePVTR: cannot open " + filename);
+        throw std::runtime_error("vtk_write_pvtr: cannot open " + fn);
     }
 
     file << "<?xml version=\"1.0\"?>\n";
     file << "<VTKFile type=\"PRectilinearGrid\" version=\"1.0\" byte_order=\"LittleEndian\"";
-    if (format == VTKFormat::VTKRaw)
+    if (format == VTK_RAW)
         file << " header_type=\"UInt64\"";
     file << ">\n";
     file << "  <PRectilinearGrid WholeExtent=\"0 " << globalNx
          << " 0 " << globalNy
          << " 0 " << globalNz << "\" GhostLevel=\"0\">\n";
 
-    // Declare coordinate arrays
     file << "    <PCoordinates>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"X\"/>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"Y\"/>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"Z\"/>\n";
     file << "    </PCoordinates>\n";
 
-    // Declare cell data arrays
     file << "    <PCellData>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"Pressure\"/>\n";
-    if (config.useIGR) {
+    if (config->useIGR) {
         file << "      <PDataArray type=\"Float64\" Name=\"Sigma\"/>\n";
     }
     file << "      <PDataArray type=\"Float64\" Name=\"TotalEnergy\"/>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"Velocity\" NumberOfComponents=\"3\"/>\n";
     file << "      <PDataArray type=\"Float64\" Name=\"Momentum\" NumberOfComponents=\"3\"/>\n";
-    int nPhases = config.multiPhaseParams.nPhases;
+    int nPhases = config->multiPhaseParams.nPhases;
     if (nPhases <= 0) {
         file << "      <PDataArray type=\"Float64\" Name=\"Density\"/>\n";
     }
@@ -442,9 +422,8 @@ void VTKWriter::writePVTR(const std::string& filename,
     file << "      <PDataArray type=\"Int32\" Name=\"Rank\"/>\n";
     file << "    </PCellData>\n";
 
-    // Reference each piece file with its extent
-    for (std::size_t p = 0; p < pieceFiles.size(); ++p) {
-        const auto& ext = pieceExtents[p];
+    for (int p = 0; p < nPieces; ++p) {
+        const int* ext = pieceExtents + p * 6;
         file << "    <Piece Extent=\""
              << ext[0] << " " << ext[1] << " "
              << ext[2] << " " << ext[3] << " "
@@ -454,46 +433,42 @@ void VTKWriter::writePVTR(const std::string& filename,
 
     file << "  </PRectilinearGrid>\n";
     file << "</VTKFile>\n";
-
     file.close();
 }
 
-// PVD footer written after every append so the file is always valid XML
-// and can be opened in ParaView while the simulation is still running.
 static const std::string pvdFooter = "  </Collection>\n</VTKFile>\n";
 
-void VTKWriter::writePVD(const std::string& filename,
-                         const std::string& mode,
-                         double time,
-                         const std::string& dataFile)
+void vtk_write_pvd(const char* filename,
+                   char mode,
+                   double time,
+                   const char* dataFile)
 {
-    ensureParentDir(filename);
-    if (mode == "w") {
-        std::ofstream file(filename);
+    std::string fn(filename);
+    ensureParentDir(fn);
+
+    if (mode == 'w') {
+        std::ofstream file(fn);
         if (!file.is_open()) {
-            throw std::runtime_error("VTKWriter::writePVD: cannot open " + filename);
+            throw std::runtime_error("vtk_write_pvd: cannot open " + fn);
         }
         file << "<?xml version=\"1.0\"?>\n";
         file << "<VTKFile type=\"Collection\" version=\"1.0\" byte_order=\"LittleEndian\">\n";
         file << "  <Collection>\n";
         file << pvdFooter;
         file.close();
-    } else if (mode == "a") {
-        // Truncate the closing tags, append new entry, re-write closing tags.
-        auto fileSize = std::filesystem::file_size(filename);
-        std::filesystem::resize_file(filename, fileSize - pvdFooter.size());
+    } else if (mode == 'a') {
+        auto fileSize = std::filesystem::file_size(fn);
+        std::filesystem::resize_file(fn, fileSize - pvdFooter.size());
 
-        std::ofstream file(filename, std::ios::app);
+        std::ofstream file(fn, std::ios::app);
         if (!file.is_open()) {
-            throw std::runtime_error("VTKWriter::writePVD: cannot open " + filename);
+            throw std::runtime_error("vtk_write_pvd: cannot open " + fn);
         }
         file << std::setprecision(15);
         file << "    <DataSet timestep=\"" << time
-             << "\" file=\"" << dataFile << "\"/>\n";
+             << "\" file=\"" << (dataFile ? dataFile : "") << "\"/>\n";
         file << pvdFooter;
         file.close();
     }
-    // "close" is a no-op — the file is always kept in a valid state.
+    /* 'c' (close) is a no-op -- the file is always kept in a valid state */
 }
-
-} // namespace SemiImplicitFV

@@ -7,31 +7,38 @@
 #include <petsc.h>
 #endif
 
-#include <vector>
+#include <cstdlib>
+#include <cstdio>
+#include <cstring>
 
-namespace SemiImplicitFV {
-
-static std::vector<double> linspace(double a, double b, int n) {
-    std::vector<double> v(n);
+static void linspace(double a, double b, int n, double* out) {
     for (int i = 0; i < n; ++i)
-        v[i] = a + (b - a) * i / (n - 1);
-    return v;
+        out[i] = a + (b - a) * i / (n - 1);
 }
 
-// ---- Constructor / Destructor ----
-
-Runtime::Runtime(int& argc, char**& argv) {
-    MPI_Init(&argc, &argv);
+void runtime_init(Runtime* rt, int* argc, char*** argv) {
+    std::memset(rt, 0, sizeof(Runtime));
+    MPI_Init(argc, argv);
 #ifdef SIFV_HAS_PETSC
-    PetscInitialize(&argc, &argv, NULL, NULL);
+    PetscInitialize(argc, argv, NULL, NULL);
 #endif
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank_);
-    MPI_Comm_size(MPI_COMM_WORLD, &size_);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rt->rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &rt->size);
+    rt->mpiCtx = NULL;
+    rt->halo = NULL;
 }
 
-Runtime::~Runtime() {
-    halo_.reset();
-    mpiCtx_.reset();
+void runtime_free(Runtime* rt) {
+    if (rt->halo) {
+        halo_free(rt->halo);
+        std::free(rt->halo);
+        rt->halo = NULL;
+    }
+    if (rt->mpiCtx) {
+        mpi_context_free(rt->mpiCtx);
+        std::free(rt->mpiCtx);
+        rt->mpiCtx = NULL;
+    }
 #ifdef SIFV_HAS_PETSC
     PetscFinalize();
 #endif
@@ -42,127 +49,157 @@ Runtime::~Runtime() {
     }
 }
 
-// ---- Mesh creation (1D) ----
-
-RectilinearMesh Runtime::createUniformMesh(
-    const SimulationConfig& config,
+void runtime_create_uniform_mesh_1d(
+    Runtime* rt,
+    RectilinearMesh* mesh,
+    const SimulationConfig* config,
     int globalNx, double xMin, double xMax,
-    const std::array<int,3>& periods)
+    const int periods[3])
 {
-    globalNx_ = globalNx;
-    globalNy_ = 1;
-    globalNz_ = 1;
+    rt->globalNx = globalNx;
+    rt->globalNy = 1;
+    rt->globalNz = 1;
 
-    std::vector<double> gxNodes = linspace(xMin, xMax, globalNx + 1);
-    std::vector<double> gyNodes = {0.0, 1.0};
-    std::vector<double> gzNodes = {0.0, 1.0};
+    double* gxNodes = (double*)std::malloc((size_t)(globalNx + 1) * sizeof(double));
+    linspace(xMin, xMax, globalNx + 1, gxNodes);
+    double gyNodes[2] = {0.0, 1.0};
+    double gzNodes[2] = {0.0, 1.0};
 
-    mpiCtx_ = std::make_unique<MPIContext>(
-        MPIContext::create(globalNx, 1, 1,
-                           gxNodes, gyNodes, gzNodes,
-                           config.dim, periods));
+    rt->mpiCtx = (MPIContext*)std::malloc(sizeof(MPIContext));
+    int procsPerDir[3] = {0, 0, 0};
+    mpi_context_create(rt->mpiCtx, globalNx, 1, 1,
+                       gxNodes, globalNx + 1, gyNodes, 2, gzNodes, 2,
+                       config->dim, periods, procsPerDir);
 
-    rank_ = mpiCtx_->rank();
-    size_ = mpiCtx_->size();
+    rt->rank = rt->mpiCtx->rank;
+    rt->size = rt->mpiCtx->size;
 
-    return RectilinearMesh(config, mpiCtx_->localXNodes());
+    /* Create mesh from local nodes */
+    double yNodes1[2] = {0.0, 1.0};
+    double zNodes1[2] = {0.0, 1.0};
+    mesh_init(mesh, config,
+              rt->mpiCtx->localXNodes, rt->mpiCtx->localXNodesSize,
+              yNodes1, 2, zNodes1, 2);
+
+    std::free(gxNodes);
 }
 
-// ---- Mesh creation (2D) ----
-
-RectilinearMesh Runtime::createUniformMesh(
-    const SimulationConfig& config,
+void runtime_create_uniform_mesh_2d(
+    Runtime* rt,
+    RectilinearMesh* mesh,
+    const SimulationConfig* config,
     int globalNx, double xMin, double xMax,
     int globalNy, double yMin, double yMax,
-    const std::array<int,3>& periods)
+    const int periods[3])
 {
-    globalNx_ = globalNx;
-    globalNy_ = globalNy;
-    globalNz_ = 1;
+    rt->globalNx = globalNx;
+    rt->globalNy = globalNy;
+    rt->globalNz = 1;
 
-    std::vector<double> gxNodes = linspace(xMin, xMax, globalNx + 1);
-    std::vector<double> gyNodes = linspace(yMin, yMax, globalNy + 1);
-    std::vector<double> gzNodes = {0.0, 1.0};
+    double* gxNodes = (double*)std::malloc((size_t)(globalNx + 1) * sizeof(double));
+    double* gyNodes = (double*)std::malloc((size_t)(globalNy + 1) * sizeof(double));
+    linspace(xMin, xMax, globalNx + 1, gxNodes);
+    linspace(yMin, yMax, globalNy + 1, gyNodes);
+    double gzNodes[2] = {0.0, 1.0};
 
-    mpiCtx_ = std::make_unique<MPIContext>(
-        MPIContext::create(globalNx, globalNy, 1,
-                           gxNodes, gyNodes, gzNodes,
-                           config.dim, periods));
+    rt->mpiCtx = (MPIContext*)std::malloc(sizeof(MPIContext));
+    int procsPerDir[3] = {0, 0, 0};
+    mpi_context_create(rt->mpiCtx, globalNx, globalNy, 1,
+                       gxNodes, globalNx + 1, gyNodes, globalNy + 1, gzNodes, 2,
+                       config->dim, periods, procsPerDir);
 
-    rank_ = mpiCtx_->rank();
-    size_ = mpiCtx_->size();
+    rt->rank = rt->mpiCtx->rank;
+    rt->size = rt->mpiCtx->size;
 
-    return RectilinearMesh(config, mpiCtx_->localXNodes(), mpiCtx_->localYNodes());
+    double zNodes1[2] = {0.0, 1.0};
+    mesh_init(mesh, config,
+              rt->mpiCtx->localXNodes, rt->mpiCtx->localXNodesSize,
+              rt->mpiCtx->localYNodes, rt->mpiCtx->localYNodesSize,
+              zNodes1, 2);
+
+    std::free(gxNodes);
+    std::free(gyNodes);
 }
 
-// ---- Mesh creation (3D) ----
-
-RectilinearMesh Runtime::createUniformMesh(
-    const SimulationConfig& config,
+void runtime_create_uniform_mesh_3d(
+    Runtime* rt,
+    RectilinearMesh* mesh,
+    const SimulationConfig* config,
     int globalNx, double xMin, double xMax,
     int globalNy, double yMin, double yMax,
     int globalNz, double zMin, double zMax,
-    const std::array<int,3>& periods)
+    const int periods[3])
 {
-    globalNx_ = globalNx;
-    globalNy_ = globalNy;
-    globalNz_ = globalNz;
+    rt->globalNx = globalNx;
+    rt->globalNy = globalNy;
+    rt->globalNz = globalNz;
 
-    std::vector<double> gxNodes = linspace(xMin, xMax, globalNx + 1);
-    std::vector<double> gyNodes = linspace(yMin, yMax, globalNy + 1);
-    std::vector<double> gzNodes = linspace(zMin, zMax, globalNz + 1);
+    double* gxNodes = (double*)std::malloc((size_t)(globalNx + 1) * sizeof(double));
+    double* gyNodes = (double*)std::malloc((size_t)(globalNy + 1) * sizeof(double));
+    double* gzNodes = (double*)std::malloc((size_t)(globalNz + 1) * sizeof(double));
+    linspace(xMin, xMax, globalNx + 1, gxNodes);
+    linspace(yMin, yMax, globalNy + 1, gyNodes);
+    linspace(zMin, zMax, globalNz + 1, gzNodes);
 
-    mpiCtx_ = std::make_unique<MPIContext>(
-        MPIContext::create(globalNx, globalNy, globalNz,
-                           gxNodes, gyNodes, gzNodes,
-                           config.dim, periods));
+    rt->mpiCtx = (MPIContext*)std::malloc(sizeof(MPIContext));
+    int procsPerDir[3] = {0, 0, 0};
+    mpi_context_create(rt->mpiCtx, globalNx, globalNy, globalNz,
+                       gxNodes, globalNx + 1, gyNodes, globalNy + 1,
+                       gzNodes, globalNz + 1,
+                       config->dim, periods, procsPerDir);
 
-    rank_ = mpiCtx_->rank();
-    size_ = mpiCtx_->size();
+    rt->rank = rt->mpiCtx->rank;
+    rt->size = rt->mpiCtx->size;
 
-    return RectilinearMesh(config,
-                           mpiCtx_->localXNodes(),
-                           mpiCtx_->localYNodes(),
-                           mpiCtx_->localZNodes());
+    mesh_init(mesh, config,
+              rt->mpiCtx->localXNodes, rt->mpiCtx->localXNodesSize,
+              rt->mpiCtx->localYNodes, rt->mpiCtx->localYNodesSize,
+              rt->mpiCtx->localZNodes, rt->mpiCtx->localZNodesSize);
+
+    std::free(gxNodes);
+    std::free(gyNodes);
+    std::free(gzNodes);
 }
 
-// ---- Boundary conditions ----
-
-void Runtime::setBoundaryCondition(RectilinearMesh& mesh, int face, BoundaryCondition bc) {
-    if (mpiCtx_->isPhysicalBoundary(face)) {
-        mesh.setBoundaryCondition(face, bc);
+void runtime_set_bc(Runtime* rt, RectilinearMesh* mesh,
+                    int face, BoundaryCondition bc) {
+    if (mpi_is_physical_boundary(rt->mpiCtx, face)) {
+        mesh_set_bc(mesh, face, bc);
     }
 }
 
-// ---- Solver attachment ----
-
-void Runtime::attachSolver(ExplicitSolver& solver, const RectilinearMesh& mesh) {
-    halo_ = std::make_unique<HaloExchange>(*mpiCtx_, mesh);
-    solver.setHaloExchange(halo_.get());
+void runtime_attach_explicit(Runtime* rt, ExplicitSolverWork* solver,
+                             const RectilinearMesh* mesh) {
+    rt->halo = (HaloExchange*)std::malloc(sizeof(HaloExchange));
+    halo_init(rt->halo, rt->mpiCtx, mesh);
+    solver->halo = rt->halo;
 }
 
-void Runtime::attachSolver(SemiImplicitSolver& solver, const RectilinearMesh& mesh) {
-    halo_ = std::make_unique<HaloExchange>(*mpiCtx_, mesh);
-    solver.setHaloExchange(halo_.get());
+void runtime_attach_semi_implicit(Runtime* rt, SemiImplicitSolverWork* solver,
+                                  const RectilinearMesh* mesh) {
+    rt->halo = (HaloExchange*)std::malloc(sizeof(HaloExchange));
+    halo_init(rt->halo, rt->mpiCtx, mesh);
+    solver->halo = rt->halo;
 }
 
-// ---- Field smoothing ----
-
-void Runtime::smoothFields(SolutionState& state, const RectilinearMesh& mesh, int nIters) {
-    state.smoothFields(mesh, nIters, *halo_);
+void runtime_smooth_fields(Runtime* rt, SolutionState* state,
+                           const RectilinearMesh* mesh, int nIters) {
+    state_smooth_mpi(state, mesh, nIters, rt->halo);
 }
 
-void Runtime::smoothFields(SolutionState& state, const RectilinearMesh& mesh, int nIters,
-                            const SimulationConfig& config) {
-    state.smoothFields(mesh, nIters, *halo_, config);
+void runtime_smooth_fields_config(Runtime* rt, SolutionState* state,
+                                  const RectilinearMesh* mesh, int nIters,
+                                  const SimulationConfig* config) {
+    state_smooth_config_mpi(state, mesh, nIters, rt->halo, config);
 }
 
-// ---- Reductions ----
-
-double Runtime::reduceMax(double localValue) {
+double runtime_reduce_max(Runtime* rt, double localValue) {
     double globalValue = 0.0;
-    MPI_Allreduce(&localValue, &globalValue, 1, MPI_DOUBLE, MPI_MAX, mpiCtx_->comm());
+    MPI_Allreduce(&localValue, &globalValue, 1, MPI_DOUBLE, MPI_MAX, rt->mpiCtx->cartComm);
     return globalValue;
 }
 
-} // namespace SemiImplicitFV
+void runtime_print(Runtime* rt, const char* msg) {
+    if (rt->rank != 0) return;
+    std::fputs(msg, stdout);
+}

@@ -1,489 +1,443 @@
 #include "RectilinearMesh.hpp"
-#include "SimulationConfig.hpp"
 #include "HaloExchange.hpp"
-#include <iostream>
-#include <algorithm>
-#include <stdexcept>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
 
-namespace SemiImplicitFV {
+/* ---------------------------------------------------------------------------
+   Build an extended node array from physical nodes by mirroring cell
+   widths into the ghost region on each side.
+   Returns a malloc'd array of size (nCells + 2*ng + 1).
+   --------------------------------------------------------------------------- */
 
-// ---------------------------------------------------------------------------
-// Construction
-// ---------------------------------------------------------------------------
-
-RectilinearMesh::RectilinearMesh(const SimulationConfig& config,
-                                 const std::vector<double>& xNodes,
-                                 const std::vector<double>& yNodes,
-                                 const std::vector<double>& zNodes)
-{
-    int dim = config.dim;
-
-    if (dim < 1 || dim > 3) {
-        throw std::invalid_argument("RectilinearMesh: dim must be 1, 2, or 3");
-    }
-    if (config.nGhost < 0) {
-        throw std::invalid_argument("RectilinearMesh: nGhost must be non-negative");
-    }
-    if (xNodes.size() < 2) {
-        throw std::invalid_argument("RectilinearMesh: xNodes must have at least 2 entries");
-    }
-    if (dim >= 2 && yNodes.size() < 2) {
-        throw std::invalid_argument("RectilinearMesh: yNodes must have at least 2 entries for 2D/3D");
-    }
-    if (dim >= 3 && zNodes.size() < 2) {
-        throw std::invalid_argument("RectilinearMesh: zNodes must have at least 2 entries for 3D");
-    }
-
-    dim_ = config.dim;
-    nGhost_ = config.nGhost;
-
-    nx_ = static_cast<int>(xNodes.size()) - 1;
-    ny_ = static_cast<int>(yNodes.size()) - 1;
-    nz_ = static_cast<int>(zNodes.size()) - 1;
-
-    // Ghost cells only in active dimensions.
-    ngx_ = nGhost_;
-    ngy_ = (dim_ >= 2) ? nGhost_ : 0;
-    ngz_ = (dim_ >= 3) ? nGhost_ : 0;
-
-    // Build extended node arrays (physical + ghost region on each side).
-    xNodesExt_ = buildExtendedNodes(xNodes, nx_, ngx_);
-    yNodesExt_ = buildExtendedNodes(yNodes, ny_, ngy_);
-    zNodesExt_ = buildExtendedNodes(zNodes, nz_, ngz_);
-
-    // Default all boundaries to outflow.
-    bc_.fill(BoundaryCondition::Outflow);
-}
-
-RectilinearMesh RectilinearMesh::createUniform(
-    const SimulationConfig& config,
-    int nx, double xMin, double xMax,
-    int ny, double yMin, double yMax,
-    int nz, double zMin, double zMax)
-{
-    auto linspace = [](int n, double lo, double hi) {
-        std::vector<double> nodes(n + 1);
-        double h = (hi - lo) / n;
-        for (int i = 0; i <= n; ++i) {
-            nodes[i] = lo + i * h;
-        }
-        return nodes;
-    };
-
-    return RectilinearMesh(config,
-                           linspace(nx, xMin, xMax),
-                           linspace(ny, yMin, yMax),
-                           linspace(nz, zMin, zMax));
-}
-
-// ---------------------------------------------------------------------------
-// Topology helpers
-// ---------------------------------------------------------------------------
-
-std::size_t RectilinearMesh::totalCells() const {
-    return static_cast<std::size_t>(nxTotal()) * nyTotal() * nzTotal();
-}
-
-// ---------------------------------------------------------------------------
-// Extended node construction
-// ---------------------------------------------------------------------------
-
-std::vector<double> RectilinearMesh::buildExtendedNodes(
-    const std::vector<double>& physNodes, int nCells, int ng)
+static double* build_extended_nodes(const double* physNodes, int nCells, int ng,
+                                    int* outSize)
 {
     int nExt = nCells + 2 * ng + 1;
-    std::vector<double> ext(nExt);
+    double* ext = (double*)calloc(nExt, sizeof(double));
 
     for (int i = 0; i <= nCells; ++i) {
         ext[ng + i] = physNodes[i];
     }
 
     for (int g = 1; g <= ng; ++g) {
-        int mirror = std::min(g - 1, nCells - 1);
+        int mirror = g - 1;
+        if (mirror > nCells - 1) mirror = nCells - 1;
         double width = physNodes[mirror + 1] - physNodes[mirror];
         ext[ng - g] = ext[ng - g + 1] - width;
     }
 
     for (int g = 1; g <= ng; ++g) {
-        int mirror = std::max(nCells - g, 0);
+        int mirror = nCells - g;
+        if (mirror < 0) mirror = 0;
         double width = physNodes[mirror + 1] - physNodes[mirror];
         ext[ng + nCells + g] = ext[ng + nCells + g - 1] + width;
     }
 
+    *outSize = nExt;
     return ext;
 }
 
-// ---------------------------------------------------------------------------
-// Boundary conditions
-// ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+   Construction
+   --------------------------------------------------------------------------- */
 
-void RectilinearMesh::setBoundaryCondition(int face, BoundaryCondition bc) {
-    if (face < 0 || face > 5) {
-        throw std::out_of_range("RectilinearMesh::setBoundaryCondition: face must be 0-5");
+void mesh_init(struct RectilinearMesh* m,
+               const struct SimulationConfig* config,
+               const double* xNodes, int nxNodes,
+               const double* yNodes, int nyNodes,
+               const double* zNodes, int nzNodes)
+{
+    m->dim = config->dim;
+    m->nGhost = config->nGhost;
+
+    m->nx = nxNodes - 1;
+    m->ny = nyNodes - 1;
+    m->nz = nzNodes - 1;
+
+    m->ngx = m->nGhost;
+    m->ngy = (m->dim >= 2) ? m->nGhost : 0;
+    m->ngz = (m->dim >= 3) ? m->nGhost : 0;
+
+    m->xNodesExt = build_extended_nodes(xNodes, m->nx, m->ngx, &m->xNodesExtSize);
+    m->yNodesExt = build_extended_nodes(yNodes, m->ny, m->ngy, &m->yNodesExtSize);
+    m->zNodesExt = build_extended_nodes(zNodes, m->nz, m->ngz, &m->zNodesExtSize);
+
+    /* Default all boundaries to outflow */
+    for (int f = 0; f < 6; ++f)
+        m->bc[f] = BC_OUTFLOW;
+}
+
+void mesh_init_uniform(struct RectilinearMesh* m,
+                       const struct SimulationConfig* config,
+                       int nx, double xMin, double xMax,
+                       int ny, double yMin, double yMax,
+                       int nz, double zMin, double zMax)
+{
+    /* Build temporary linspace node arrays */
+    double* xN = (double*)malloc((nx + 1) * sizeof(double));
+    double* yN = (double*)malloc((ny + 1) * sizeof(double));
+    double* zN = (double*)malloc((nz + 1) * sizeof(double));
+
+    double hx = (xMax - xMin) / nx;
+    for (int i = 0; i <= nx; ++i) xN[i] = xMin + i * hx;
+
+    double hy = (yMax - yMin) / ny;
+    for (int j = 0; j <= ny; ++j) yN[j] = yMin + j * hy;
+
+    double hz = (zMax - zMin) / nz;
+    for (int k = 0; k <= nz; ++k) zN[k] = zMin + k * hz;
+
+    mesh_init(m, config, xN, nx + 1, yN, ny + 1, zN, nz + 1);
+
+    free(xN);
+    free(yN);
+    free(zN);
+}
+
+void mesh_free(struct RectilinearMesh* m)
+{
+    free(m->xNodesExt);  m->xNodesExt = NULL;
+    free(m->yNodesExt);  m->yNodesExt = NULL;
+    free(m->zNodesExt);  m->zNodesExt = NULL;
+    m->xNodesExtSize = 0;
+    m->yNodesExtSize = 0;
+    m->zNodesExtSize = 0;
+}
+
+void mesh_set_bc(struct RectilinearMesh* m, int face, enum BoundaryCondition bc)
+{
+    m->bc[face] = bc;
+}
+
+/* ---------------------------------------------------------------------------
+   Ghost fill helpers (static, direction-specific)
+   --------------------------------------------------------------------------- */
+
+static void fill_ghost_cell(struct SolutionState* state, enum VarSet varSet,
+                            size_t ghost, size_t src,
+                            double sU, double sV, double sW)
+{
+    switch (varSet) {
+    case VARSET_PRIM:
+        state_copy_cell_P(state, ghost, src, sU, sV, sW);
+        break;
+    case VARSET_CONS:
+        state_copy_cell_C(state, ghost, src, sU, sV, sW);
+        break;
+    default:
+        state_copy_cell(state, ghost, src, sU, sV, sW);
+        break;
     }
-    bc_[face] = bc;
 }
 
-void RectilinearMesh::applyBoundaryConditions(SolutionState& state, VarSet varSet) const {
-    fillGhostX(state, varSet);
-    if (dim_ >= 2) fillGhostY(state, varSet);
-    if (dim_ >= 3) fillGhostZ(state, varSet);
-}
-
-// ---------------------------------------------------------------------------
-// Ghost fill: x-direction
-// ---------------------------------------------------------------------------
-
-void RectilinearMesh::fillGhostX(SolutionState& state, VarSet varSet,
-                                  bool skipLow, bool skipHigh) const {
-    for (int k = 0; k < nz_; ++k) {
-        for (int j = 0; j < ny_; ++j) {
+static void fill_ghost_x(const struct RectilinearMesh* m,
+                          struct SolutionState* state,
+                          enum VarSet varSet,
+                          int skipLow, int skipHigh)
+{
+    for (int k = 0; k < m->nz; ++k) {
+        for (int j = 0; j < m->ny; ++j) {
             if (!skipLow) {
-                for (int g = 1; g <= ngx_; ++g) {
-                    std::size_t ghost = index(-g, j, k);
-                    std::size_t src;
-                    double sU(1.0), sV(1.0), sW(1.0);
+                for (int g = 1; g <= m->ngx; ++g) {
+                    size_t ghost = mesh_index(m, -g, j, k);
+                    size_t src;
+                    double sU = 1.0, sV = 1.0, sW = 1.0;
 
-                    switch (bc_[XLow]) {
-                    case BoundaryCondition::Symmetry:
-                        src = index(g - 1, j, k);
+                    switch (m->bc[XLOW]) {
+                    case BC_SYMMETRY:
+                        src = mesh_index(m, g - 1, j, k);
                         break;
-                    case BoundaryCondition::Periodic:
-                        src = index(nx_ - g, j, k);
+                    case BC_PERIODIC:
+                        src = mesh_index(m, m->nx - g, j, k);
                         break;
-                    case BoundaryCondition::SlipWall:
-                        src = index(g - 1, j, k);
+                    case BC_SLIP_WALL:
+                        src = mesh_index(m, g - 1, j, k);
                         sU = -1.0;
                         break;
-                    case BoundaryCondition::NoSlipWall:
-                        src = index(g - 1, j, k);
+                    case BC_NO_SLIP_WALL:
+                        src = mesh_index(m, g - 1, j, k);
                         sU = -1.0; sV = -1.0; sW = -1.0;
                         break;
-                    case BoundaryCondition::Outflow:
+                    case BC_OUTFLOW:
                     default:
-                        src = index(0, j, k);
+                        src = mesh_index(m, 0, j, k);
                         break;
                     }
 
-                    switch (varSet) {
-                    case (VarSet::PRIM):
-                        state.copyCell_P(ghost, src, sU, sV, sW);
-                        break;
-                    case (VarSet::CONS):
-                        state.copyCell_C(ghost, src, sU, sV, sW);
-                        break;
-                    default:
-                        state.copyCell(ghost, src, sU, sV, sW);
-                        break;
-                    }
+                    fill_ghost_cell(state, varSet, ghost, src, sU, sV, sW);
                 }
             }
 
             if (!skipHigh) {
-                for (int g = 1; g <= ngx_; ++g) {
-                    std::size_t ghost = index(nx_ - 1 + g, j, k);
-                    std::size_t src;
-                    double sU(1.0), sV(1.0), sW(1.0);
+                for (int g = 1; g <= m->ngx; ++g) {
+                    size_t ghost = mesh_index(m, m->nx - 1 + g, j, k);
+                    size_t src;
+                    double sU = 1.0, sV = 1.0, sW = 1.0;
 
-                    switch (bc_[XHigh]) {
-                    case BoundaryCondition::Symmetry:
-                        src = index(nx_ - g, j, k);
+                    switch (m->bc[XHIGH]) {
+                    case BC_SYMMETRY:
+                        src = mesh_index(m, m->nx - g, j, k);
                         break;
-                    case BoundaryCondition::Periodic:
-                        src = index(g - 1, j, k);
+                    case BC_PERIODIC:
+                        src = mesh_index(m, g - 1, j, k);
                         break;
-                    case BoundaryCondition::SlipWall:
-                        src = index(nx_ - g, j, k);
+                    case BC_SLIP_WALL:
+                        src = mesh_index(m, m->nx - g, j, k);
                         sU = -1.0;
                         break;
-                    case BoundaryCondition::NoSlipWall:
-                        src = index(nx_ - g, j, k);
+                    case BC_NO_SLIP_WALL:
+                        src = mesh_index(m, m->nx - g, j, k);
                         sU = -1.0; sV = -1.0; sW = -1.0;
                         break;
-                    case BoundaryCondition::Outflow:
+                    case BC_OUTFLOW:
                     default:
-                        src = index(nx_ - 1, j, k);
+                        src = mesh_index(m, m->nx - 1, j, k);
                         break;
                     }
 
-                    switch (varSet) {
-                    case (VarSet::PRIM):
-                        state.copyCell_P(ghost, src, sU, sV, sW);
-                        break;
-                    case (VarSet::CONS):
-                        state.copyCell_C(ghost, src, sU, sV, sW);
-                        break;
-                    default:
-                        state.copyCell(ghost, src, sU, sV, sW);
-                        break;
-                    }
+                    fill_ghost_cell(state, varSet, ghost, src, sU, sV, sW);
                 }
             }
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Ghost fill: y-direction
-// ---------------------------------------------------------------------------
+static void fill_ghost_y(const struct RectilinearMesh* m,
+                          struct SolutionState* state,
+                          enum VarSet varSet,
+                          int skipLow, int skipHigh)
+{
+    int iLo = -m->ngx;
+    int iHi = m->nx + m->ngx;
 
-void RectilinearMesh::fillGhostY(SolutionState& state, VarSet varSet,
-                                  bool skipLow, bool skipHigh) const {
-    int iLo = -ngx_;
-    int iHi = nx_ + ngx_;
-
-    for (int k = 0; k < nz_; ++k) {
+    for (int k = 0; k < m->nz; ++k) {
         for (int i = iLo; i < iHi; ++i) {
             if (!skipLow) {
-                for (int g = 1; g <= ngy_; ++g) {
-                    std::size_t ghost = index(i, -g, k);
-                    std::size_t src;
-                    double sU(1.0), sV(1.0), sW(1.0);
+                for (int g = 1; g <= m->ngy; ++g) {
+                    size_t ghost = mesh_index(m, i, -g, k);
+                    size_t src;
+                    double sU = 1.0, sV = 1.0, sW = 1.0;
 
-                    switch (bc_[YLow]) {
-                    case BoundaryCondition::Symmetry:
-                        src = index(i, g - 1, k);
+                    switch (m->bc[YLOW]) {
+                    case BC_SYMMETRY:
+                        src = mesh_index(m, i, g - 1, k);
                         break;
-                    case BoundaryCondition::Periodic:
-                        src = index(i, ny_ - g, k);
+                    case BC_PERIODIC:
+                        src = mesh_index(m, i, m->ny - g, k);
                         break;
-                    case BoundaryCondition::SlipWall:
-                        src = index(i, g - 1, k);
+                    case BC_SLIP_WALL:
+                        src = mesh_index(m, i, g - 1, k);
                         sV = -1.0;
                         break;
-                    case BoundaryCondition::NoSlipWall:
-                        src = index(i, g - 1, k);
+                    case BC_NO_SLIP_WALL:
+                        src = mesh_index(m, i, g - 1, k);
                         sU = -1.0; sV = -1.0; sW = -1.0;
                         break;
-                    case BoundaryCondition::Outflow:
+                    case BC_OUTFLOW:
                     default:
-                        src = index(i, 0, k);
+                        src = mesh_index(m, i, 0, k);
                         break;
                     }
 
-                    switch (varSet) {
-                    case (VarSet::PRIM):
-                        state.copyCell_P(ghost, src, sU, sV, sW);
-                        break;
-                    case (VarSet::CONS):
-                        state.copyCell_C(ghost, src, sU, sV, sW);
-                        break;
-                    default:
-                        state.copyCell(ghost, src, sU, sV, sW);
-                        break;
-                    }
+                    fill_ghost_cell(state, varSet, ghost, src, sU, sV, sW);
                 }
             }
 
             if (!skipHigh) {
-                for (int g = 1; g <= ngy_; ++g) {
-                    std::size_t ghost = index(i, ny_ - 1 + g, k);
-                    std::size_t src;
-                    double sU(1.0), sV(1.0), sW(1.0);
+                for (int g = 1; g <= m->ngy; ++g) {
+                    size_t ghost = mesh_index(m, i, m->ny - 1 + g, k);
+                    size_t src;
+                    double sU = 1.0, sV = 1.0, sW = 1.0;
 
-                    switch (bc_[YHigh]) {
-                    case BoundaryCondition::Symmetry:
-                        src = index(i, ny_ - g, k);
+                    switch (m->bc[YHIGH]) {
+                    case BC_SYMMETRY:
+                        src = mesh_index(m, i, m->ny - g, k);
                         break;
-                    case BoundaryCondition::Periodic:
-                        src = index(i, g - 1, k);
+                    case BC_PERIODIC:
+                        src = mesh_index(m, i, g - 1, k);
                         break;
-                    case BoundaryCondition::SlipWall:
-                        src = index(i, ny_ - g, k);
+                    case BC_SLIP_WALL:
+                        src = mesh_index(m, i, m->ny - g, k);
                         sV = -1.0;
                         break;
-                    case BoundaryCondition::NoSlipWall:
-                        src = index(i, ny_ - g, k);
+                    case BC_NO_SLIP_WALL:
+                        src = mesh_index(m, i, m->ny - g, k);
                         sU = -1.0; sV = -1.0; sW = -1.0;
                         break;
-                    case BoundaryCondition::Outflow:
+                    case BC_OUTFLOW:
                     default:
-                        src = index(i, ny_ - 1, k);
+                        src = mesh_index(m, i, m->ny - 1, k);
                         break;
                     }
 
-                    switch (varSet) {
-                    case (VarSet::PRIM):
-                        state.copyCell_P(ghost, src, sU, sV, sW);
-                        break;
-                    case (VarSet::CONS):
-                        state.copyCell_C(ghost, src, sU, sV, sW);
-                        break;
-                    default:
-                        state.copyCell(ghost, src, sU, sV, sW);
-                        break;
-                    }
+                    fill_ghost_cell(state, varSet, ghost, src, sU, sV, sW);
                 }
             }
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Ghost fill: z-direction
-// ---------------------------------------------------------------------------
-
-void RectilinearMesh::fillGhostZ(SolutionState& state, VarSet varSet,
-                                  bool skipLow, bool skipHigh) const {
-    int iLo = -ngx_;
-    int iHi = nx_ + ngx_;
-    int jLo = -ngy_;
-    int jHi = ny_ + ngy_;
+static void fill_ghost_z(const struct RectilinearMesh* m,
+                          struct SolutionState* state,
+                          enum VarSet varSet,
+                          int skipLow, int skipHigh)
+{
+    int iLo = -m->ngx;
+    int iHi = m->nx + m->ngx;
+    int jLo = -m->ngy;
+    int jHi = m->ny + m->ngy;
 
     for (int j = jLo; j < jHi; ++j) {
         for (int i = iLo; i < iHi; ++i) {
             if (!skipLow) {
-                for (int g = 1; g <= ngz_; ++g) {
-                    std::size_t ghost = index(i, j, -g);
-                    std::size_t src;
-                    double sU(1.0), sV(1.0), sW(1.0);
+                for (int g = 1; g <= m->ngz; ++g) {
+                    size_t ghost = mesh_index(m, i, j, -g);
+                    size_t src;
+                    double sU = 1.0, sV = 1.0, sW = 1.0;
 
-                    switch (bc_[ZLow]) {
-                    case BoundaryCondition::Symmetry:
-                        src = index(i, j, g - 1);
+                    switch (m->bc[ZLOW]) {
+                    case BC_SYMMETRY:
+                        src = mesh_index(m, i, j, g - 1);
                         break;
-                    case BoundaryCondition::Periodic:
-                        src = index(i, j, nz_ - g);
+                    case BC_PERIODIC:
+                        src = mesh_index(m, i, j, m->nz - g);
                         break;
-                    case BoundaryCondition::SlipWall:
-                        src = index(i, j, g - 1);
+                    case BC_SLIP_WALL:
+                        src = mesh_index(m, i, j, g - 1);
                         sW = -1.0;
                         break;
-                    case BoundaryCondition::NoSlipWall:
-                        src = index(i, j, g - 1);
+                    case BC_NO_SLIP_WALL:
+                        src = mesh_index(m, i, j, g - 1);
                         sU = -1.0; sV = -1.0; sW = -1.0;
                         break;
-                    case BoundaryCondition::Outflow:
+                    case BC_OUTFLOW:
                     default:
-                        src = index(i, j, 0);
+                        src = mesh_index(m, i, j, 0);
                         break;
                     }
 
-                    switch (varSet) {
-                    case (VarSet::PRIM):
-                        state.copyCell_P(ghost, src, sU, sV, sW);
-                        break;
-                    case (VarSet::CONS):
-                        state.copyCell_C(ghost, src, sU, sV, sW);
-                        break;
-                    default:
-                        state.copyCell(ghost, src, sU, sV, sW);
-                        break;
-                    }
+                    fill_ghost_cell(state, varSet, ghost, src, sU, sV, sW);
                 }
             }
 
             if (!skipHigh) {
-                for (int g = 1; g <= ngz_; ++g) {
-                    std::size_t ghost = index(i, j, nz_ - 1 + g);
-                    std::size_t src;
-                    double sU(1.0), sV(1.0), sW(1.0);
+                for (int g = 1; g <= m->ngz; ++g) {
+                    size_t ghost = mesh_index(m, i, j, m->nz - 1 + g);
+                    size_t src;
+                    double sU = 1.0, sV = 1.0, sW = 1.0;
 
-                    switch (bc_[ZHigh]) {
-                    case BoundaryCondition::Symmetry:
-                        src = index(i, j, nz_ - g);
+                    switch (m->bc[ZHIGH]) {
+                    case BC_SYMMETRY:
+                        src = mesh_index(m, i, j, m->nz - g);
                         break;
-                    case BoundaryCondition::Periodic:
-                        src = index(i, j, g - 1);
+                    case BC_PERIODIC:
+                        src = mesh_index(m, i, j, g - 1);
                         break;
-                    case BoundaryCondition::SlipWall:
-                        src = index(i, j, nz_ - g);
+                    case BC_SLIP_WALL:
+                        src = mesh_index(m, i, j, m->nz - g);
                         sW = -1.0;
                         break;
-                    case BoundaryCondition::NoSlipWall:
-                        src = index(i, j, nz_ - g);
+                    case BC_NO_SLIP_WALL:
+                        src = mesh_index(m, i, j, m->nz - g);
                         sU = -1.0; sV = -1.0; sW = -1.0;
                         break;
-                    case BoundaryCondition::Outflow:
+                    case BC_OUTFLOW:
                     default:
-                        src = index(i, j, nz_ - 1);
+                        src = mesh_index(m, i, j, m->nz - 1);
                         break;
                     }
 
-                    switch (varSet) {
-                    case (VarSet::PRIM):
-                        state.copyCell_P(ghost, src, sU, sV, sW);
-                        break;
-                    case (VarSet::CONS):
-                        state.copyCell_C(ghost, src, sU, sV, sW);
-                        break;
-                    default:
-                        state.copyCell(ghost, src, sU, sV, sW);
-                        break;
-                    }
+                    fill_ghost_cell(state, varSet, ghost, src, sU, sV, sW);
                 }
             }
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Scalar ghost fill
-// ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+   Public ghost fill: single-process
+   --------------------------------------------------------------------------- */
 
-void RectilinearMesh::fillScalarGhosts(std::vector<double>& field) const {
-    // X-direction (physical j,k only)
-    for (int k = 0; k < nz_; ++k) {
-        for (int j = 0; j < ny_; ++j) {
-            for (int g = 1; g <= ngx_; ++g) {
-                std::size_t ghost = index(-g, j, k);
-                if (bc_[XLow] == BoundaryCondition::Periodic) {
-                    field[ghost] = field[index(nx_ - g, j, k)];
+void mesh_apply_bcs(const struct RectilinearMesh* m,
+                    struct SolutionState* state,
+                    enum VarSet varSet)
+{
+    fill_ghost_x(m, state, varSet, 0, 0);
+    if (m->dim >= 2) fill_ghost_y(m, state, varSet, 0, 0);
+    if (m->dim >= 3) fill_ghost_z(m, state, varSet, 0, 0);
+}
+
+/* ---------------------------------------------------------------------------
+   Scalar ghost fill: single-process
+   --------------------------------------------------------------------------- */
+
+void mesh_fill_scalar_ghosts(const struct RectilinearMesh* m, double* field)
+{
+    /* X-direction (physical j,k only) */
+    for (int k = 0; k < m->nz; ++k) {
+        for (int j = 0; j < m->ny; ++j) {
+            for (int g = 1; g <= m->ngx; ++g) {
+                size_t ghost = mesh_index(m, -g, j, k);
+                if (m->bc[XLOW] == BC_PERIODIC) {
+                    field[ghost] = field[mesh_index(m, m->nx - g, j, k)];
                 } else {
-                    field[ghost] = field[index(0, j, k)];
+                    field[ghost] = field[mesh_index(m, 0, j, k)];
                 }
-                ghost = index(nx_ - 1 + g, j, k);
-                if (bc_[XHigh] == BoundaryCondition::Periodic) {
-                    field[ghost] = field[index(g - 1, j, k)];
+                ghost = mesh_index(m, m->nx - 1 + g, j, k);
+                if (m->bc[XHIGH] == BC_PERIODIC) {
+                    field[ghost] = field[mesh_index(m, g - 1, j, k)];
                 } else {
-                    field[ghost] = field[index(nx_ - 1, j, k)];
+                    field[ghost] = field[mesh_index(m, m->nx - 1, j, k)];
                 }
             }
         }
     }
 
-    if (dim_ >= 2) {
-        int iLo = -ngx_;
-        int iHi = nx_ + ngx_;
-        for (int k = 0; k < nz_; ++k) {
+    /* Y-direction */
+    if (m->dim >= 2) {
+        int iLo = -m->ngx;
+        int iHi = m->nx + m->ngx;
+        for (int k = 0; k < m->nz; ++k) {
             for (int i = iLo; i < iHi; ++i) {
-                for (int g = 1; g <= ngy_; ++g) {
-                    std::size_t ghost = index(i, -g, k);
-                    if (bc_[YLow] == BoundaryCondition::Periodic) {
-                        field[ghost] = field[index(i, ny_ - g, k)];
+                for (int g = 1; g <= m->ngy; ++g) {
+                    size_t ghost = mesh_index(m, i, -g, k);
+                    if (m->bc[YLOW] == BC_PERIODIC) {
+                        field[ghost] = field[mesh_index(m, i, m->ny - g, k)];
                     } else {
-                        field[ghost] = field[index(i, 0, k)];
+                        field[ghost] = field[mesh_index(m, i, 0, k)];
                     }
-                    ghost = index(i, ny_ - 1 + g, k);
-                    if (bc_[YHigh] == BoundaryCondition::Periodic) {
-                        field[ghost] = field[index(i, g - 1, k)];
+                    ghost = mesh_index(m, i, m->ny - 1 + g, k);
+                    if (m->bc[YHIGH] == BC_PERIODIC) {
+                        field[ghost] = field[mesh_index(m, i, g - 1, k)];
                     } else {
-                        field[ghost] = field[index(i, ny_ - 1, k)];
+                        field[ghost] = field[mesh_index(m, i, m->ny - 1, k)];
                     }
                 }
             }
         }
     }
 
-    if (dim_ >= 3) {
-        int iLo = -ngx_;
-        int iHi = nx_ + ngx_;
-        int jLo = -ngy_;
-        int jHi = ny_ + ngy_;
+    /* Z-direction */
+    if (m->dim >= 3) {
+        int iLo = -m->ngx;
+        int iHi = m->nx + m->ngx;
+        int jLo = -m->ngy;
+        int jHi = m->ny + m->ngy;
         for (int j = jLo; j < jHi; ++j) {
             for (int i = iLo; i < iHi; ++i) {
-                for (int g = 1; g <= ngz_; ++g) {
-                    std::size_t ghost = index(i, j, -g);
-                    if (bc_[ZLow] == BoundaryCondition::Periodic) {
-                        field[ghost] = field[index(i, j, nz_ - g)];
+                for (int g = 1; g <= m->ngz; ++g) {
+                    size_t ghost = mesh_index(m, i, j, -g);
+                    if (m->bc[ZLOW] == BC_PERIODIC) {
+                        field[ghost] = field[mesh_index(m, i, j, m->nz - g)];
                     } else {
-                        field[ghost] = field[index(i, j, 0)];
+                        field[ghost] = field[mesh_index(m, i, j, 0)];
                     }
-                    ghost = index(i, j, nz_ - 1 + g);
-                    if (bc_[ZHigh] == BoundaryCondition::Periodic) {
-                        field[ghost] = field[index(i, j, g - 1)];
+                    ghost = mesh_index(m, i, j, m->nz - 1 + g);
+                    if (m->bc[ZHIGH] == BC_PERIODIC) {
+                        field[ghost] = field[mesh_index(m, i, j, g - 1)];
                     } else {
-                        field[ghost] = field[index(i, j, nz_ - 1)];
+                        field[ghost] = field[mesh_index(m, i, j, m->nz - 1)];
                     }
                 }
             }
@@ -491,62 +445,68 @@ void RectilinearMesh::fillScalarGhosts(std::vector<double>& field) const {
     }
 }
 
-// ---------------------------------------------------------------------------
-// MPI-aware boundary conditions
-// ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+   MPI-aware boundary conditions
+   --------------------------------------------------------------------------- */
 
-void RectilinearMesh::applyBoundaryConditions(SolutionState& state,
-        VarSet varSet, HaloExchange& halo) const {
-    // Onion-peel: for each direction, first exchange halos, then apply
-    // physical BCs only on faces that are true boundaries.
+void mesh_apply_bcs_mpi(const struct RectilinearMesh* m,
+                        struct SolutionState* state,
+                        enum VarSet varSet,
+                        struct HaloExchange* halo)
+{
+    /* Onion-peel: for each direction, first exchange halos, then apply
+       physical BCs only on faces that are true boundaries. */
 
-    // X-direction
-    halo.exchangeStateDirection(state, varSet, 0);
-    fillGhostX(state, varSet,
-               !halo.mpi().isPhysicalBoundary(XLow),
-               !halo.mpi().isPhysicalBoundary(XHigh));
+    /* X-direction */
+    halo_exchange_state_direction(halo, state, varSet, 0);
+    fill_ghost_x(m, state, varSet,
+                 !mpi_is_physical_boundary(halo->mpi, XLOW),
+                 !mpi_is_physical_boundary(halo->mpi, XHIGH));
 
-    // Y-direction
-    if (dim_ >= 2) {
-        halo.exchangeStateDirection(state, varSet, 1);
-        fillGhostY(state, varSet,
-                   !halo.mpi().isPhysicalBoundary(YLow),
-                   !halo.mpi().isPhysicalBoundary(YHigh));
+    /* Y-direction */
+    if (m->dim >= 2) {
+        halo_exchange_state_direction(halo, state, varSet, 1);
+        fill_ghost_y(m, state, varSet,
+                     !mpi_is_physical_boundary(halo->mpi, YLOW),
+                     !mpi_is_physical_boundary(halo->mpi, YHIGH));
     }
 
-    // Z-direction
-    if (dim_ >= 3) {
-        halo.exchangeStateDirection(state, varSet, 2);
-        fillGhostZ(state, varSet,
-                   !halo.mpi().isPhysicalBoundary(ZLow),
-                   !halo.mpi().isPhysicalBoundary(ZHigh));
+    /* Z-direction */
+    if (m->dim >= 3) {
+        halo_exchange_state_direction(halo, state, varSet, 2);
+        fill_ghost_z(m, state, varSet,
+                     !mpi_is_physical_boundary(halo->mpi, ZLOW),
+                     !mpi_is_physical_boundary(halo->mpi, ZHIGH));
     }
 }
 
-void RectilinearMesh::fillScalarGhosts(std::vector<double>& field,
-                                         HaloExchange& halo) const {
-    // X-direction
-    halo.exchangeScalarDirection(field, 0);
-    if (halo.mpi().isPhysicalBoundary(XLow) || halo.mpi().isPhysicalBoundary(XHigh)) {
-        for (int k = 0; k < nz_; ++k) {
-            for (int j = 0; j < ny_; ++j) {
-                if (halo.mpi().isPhysicalBoundary(XLow)) {
-                    for (int g = 1; g <= ngx_; ++g) {
-                        std::size_t ghost = index(-g, j, k);
-                        if (bc_[XLow] == BoundaryCondition::Periodic) {
-                            field[ghost] = field[index(nx_ - g, j, k)];
+void mesh_fill_scalar_ghosts_mpi(const struct RectilinearMesh* m,
+                                 double* field,
+                                 struct HaloExchange* halo)
+{
+    /* X-direction halo exchange */
+    halo_exchange_scalar_direction(halo, field, 0);
+
+    if (mpi_is_physical_boundary(halo->mpi, XLOW) || mpi_is_physical_boundary(halo->mpi, XHIGH)) {
+        for (int k = 0; k < m->nz; ++k) {
+            for (int j = 0; j < m->ny; ++j) {
+                if (mpi_is_physical_boundary(halo->mpi, XLOW)) {
+                    for (int g = 1; g <= m->ngx; ++g) {
+                        size_t ghost = mesh_index(m, -g, j, k);
+                        if (m->bc[XLOW] == BC_PERIODIC) {
+                            field[ghost] = field[mesh_index(m, m->nx - g, j, k)];
                         } else {
-                            field[ghost] = field[index(0, j, k)];
+                            field[ghost] = field[mesh_index(m, 0, j, k)];
                         }
                     }
                 }
-                if (halo.mpi().isPhysicalBoundary(XHigh)) {
-                    for (int g = 1; g <= ngx_; ++g) {
-                        std::size_t ghost = index(nx_ - 1 + g, j, k);
-                        if (bc_[XHigh] == BoundaryCondition::Periodic) {
-                            field[ghost] = field[index(g - 1, j, k)];
+                if (mpi_is_physical_boundary(halo->mpi, XHIGH)) {
+                    for (int g = 1; g <= m->ngx; ++g) {
+                        size_t ghost = mesh_index(m, m->nx - 1 + g, j, k);
+                        if (m->bc[XHIGH] == BC_PERIODIC) {
+                            field[ghost] = field[mesh_index(m, g - 1, j, k)];
                         } else {
-                            field[ghost] = field[index(nx_ - 1, j, k)];
+                            field[ghost] = field[mesh_index(m, m->nx - 1, j, k)];
                         }
                     }
                 }
@@ -554,31 +514,32 @@ void RectilinearMesh::fillScalarGhosts(std::vector<double>& field,
         }
     }
 
-    // Y-direction
-    if (dim_ >= 2) {
-        halo.exchangeScalarDirection(field, 1);
-        if (halo.mpi().isPhysicalBoundary(YLow) || halo.mpi().isPhysicalBoundary(YHigh)) {
-            int iLo = -ngx_;
-            int iHi = nx_ + ngx_;
-            for (int k = 0; k < nz_; ++k) {
+    /* Y-direction */
+    if (m->dim >= 2) {
+        halo_exchange_scalar_direction(halo, field, 1);
+
+        if (mpi_is_physical_boundary(halo->mpi, YLOW) || mpi_is_physical_boundary(halo->mpi, YHIGH)) {
+            int iLo = -m->ngx;
+            int iHi = m->nx + m->ngx;
+            for (int k = 0; k < m->nz; ++k) {
                 for (int i = iLo; i < iHi; ++i) {
-                    if (halo.mpi().isPhysicalBoundary(YLow)) {
-                        for (int g = 1; g <= ngy_; ++g) {
-                            std::size_t ghost = index(i, -g, k);
-                            if (bc_[YLow] == BoundaryCondition::Periodic) {
-                                field[ghost] = field[index(i, ny_ - g, k)];
+                    if (mpi_is_physical_boundary(halo->mpi, YLOW)) {
+                        for (int g = 1; g <= m->ngy; ++g) {
+                            size_t ghost = mesh_index(m, i, -g, k);
+                            if (m->bc[YLOW] == BC_PERIODIC) {
+                                field[ghost] = field[mesh_index(m, i, m->ny - g, k)];
                             } else {
-                                field[ghost] = field[index(i, 0, k)];
+                                field[ghost] = field[mesh_index(m, i, 0, k)];
                             }
                         }
                     }
-                    if (halo.mpi().isPhysicalBoundary(YHigh)) {
-                        for (int g = 1; g <= ngy_; ++g) {
-                            std::size_t ghost = index(i, ny_ - 1 + g, k);
-                            if (bc_[YHigh] == BoundaryCondition::Periodic) {
-                                field[ghost] = field[index(i, g - 1, k)];
+                    if (mpi_is_physical_boundary(halo->mpi, YHIGH)) {
+                        for (int g = 1; g <= m->ngy; ++g) {
+                            size_t ghost = mesh_index(m, i, m->ny - 1 + g, k);
+                            if (m->bc[YHIGH] == BC_PERIODIC) {
+                                field[ghost] = field[mesh_index(m, i, g - 1, k)];
                             } else {
-                                field[ghost] = field[index(i, ny_ - 1, k)];
+                                field[ghost] = field[mesh_index(m, i, m->ny - 1, k)];
                             }
                         }
                     }
@@ -587,33 +548,34 @@ void RectilinearMesh::fillScalarGhosts(std::vector<double>& field,
         }
     }
 
-    // Z-direction
-    if (dim_ >= 3) {
-        halo.exchangeScalarDirection(field, 2);
-        if (halo.mpi().isPhysicalBoundary(ZLow) || halo.mpi().isPhysicalBoundary(ZHigh)) {
-            int iLo = -ngx_;
-            int iHi = nx_ + ngx_;
-            int jLo = -ngy_;
-            int jHi = ny_ + ngy_;
+    /* Z-direction */
+    if (m->dim >= 3) {
+        halo_exchange_scalar_direction(halo, field, 2);
+
+        if (mpi_is_physical_boundary(halo->mpi, ZLOW) || mpi_is_physical_boundary(halo->mpi, ZHIGH)) {
+            int iLo = -m->ngx;
+            int iHi = m->nx + m->ngx;
+            int jLo = -m->ngy;
+            int jHi = m->ny + m->ngy;
             for (int j = jLo; j < jHi; ++j) {
                 for (int i = iLo; i < iHi; ++i) {
-                    if (halo.mpi().isPhysicalBoundary(ZLow)) {
-                        for (int g = 1; g <= ngz_; ++g) {
-                            std::size_t ghost = index(i, j, -g);
-                            if (bc_[ZLow] == BoundaryCondition::Periodic) {
-                                field[ghost] = field[index(i, j, nz_ - g)];
+                    if (mpi_is_physical_boundary(halo->mpi, ZLOW)) {
+                        for (int g = 1; g <= m->ngz; ++g) {
+                            size_t ghost = mesh_index(m, i, j, -g);
+                            if (m->bc[ZLOW] == BC_PERIODIC) {
+                                field[ghost] = field[mesh_index(m, i, j, m->nz - g)];
                             } else {
-                                field[ghost] = field[index(i, j, 0)];
+                                field[ghost] = field[mesh_index(m, i, j, 0)];
                             }
                         }
                     }
-                    if (halo.mpi().isPhysicalBoundary(ZHigh)) {
-                        for (int g = 1; g <= ngz_; ++g) {
-                            std::size_t ghost = index(i, j, nz_ - 1 + g);
-                            if (bc_[ZHigh] == BoundaryCondition::Periodic) {
-                                field[ghost] = field[index(i, j, g - 1)];
+                    if (mpi_is_physical_boundary(halo->mpi, ZHIGH)) {
+                        for (int g = 1; g <= m->ngz; ++g) {
+                            size_t ghost = mesh_index(m, i, j, m->nz - 1 + g);
+                            if (m->bc[ZHIGH] == BC_PERIODIC) {
+                                field[ghost] = field[mesh_index(m, i, j, g - 1)];
                             } else {
-                                field[ghost] = field[index(i, j, nz_ - 1)];
+                                field[ghost] = field[mesh_index(m, i, j, m->nz - 1)];
                             }
                         }
                     }
@@ -622,5 +584,3 @@ void RectilinearMesh::fillScalarGhosts(std::vector<double>& field,
         }
     }
 }
-
-} // namespace SemiImplicitFV

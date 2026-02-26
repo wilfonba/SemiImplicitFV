@@ -109,24 +109,21 @@ endif()
 # Library sources
 set(LIB_SOURCES
     src/Checkpoint.cpp
+    src/SimulationConfig.cpp
+    src/EquationOfState.cpp
     src/SolutionState.cpp
     src/RectilinearMesh.cpp
     src/Reconstruction.cpp
-    src/LFSolver.cpp
-    src/RusanovSolver.cpp
-    src/HLLCSolver.cpp
+    src/RiemannSolver.cpp
     src/IGR.cpp
     src/SemiImplicitSolver.cpp
     src/ExplicitSolver.cpp
     src/RKTimeStepping.cpp
     src/PressureLaplacian.cpp
-    src/GaussSeidelPressureSolver.cpp
-    src/JacobiPressureSolver.cpp
+    src/PressureSolver.cpp
     src/MixtureEOS.cpp
     src/ViscousFlux.cpp
     src/SurfaceTension.cpp
-    src/StiffenedGasEOS.cpp
-    src/IdealGasEOS.cpp
     src/VTKWriter.cpp
     src/MPIContext.cpp
     src/HaloExchange.cpp
@@ -163,8 +160,8 @@ if(ENABLE_NVTX)
     endif()
 endif()
 
-# ---- JSON Driver (sifv) ----
-if(BUILD_DRIVER)
+# ---- Input parsing library (needed by driver and tests) ----
+if(BUILD_DRIVER OR BUILD_TESTS)
     include(FetchContent)
 
     # nlohmann/json (header-only)
@@ -196,8 +193,10 @@ if(BUILD_DRIVER)
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     )
     target_include_directories(SemiImplicitFV_input PRIVATE ${exprtk_SOURCE_DIR})
+endif()
 
-    # Generic driver executable
+# ---- JSON Driver (sifv) ----
+if(BUILD_DRIVER)
     add_executable(sifv driver/main.cpp)
     target_link_libraries(sifv PRIVATE SemiImplicitFV_input)
 endif()
@@ -215,6 +214,12 @@ if(BUILD_EXAMPLES)
             endif()
         endif()
     endforeach()
+endif()
+
+# Tests
+if(BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
 endif()
 
 # Install

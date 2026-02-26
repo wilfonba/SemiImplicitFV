@@ -28,7 +28,7 @@
             "maxDt": 1.0,
             "pressureTol": 1e-12,
             "maxPressureIters": 50,
-            "singlePressureSolve": true
+            "singlePressureSolve": false
         },
         "viscousParams": { "mu": 0.000625 }
     },

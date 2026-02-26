@@ -1,137 +1,198 @@
 #include "ICPatch.hpp"
+#include "RectilinearMesh.hpp"
+#include "SolutionState.hpp"
 #include "MixtureEOS.hpp"
 #include "ExpressionEvaluator.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <stdexcept>
+#include <string>
 
-namespace SemiImplicitFV {
+int ic_geometry_contains(const ICGeometry* geom, double x, double y, double z) {
+    switch (geom->type) {
+        case IC_GEOM_BOX:
+            return x >= geom->box.lo[0] && x <= geom->box.hi[0] &&
+                   y >= geom->box.lo[1] && y <= geom->box.hi[1] &&
+                   z >= geom->box.lo[2] && z <= geom->box.hi[2];
+        case IC_GEOM_SPHERE: {
+            double dx = x - geom->sphere.center[0];
+            double dy = y - geom->sphere.center[1];
+            double dz = z - geom->sphere.center[2];
+            return dx*dx + dy*dy + dz*dz <= geom->sphere.radius * geom->sphere.radius;
+        }
+        case IC_GEOM_PLANE: {
+            double dot = (x - geom->plane.point[0]) * geom->plane.normal[0]
+                       + (y - geom->plane.point[1]) * geom->plane.normal[1]
+                       + (z - geom->plane.point[2]) * geom->plane.normal[2];
+            return dot >= 0.0;
+        }
+        case IC_GEOM_ANALYTIC:
+            if (geom->subRegion)
+                return ic_geometry_contains(geom->subRegion, x, y, z);
+            return 1; /* no sub-region means all cells */
+    }
+    return 0;
+}
 
-// Helper: apply an ICState to a single cell
+ICState ic_state_defaults(void) {
+    ICState st;
+    memset(&st, 0, sizeof(st));
+    st.rho = 1.0;
+    st.p   = 1.0;
+    return st;
+}
+
+void ic_patch_init(ICPatch* patch) {
+    memset(patch, 0, sizeof(*patch));
+}
+
+void ic_patch_free(ICPatch* patch) {
+    if (patch->exprNames) {
+        for (int i = 0; i < patch->nExpressions; ++i) {
+            free(patch->exprNames[i]);
+            free(patch->exprStrings[i]);
+        }
+        free(patch->exprNames);
+        free(patch->exprStrings);
+    }
+    if (patch->geometry.subRegion) {
+        free(patch->geometry.subRegion);
+        patch->geometry.subRegion = NULL;
+    }
+    patch->exprNames = NULL;
+    patch->exprStrings = NULL;
+    patch->nExpressions = 0;
+}
+
+/* Helper: apply an ICState to a single cell */
 static void applyCellState(
-    std::size_t idx,
-    const ICState& st,
-    SolutionState& state,
-    const EquationOfState& eos,
-    const SimulationConfig& config)
+    size_t idx,
+    const ICState* st,
+    SolutionState* state,
+    const EOSData* eos,
+    const SimulationConfig* config)
 {
     PrimitiveState W;
-    W.rho = st.rho;
-    W.u   = {st.u, st.v, st.w};
-    W.p   = st.p;
-    W.sigma = st.sigma;
-    W.T   = eos.temperature(W);
+    memset(&W, 0, sizeof(W));
+    W.rho = st->rho;
+    W.u[0] = st->u;
+    W.u[1] = st->v;
+    W.u[2] = st->w;
+    W.p = st->p;
+    W.sigma = st->sigma;
+    W.T = eos_temperature(eos, &W);
 
-    state.setPrimitiveState(idx, W);
+    state_set_primitive(state, idx, &W);
 
-    if (config.isMultiPhase() && !st.alpha.empty()) {
-        int nPhases = config.multiPhaseParams.nPhases;
+    if (config_is_multi_phase(config) && st->nAlpha > 0) {
+        int nPhases = config->multiPhaseParams.nPhases;
+        size_t tc = state->totalCells;
         double rho = 0.0;
         for (int ph = 0; ph < nPhases; ++ph) {
-            state.alpha[ph][idx] = st.alpha[ph];
-            if (!st.alphaRho.empty()) {
-                state.alphaRho[ph][idx] = st.alphaRho[ph];
+            state->alpha[ph * tc + idx] = st->alpha[ph];
+            if (st->nAlphaRho > 0) {
+                state->alphaRho[ph * tc + idx] = st->alphaRho[ph];
             } else {
-                // Default: alphaRho = alpha * rho
-                state.alphaRho[ph][idx] = st.alpha[ph] * st.rho;
+                state->alphaRho[ph * tc + idx] = st->alpha[ph] * st->rho;
             }
-            rho += state.alphaRho[ph][idx];
+            rho += state->alphaRho[ph * tc + idx];
         }
-        state.rho[idx] = rho;
+        state->rho[idx] = rho;
 
-        // Conservative variables via MixtureEOS
-        double ke = 0.5 * rho * (st.u*st.u + st.v*st.v + st.w*st.w);
-        state.rhoE[idx] = MixtureEOS::mixtureTotalEnergy(
-            rho, st.p, st.alpha, ke, config.multiPhaseParams);
-        state.rhoU[idx] = rho * st.u;
-        if (config.dim >= 2) state.rhoV[idx] = rho * st.v;
-        if (config.dim >= 3) state.rhoW[idx] = rho * st.w;
+        double ke = 0.5 * rho * (st->u*st->u + st->v*st->v + st->w*st->w);
+        state->rhoE[idx] = mixture_total_energy(
+            rho, st->p, st->alpha, nPhases, ke,
+            config->multiPhaseParams.phases);
+        state->rhoU[idx] = rho * st->u;
+        if (config->dim >= 2) state->rhoV[idx] = rho * st->v;
+        if (config->dim >= 3) state->rhoW[idx] = rho * st->w;
     } else {
-        state.setConservativeState(idx, eos.toConservative(W));
+        ConservativeState U = eos_to_conservative(eos, &W);
+        state_set_conservative(state, idx, &U);
     }
 }
 
-void applyInitialConditions(
-    const RectilinearMesh& mesh,
-    SolutionState& state,
-    const EquationOfState& eos,
-    const SimulationConfig& config,
-    const ICState& defaultState,
-    const std::vector<ICPatch>& patches)
+void apply_initial_conditions(
+    const RectilinearMesh* mesh,
+    SolutionState* state,
+    const EOSData* eos,
+    const SimulationConfig* config,
+    const ICState* defaultState,
+    const ICPatch* patches,
+    int nPatches)
 {
-    int dim = config.dim;
+    int dim = config->dim;
 
-    // Step 1: Fill all cells with default state
-    for (int k = 0; k < mesh.nz(); ++k) {
-        for (int j = 0; j < mesh.ny(); ++j) {
-            for (int i = 0; i < mesh.nx(); ++i) {
-                std::size_t idx = mesh.index(i, j, k);
+    /* Step 1: Fill all cells with default state */
+    for (int k = 0; k < mesh->nz; ++k) {
+        for (int j = 0; j < mesh->ny; ++j) {
+            for (int i = 0; i < mesh->nx; ++i) {
+                size_t idx = mesh_index(mesh, i, j, k);
                 applyCellState(idx, defaultState, state, eos, config);
             }
         }
     }
 
-    // Step 2: Apply patches in order
-    for (const auto& patch : patches) {
-        if (!patch.geometry) continue;
+    /* Step 2: Apply patches in order */
+    for (int p = 0; p < nPatches; ++p) {
+        const ICPatch* patch = &patches[p];
+        int isAnalytic = (patch->nExpressions > 0);
 
-        bool isAnalytic = !patch.expressions.empty();
-
-        // Create expression evaluator if needed
-        std::unique_ptr<ExpressionEvaluator> evaluator;
+        /* Create expression evaluator if needed */
+        ExpressionEvaluator* evaluator = NULL;
         if (isAnalytic) {
-            evaluator = std::make_unique<ExpressionEvaluator>();
-            for (const auto& [name, expr] : patch.expressions) {
-                evaluator->addExpression(name, expr);
+            evaluator = new ExpressionEvaluator();
+            for (int e = 0; e < patch->nExpressions; ++e) {
+                evaluator->addExpression(patch->exprNames[e], patch->exprStrings[e]);
             }
         }
 
-        for (int k = 0; k < mesh.nz(); ++k) {
-            for (int j = 0; j < mesh.ny(); ++j) {
-                for (int i = 0; i < mesh.nx(); ++i) {
-                    double x = mesh.cellCentroidX(i);
-                    double y = (dim >= 2) ? mesh.cellCentroidY(j) : 0.0;
-                    double z = (dim >= 3) ? mesh.cellCentroidZ(k) : 0.0;
+        for (int k = 0; k < mesh->nz; ++k) {
+            for (int j = 0; j < mesh->ny; ++j) {
+                for (int i = 0; i < mesh->nx; ++i) {
+                    double x = mesh_cellCentroidX(mesh, i);
+                    double y = (dim >= 2) ? mesh_cellCentroidY(mesh, j) : 0.0;
+                    double z = (dim >= 3) ? mesh_cellCentroidZ(mesh, k) : 0.0;
 
-                    if (patch.geometry->contains(x, y, z)) {
-                        std::size_t idx = mesh.index(i, j, k);
+                    if (ic_geometry_contains(&patch->geometry, x, y, z)) {
+                        size_t idx = mesh_index(mesh, i, j, k);
 
                         if (isAnalytic) {
-                            // Evaluate expressions at this cell
-                            ICState evalState = patch.state;
+                            ICState evalState = patch->state;
                             evaluator->setCoordinates(x, y, z);
 
-                            for (const auto& [name, expr] : patch.expressions) {
+                            for (int e = 0; e < patch->nExpressions; ++e) {
+                                const char* name = patch->exprNames[e];
                                 double val = evaluator->evaluate(name);
-                                if (name == "rho") evalState.rho = val;
-                                else if (name == "u") evalState.u = val;
-                                else if (name == "v") evalState.v = val;
-                                else if (name == "w") evalState.w = val;
-                                else if (name == "p") evalState.p = val;
-                                else if (name == "sigma") evalState.sigma = val;
-                                // alpha_0, alpha_1, etc.
-                                else if (name.substr(0, 6) == "alpha_") {
-                                    int ph = std::stoi(name.substr(6));
-                                    if (ph >= 0 && ph < static_cast<int>(evalState.alpha.size()))
+                                if (strcmp(name, "rho") == 0) evalState.rho = val;
+                                else if (strcmp(name, "u") == 0) evalState.u = val;
+                                else if (strcmp(name, "v") == 0) evalState.v = val;
+                                else if (strcmp(name, "w") == 0) evalState.w = val;
+                                else if (strcmp(name, "p") == 0) evalState.p = val;
+                                else if (strcmp(name, "sigma") == 0) evalState.sigma = val;
+                                else if (strncmp(name, "alpha_", 6) == 0) {
+                                    int ph = atoi(name + 6);
+                                    if (ph >= 0 && ph < evalState.nAlpha)
                                         evalState.alpha[ph] = val;
                                 }
-                                // alphaRho_0, alphaRho_1, etc.
-                                else if (name.substr(0, 9) == "alphaRho_") {
-                                    int ph = std::stoi(name.substr(9));
-                                    if (ph >= 0 && ph < static_cast<int>(evalState.alphaRho.size()))
+                                else if (strncmp(name, "alphaRho_", 9) == 0) {
+                                    int ph = atoi(name + 9);
+                                    if (ph >= 0 && ph < evalState.nAlphaRho)
                                         evalState.alphaRho[ph] = val;
                                 }
                             }
-                            applyCellState(idx, evalState, state, eos, config);
+                            applyCellState(idx, &evalState, state, eos, config);
                         } else {
-                            applyCellState(idx, patch.state, state, eos, config);
+                            applyCellState(idx, &patch->state, state, eos, config);
                         }
                     }
                 }
             }
         }
+
+        delete evaluator;
     }
 }
-
-} // namespace SemiImplicitFV

@@ -2,29 +2,26 @@
 #define VISCOUS_FLUX_HPP
 
 #include "SimulationConfig.hpp"
-#include "RectilinearMesh.hpp"
-#include "SolutionState.hpp"
-#include <vector>
+#include <stddef.h>
 
-namespace SemiImplicitFV {
+struct RectilinearMesh;
+struct SolutionState;
 
-/// Add viscous stress contributions (Newtonian fluid, Stokes hypothesis) to the
-/// momentum and energy RHS arrays.  The viscous stress tensor is:
-///
-///   tau_ij = mu * (du_i/dx_j + du_j/dx_i) - (2/3) * mu * div(u) * delta_ij
-///
-/// Velocity gradients are computed at cell faces using central differences
-/// (normal direction) and averaged cell-center differences (transverse).
-/// Viscous work (tau . u) is added to the energy RHS.
-void addViscousFluxes(
-    const SimulationConfig& config,
-    const RectilinearMesh& mesh,
-    const SolutionState& state,
-    std::vector<double>& rhsRhoU,
-    std::vector<double>& rhsRhoV,
-    std::vector<double>& rhsRhoW,
-    std::vector<double>& rhsRhoE);
+/* Add viscous stress contributions (Newtonian fluid, Stokes hypothesis) to the
+   momentum and energy RHS arrays.  The viscous stress tensor is:
 
-} // namespace SemiImplicitFV
+     tau_ij = mu * (du_i/dx_j + du_j/dx_i) - (2/3) * mu * div(u) * delta_ij
 
-#endif // VISCOUS_FLUX_HPP
+   Velocity gradients are computed at cell faces using central differences
+   (normal direction) and averaged cell-center differences (transverse).
+   Viscous work (tau . u) is added to the energy RHS. */
+void add_viscous_fluxes(
+    const struct SimulationConfig* config,
+    const struct RectilinearMesh* mesh,
+    const struct SolutionState* state,
+    double* rhsRhoU,
+    double* rhsRhoV,
+    double* rhsRhoW,
+    double* rhsRhoE);
+
+#endif /* VISCOUS_FLUX_HPP */

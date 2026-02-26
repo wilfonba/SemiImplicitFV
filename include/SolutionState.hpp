@@ -3,140 +3,120 @@
 
 #include "State.hpp"
 #include "SimulationConfig.hpp"
-#include <vector>
-#include <memory>
-#include <cstddef>
+#include <stddef.h>
 
-namespace SemiImplicitFV {
+struct RectilinearMesh;
+struct HaloExchange;
 
-class RectilinearMesh;
-class EquationOfState;
-
-enum class VarSet {
-    CONS,        // Conservative variables
-    PRIM,        // Primitive variables
-    SIGMA,       // Entropic pressure (IGR)
+enum VarSet {
+    VARSET_CONS,
+    VARSET_PRIM,
+    VARSET_SIGMA
 };
 
-/// Struct-of-arrays storage for all per-cell field data.
-///
-/// Arrays are sized to totalCells (including ghost cells).  Indexing is
-/// done via RectilinearMesh::index(i,j,k), which returns the flat offset.
-class SolutionState {
-public:
-    SolutionState() = default;
+struct SolutionState {
+    int dim;
+    size_t totalCells;
+    int nPhases;
 
-    /// Allocate field arrays to the given size, zero-filled.
-    /// Backup arrays for multi-stage time stepping are allocated when config.RKOrder > 1.
-    void allocate(std::size_t totalCells, const SimulationConfig& config);
+    /* Conservative variables */
+    double* rho;
+    double* rhoU;
+    double* rhoV;   /* NULL if dim < 2 */
+    double* rhoW;   /* NULL if dim < 3 */
+    double* rhoE;
 
-    /// Number of cells this state is allocated for.
-    std::size_t size() const { return rho.size(); }
+    /* Primitive variables */
+    double* velU;
+    double* velV;    /* NULL if dim < 2 */
+    double* velW;    /* NULL if dim < 3 */
+    double* pres;
+    double* sigma;
 
-    /// Spatial dimensionality (1, 2, or 3).
-    int dim() const { return dim_; }
+    /* Backup conservative variables (NULL if RKOrder == 1) */
+    double* rho0;
+    double* rhoU0;
+    double* rhoV0;   /* NULL if dim < 2 or RKOrder == 1 */
+    double* rhoW0;   /* NULL if dim < 3 or RKOrder == 1 */
+    double* rhoE0;
+    double* pres0;
 
-    /// Copy primitive field values from src to dst, applying velocity sign multipliers.
-    void copyCell_P(std::size_t dst, std::size_t src,
-                            double sU, double sV, double sW);
-    /// Copy conservative field values from src to dst, applying velocity sign multipliers.
-    void copyCell_C(std::size_t dst, std::size_t src,
-                            double sU, double sV, double sW);
-    /// Copy all field values from src to dst, applying velocity sign multipliers.
-    void copyCell(std::size_t dst, std::size_t src,
-                            double sU, double sV, double sW);
+    /* Semi-implicit star states (NULL if !semiImplicit) */
+    double* rhoUStar;
+    double* rhoVStar;  /* NULL if dim < 2 or !semiImplicit */
+    double* rhoWStar;  /* NULL if dim < 3 or !semiImplicit */
+    double* rhoEstar;
+    double* pAdvected;
+    double* rhoc2;
+    double* divUStar;
 
-    /// Gather a ConservativeState bundle from a flat index.
-    ConservativeState getConservativeState(std::size_t idx) const;
+    /* Multi-phase fields: flat arrays, size nPhases * totalCells
+       Access as alpha[phase * totalCells + cell]
+       NULL when single-phase (nPhases < 2) */
+    double* alpha;
+    double* alphaRho;
 
-    /// Scatter a ConservativeState bundle into a flat index.
-    void setConservativeState(std::size_t idx, const ConservativeState& U);
+    /* Multi-phase RK backup (NULL if nPhases < 2 or RKOrder == 1) */
+    double* alpha0;
+    double* alphaRho0;
 
-    /// Gather a PrimitiveState bundle from a flat index.
-    PrimitiveState getPrimitiveState(std::size_t idx) const;
-
-    /// Scatter a PrimitiveState bundle into a flat index.
-    void setPrimitiveState(std::size_t idx, const PrimitiveState& W);
-
-    /// Convert from conservative to primitive variables.
-    void convertConservativeToPrimitiveVariables(
-        const RectilinearMesh& mesh,
-        const std::shared_ptr<EquationOfState>& eos
-        );
-
-    /// Convert from primitive to conservative variables.
-    void convertPrimitiveToConservativeVariables(
-        const RectilinearMesh& mesh,
-        const std::shared_ptr<EquationOfState>& eos
-        );
-
-    // Conservative variables
-    std::vector<double> rho;   // density
-    std::vector<double> rhoU;  // x-momentum
-    std::vector<double> rhoV;  // y-momentum
-    std::vector<double> rhoW;  // z-momentum
-    std::vector<double> rhoE;  // total energy
-
-    // Primitive variables
-    std::vector<double> velU;  // x-velocity
-    std::vector<double> velV;  // y-velocity
-    std::vector<double> velW;  // z-velocity
-    std::vector<double> pres;  // pressure
-    std::vector<double> sigma; // entropic pressure (IGR)
-
-    // Backup conservative variables (for multi-stage time stepping)
-    std::vector<double> rho0;
-    std::vector<double> rhoU0;
-    std::vector<double> rhoV0;
-    std::vector<double> rhoW0;
-    std::vector<double> rhoE0;
-    std::vector<double> pres0;
-
-    // Start state for semi-implicit solve
-    std::vector<double> rhoUStar;
-    std::vector<double> rhoVStar;
-    std::vector<double> rhoWStar;
-    std::vector<double> rhoEstar;
-    std::vector<double> pAdvected;
-    std::vector<double> rhoc2;      // rho * c^2 for implicit pressure solve
-    std::vector<double> divUStar;   // divergence of velocity field at start of time step
-
-    // Multi-phase fields (empty when single-phase)
-    std::vector<std::vector<double>> alphaRho;  // [phase][cell], N arrays
-    std::vector<std::vector<double>> alpha;     // [phase][cell], N arrays
-
-    // Multi-phase RK backup arrays
-    std::vector<std::vector<double>> alphaRho0; // [phase][cell], N arrays
-    std::vector<std::vector<double>> alpha0;    // [phase][cell], N arrays
-
-    // Auxiliary variable
-    std::vector<double> aux;
-
-    /// Save conservative variables for a single cell to backup storage.
-    void saveConservativeCell(std::size_t idx);
-
-    /// Smooth all conservative and primitive fields using explicit heat equation
-    /// iterations (forward Euler with diffusion number 1/(2*dim)).
-    /// Call after setting the sharp IC and before the time loop.
-    void smoothFields(const RectilinearMesh& mesh, int nIterations);
-
-    /// MPI-aware version that exchanges halos each iteration.
-    void smoothFields(const RectilinearMesh& mesh, int nIterations,
-                      class HaloExchange& halo);
-
-    /// Config-aware versions that maintain thermodynamic consistency for
-    /// multi-phase flows.  For multi-phase: smooths only the independent
-    /// fields (alpha, alphaRho, pres, velocity) then recomputes rho, rhoU/V/W,
-    /// and rhoE from the mixture EOS so that the smoothed state is self-consistent.
-    void smoothFields(const RectilinearMesh& mesh, int nIterations,
-                      const SimulationConfig& config);
-    void smoothFields(const RectilinearMesh& mesh, int nIterations,
-                      class HaloExchange& halo, const SimulationConfig& config);
-
-private:
-    int dim_ = 3;
+    /* Auxiliary variable */
+    double* aux;
 };
 
-} // namespace SemiImplicitFV
+void solution_state_init(struct SolutionState* s, size_t totalCells,
+                         const struct SimulationConfig* config);
+void solution_state_free(struct SolutionState* s);
 
-#endif // SOLUTION_STATE_HPP
+/* Gather / scatter state bundles */
+ConservativeState state_get_conservative(const struct SolutionState* s, size_t idx);
+void state_set_conservative(struct SolutionState* s, size_t idx,
+                            const ConservativeState* U);
+PrimitiveState state_get_primitive(const struct SolutionState* s, size_t idx);
+void state_set_primitive(struct SolutionState* s, size_t idx,
+                         const PrimitiveState* W);
+
+/* Copy cell data between flat indices with velocity sign multipliers */
+void state_copy_cell(struct SolutionState* s, size_t dst, size_t src,
+                     double sU, double sV, double sW);
+void state_copy_cell_P(struct SolutionState* s, size_t dst, size_t src,
+                       double sU, double sV, double sW);
+void state_copy_cell_C(struct SolutionState* s, size_t dst, size_t src,
+                       double sU, double sV, double sW);
+
+/* Save conservative variables for a single cell to backup storage */
+void state_save_conservative_cell(struct SolutionState* s, size_t idx);
+
+/* Convert between conservative and primitive for entire physical domain */
+void state_cons_to_prim(struct SolutionState* s,
+                        const struct RectilinearMesh* mesh,
+                        const struct EOSData* eos);
+void state_prim_to_cons(struct SolutionState* s,
+                        const struct RectilinearMesh* mesh,
+                        const struct EOSData* eos);
+
+/* Smooth all fields using explicit heat equation iterations */
+void state_smooth(struct SolutionState* s,
+                  const struct RectilinearMesh* mesh,
+                  int nIterations);
+
+/* MPI-aware smoothing */
+void state_smooth_mpi(struct SolutionState* s,
+                      const struct RectilinearMesh* mesh,
+                      int nIterations,
+                      struct HaloExchange* halo);
+
+/* Config-aware smoothing (multi-phase reconciliation) */
+void state_smooth_config(struct SolutionState* s,
+                         const struct RectilinearMesh* mesh,
+                         int nIterations,
+                         const struct SimulationConfig* config);
+
+/* Config-aware + MPI-aware smoothing */
+void state_smooth_config_mpi(struct SolutionState* s,
+                             const struct RectilinearMesh* mesh,
+                             int nIterations,
+                             struct HaloExchange* halo,
+                             const struct SimulationConfig* config);
+
+#endif /* SOLUTION_STATE_HPP */

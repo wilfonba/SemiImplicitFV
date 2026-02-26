@@ -19,7 +19,8 @@ A finite volume solver for the compressible Euler equations on rectilinear meshe
 - **Checkpoint / restart** — Periodic binary checkpoints with automatic restart for HPC wall-time resilience
 - **VTK output** — `.vtr` (serial), `.pvtr` (parallel), and `.pvd` (time series) for ParaView; ASCII or binary (appended raw) format
 - **PETSc pressure solver** — Optional CG + GAMG algebraic multigrid for mesh-independent semi-implicit pressure convergence
-- **NVTX profiling** — Nsight Systems integration with RAII-scoped NVTX ranges for performance analysis
+- **NVTX profiling** — Nsight Systems integration with NVTX push/pop macros for performance analysis
+- **GPU-ready architecture** — C-style structs, free functions, enum+switch dispatch, flat arrays — no virtual dispatch, no heap allocations in hot loops
 
 ## Convergence
 
@@ -34,27 +35,30 @@ The 1D advection test case (Gaussian density pulse on a periodic domain, WENO5 +
 
 ```bash
 # Run the Sod shock tube (builds automatically on first run)
-./run_case.sh 1D_sod_shocktube
+./sifv.sh run 1D_sod_shocktube
 
 # List all available cases
-./run_case.sh --list
+./sifv.sh list
 ```
 
 Output VTK files are written to a `VTK/` directory inside the case folder (e.g. `cases/1D_sod_shocktube/VTK/`). Open the `.pvd` file in [ParaView](https://www.paraview.org/) to visualize the results.
 
 ## Building and Running
 
-The `run_case.sh` script handles configuring, building, and running automatically. There is no need to invoke CMake or Make directly.
+The `sifv.sh` script handles configuring, building, and running automatically. There is no need to invoke CMake or Make directly.
 
 ```bash
-./run_case.sh 1D_sod_shocktube              # Build and run (1 MPI rank)
-./run_case.sh -n 4 2D_riemann               # Run with 4 MPI ranks
-./run_case.sh --debug 1D_advection           # Debug build (enables AddressSanitizer)
-./run_case.sh --build-only 2D_riemann        # Build without running
-./run_case.sh --case-optimization 1D_sod     # Codegen: compile JSON into optimized C++
-./run_case.sh --petsc 3D_taylor_green_vortex # Enable PETSc pressure solver
-./run_case.sh --nsys 2D_riemann             # Profile with Nsight Systems (NVTX)
-./run_case.sh --list                         # List available cases
+./sifv.sh run 1D_sod_shocktube              # Build and run (1 MPI rank)
+./sifv.sh run -n 4 2D_riemann               # Run with 4 MPI ranks
+./sifv.sh run --debug 1D_advection           # Debug build (enables AddressSanitizer)
+./sifv.sh run --build-only 2D_riemann        # Build without running
+./sifv.sh run --case-optimization 1D_sod     # Codegen: compile JSON into optimized C++
+./sifv.sh run --petsc 3D_taylor_green_vortex # Enable PETSc (saved across runs)
+./sifv.sh run --no-petsc <case>              # Disable PETSc (saved across runs)
+./sifv.sh run --nsys 2D_riemann              # Profile with Nsight Systems (NVTX)
+./sifv.sh run --srun -n 4 <case>             # Use srun instead of mpirun (Slurm)
+./sifv.sh run -o <dir> <case>                # Override output directory
+./sifv.sh list                               # List available cases
 ```
 
 ### Requirements
@@ -67,7 +71,7 @@ The `run_case.sh` script handles configuring, building, and running automaticall
 
 ### Manual Build
 
-If you prefer to build manually instead of using `run_case.sh`:
+If you prefer to build manually instead of using `sifv.sh`:
 
 ```bash
 mkdir build && cd build
@@ -117,7 +121,7 @@ Cases are defined as JSON files in `cases/<name>/<name>.jsonc`. This is the prim
 | `config` | Yes | Solver parameters (dim, RK order, CFL, etc.) |
 | `eos` | No | Equation of state (`"IdealGas"` or `"StiffenedGas"`) |
 | `riemannSolver` | No | `"LF"`, `"Rusanov"`, or `"HLLC"` (default) |
-| `pressureSolver` | No | `"GaussSeidel"` (default) or `"PETSc"` (requires `--petsc` build flag) |
+| `pressureSolver` | No | `"GaussSeidel"` (default), `"Jacobi"`, or `"PETSc"` (requires `--petsc` build flag) |
 | `mesh` | Yes | Grid dimensions and extents |
 | `boundaryConditions` | No | Per-face BC: `"Outflow"`, `"Periodic"`, `"Symmetry"`, `"SlipWall"`, `"NoSlipWall"` |
 | `timeLoop` | Yes | End time, output interval, print interval |
@@ -133,14 +137,14 @@ Cases are defined as JSON files in `cases/<name>/<name>.jsonc`. This is the prim
 For maximum performance, the `--case-optimization` flag generates a standalone C++ `main()` from the JSON with all parameters hardcoded as compile-time constants:
 
 ```bash
-./run_case.sh --case-optimization 1D_sod_shocktube
+./sifv.sh run --case-optimization 1D_sod_shocktube
 ```
 
 This eliminates runtime parsing overhead and enables the compiler to optimize aggressively.
 
 ## Configuration Reference
 
-All simulation parameters are set through `SimulationConfig` (defined in `include/SimulationConfig.hpp`). In JSON cases, these appear under the `"config"` section. In compiled C++ cases, they are set directly on the struct.
+All simulation parameters are set through `SimulationConfig` (defined in `include/SimulationConfig.hpp`). In JSON cases, these appear under the `"config"` section. In compiled C++ cases, they are set directly on the struct via `config_defaults()` followed by field assignment.
 
 ### Config Fields
 
@@ -265,13 +269,13 @@ Checkpoint files are written as `checkpoint.RRRR.bin` (one per MPI rank, zero-pa
 ```bash
 # 1. Run with checkpoints enabled
 #    (add "restart": {"checkpoint": true} to the case JSONC)
-./run_case.sh 1D_sod_shocktube
+./sifv.sh run 1D_sod_shocktube
 
 # 2. Job is killed at the wall-time limit...
 
 # 3. Add the restart file path and re-run
 #    (add "file": "Checkpoint/checkpoint.{rank}.bin" to the "restart" section)
-./run_case.sh 1D_sod_shocktube
+./sifv.sh run 1D_sod_shocktube
 ```
 
 The simulation resumes from the saved time and step count.
@@ -283,44 +287,80 @@ For cases requiring custom post-processing, diagnostics, or logic not expressibl
 Use `--compiled` to build and run a compiled case:
 
 ```bash
-./run_case.sh --compiled 2D_flow_over_circle
+./sifv.sh run --compiled 2D_flow_over_circle
 ```
+
+Compiled cases use the C-style API directly — call `config_defaults()` to initialize a `SimulationConfig`, set fields, then use `runtime_init()` / `run_time_loop()` / `runtime_free()`.
 
 ## MPI Execution
 
 Run with multiple MPI ranks using the `-n` flag:
 
 ```bash
-./run_case.sh -n 4 2D_riemann
+./sifv.sh run -n 4 2D_riemann
 ```
 
-The `Runtime` class handles domain decomposition, halo exchange, and parallel VTK output automatically. Each rank writes its own `.vtr` piece file, and rank 0 writes the `.pvtr` and `.pvd` metadata files.
+The `Runtime` struct and associated free functions handle domain decomposition, halo exchange, and parallel VTK output automatically. Each rank writes its own `.vtr` piece file, and rank 0 writes the `.pvtr` and `.pvd` metadata files.
 
-## Project Structure
+## Testing
 
+The project includes a three-tier test suite built with [GoogleTest](https://github.com/google/googletest) and run via CTest. All tests are MPI-aware and executed through `mpirun`. Each GoogleTest `TEST()` case is registered as an individual CTest entry, giving granular pass/fail reporting.
+
+### Running Tests
+
+`sifv.sh test` handles configuring, building, and running automatically:
+
+```bash
+./sifv.sh test                          # Build and run all tests
+./sifv.sh test unit                     # Unit tests only
+./sifv.sh test integration              # Integration tests only
+./sifv.sh test regression               # Regression tests (np=1 and np=4)
+./sifv.sh test unit integration         # Multiple tiers
+./sifv.sh test -j 8                     # Parallel build and test execution
+./sifv.sh test -d unit                  # Debug build (AddressSanitizer)
+./sifv.sh test -c                       # Clean build directory first
+./sifv.sh test --build-only             # Build without running
+./sifv.sh test -o <pattern>             # Run tests matching regex pattern
+./sifv.sh test -l                       # List all test names
+./sifv.sh test --generate               # Regenerate all regression references
+./sifv.sh test -o TaylorGreenVortex3D --generate  # Regenerate one reference
 ```
-SemiImplicitFV/
-├── cases/                 Case definitions (JSON input files)
-│   ├── 1D_advection_E/
-│   ├── 1D_advection_SI/
-│   ├── 1D_sod_shocktube/
-│   ├── 1D_gas_gas_shocktube/
-│   ├── 1D_liquid_gas_shocktube/
-│   ├── 1D_hydrostatic_water/
-│   ├── 2D_channel_flow/
-│   ├── 2D_isentropic_vortex/
-│   ├── 2D_laplace_pressure_jump/
-│   ├── 2D_quasi1D_sod/
-│   ├── 2D_riemann/
-│   ├── 2D_rising_bubble/
-│   └── 3D_taylor_green_vortex/
-├── driver/                Generic JSON driver (sifv)
-├── include/               Header files
-├── src/                   Library source files
-├── tools/                 Code generation and utilities
-│   └── codegen.py         JSON → optimized C++ source generator
-├── CMakeLists.txt
-└── run_case.sh            Build & run helper script
+
+The `-j` flag controls both CMake build parallelism and CTest parallel test execution.
+
+### Test Tiers
+
+| Tier | Label | Description | Approx. Time |
+|---|---|---|---|
+| **Unit** | `unit` | Individual functions: EOS, Riemann solvers, reconstruction stencils, mixture EOS, IGR | ~1s |
+| **Integration** | `integration` | Multi-module interactions: boundary conditions, state conversion round-trips, explicit time stepping, pressure solvers | ~1s |
+| **Regression (np=1)** | `regression_np1` | Run 5 cases for 50 steps on 1 rank, compare pointwise against reference data | ~2s |
+| **Regression (np=4)** | `regression_np4` | Same 5 cases on 4 MPI ranks, verify results match within tolerance (1e-8) | ~2s |
+
+### Regression Test Cases
+
+| Case | Dim | Mesh | Solver |
+|---|---|---|---|
+| `1D_sod_shocktube_50` | 1D | 100 | Explicit (HLLC, WENO5, RK3) |
+| `1D_advection_SI_50` | 1D | 100 | Semi-implicit (HLLC, WENO5, RK3) |
+| `1D_gas_gas_shocktube_50` | 1D | 100 | Explicit multi-phase (HLLC, WENO5, RK3) |
+| `2D_isentropic_vortex_50` | 2D | 50x50 | Semi-implicit (HLLC, UPWIND5, RK3) |
+| `2D_channel_flow_50` | 2D | 20x20 | Explicit (HLLC, WENO5, RK3) |
+| `3D_taylor_green_vortex_50` | 3D | 40x40x40 | Explicit (HLLC, WENO5, RK3) + viscosity |
+| `3D_taylor_green_vortex_SI_50` | 3D | 40x40x40 | Semi-implicit (HLLC, WENO5, RK3) + viscosity |
+
+### Regenerating Reference Data
+
+Reference files are committed to `tests/regression/references/`. To regenerate after changing solver behavior:
+
+```bash
+./sifv.sh test --generate-references
+```
+
+Then re-run the full suite to verify:
+
+```bash
+./sifv.sh test regression
 ```
 
 ## Visualization

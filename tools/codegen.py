@@ -140,54 +140,56 @@ def load_jsonc(filename):
 
 
 RECON_ORDER_MAP = {
-    "WENO1": "ReconstructionOrder::WENO1",
-    "WENO3": "ReconstructionOrder::WENO3",
-    "WENO5": "ReconstructionOrder::WENO5",
-    "UPWIND1": "ReconstructionOrder::UPWIND1",
-    "UPWIND3": "ReconstructionOrder::UPWIND3",
-    "UPWIND5": "ReconstructionOrder::UPWIND5",
+    "WENO1": "WENO1",
+    "WENO3": "WENO3",
+    "WENO5": "WENO5",
+    "UPWIND1": "UPWIND1",
+    "UPWIND3": "UPWIND3",
+    "UPWIND5": "UPWIND5",
 }
 
 BC_MAP = {
-    "Symmetry": "BoundaryCondition::Symmetry",
-    "Outflow": "BoundaryCondition::Outflow",
-    "Periodic": "BoundaryCondition::Periodic",
-    "SlipWall": "BoundaryCondition::SlipWall",
-    "NoSlipWall": "BoundaryCondition::NoSlipWall",
+    "Symmetry": "BC_SYMMETRY",
+    "Outflow": "BC_OUTFLOW",
+    "Periodic": "BC_PERIODIC",
+    "SlipWall": "BC_SLIP_WALL",
+    "NoSlipWall": "BC_NO_SLIP_WALL",
 }
 
 RIEMANN_MAP = {
-    "LF": "LFSolver",
-    "Rusanov": "RusanovSolver",
-    "HLLC": "HLLCSolver",
-}
-
-RIEMANN_HEADERS = {
-    "LF": "LFSolver.hpp",
-    "Rusanov": "RusanovSolver.hpp",
-    "HLLC": "HLLCSolver.hpp",
+    "LF": "RS_LF",
+    "Rusanov": "RS_RUSANOV",
+    "HLLC": "RS_HLLC",
 }
 
 
 def generate_config(cfg):
     """Generate config setup code."""
     lines = []
-    lines.append("    SimulationConfig config;")
+    lines.append("    SimulationConfig config = config_defaults();")
 
     simple_fields = {
         "dim": "dim", "nGhost": "nGhost", "RKOrder": "RKOrder",
-        "useIGR": "useIGR", "semiImplicit": "semiImplicit",
         "wenoEps": "wenoEps",
     }
     for jkey, ckey in simple_fields.items():
         if jkey in cfg:
             val = cfg[jkey]
+            lines.append(f"    config.{ckey} = {val};")
+
+    # Bool fields -> int
+    bool_fields = {
+        "useIGR": "useIGR", "semiImplicit": "semiImplicit",
+    }
+    for jkey, ckey in bool_fields.items():
+        if jkey in cfg:
+            val = cfg[jkey]
             if isinstance(val, bool):
-                val = "true" if val else "false"
+                val = 1 if val else 0
             lines.append(f"    config.{ckey} = {val};")
 
     if "reconOrder" in cfg:
-        ro = RECON_ORDER_MAP.get(cfg["reconOrder"], "ReconstructionOrder::WENO1")
+        ro = RECON_ORDER_MAP.get(cfg["reconOrder"], "WENO1")
         lines.append(f"    config.reconOrder = {ro};")
 
     # Explicit params
@@ -201,7 +203,7 @@ def generate_config(cfg):
         sp = cfg["semiImplicitParams"]
         for k, v in sp.items():
             if isinstance(v, bool):
-                v = "true" if v else "false"
+                v = 1 if v else 0
             lines.append(f"    config.semiImplicitParams.{k} = {v};")
 
     # IGR params
@@ -218,11 +220,11 @@ def generate_config(cfg):
         if "alphaMin" in mp:
             lines.append(f"    config.multiPhaseParams.alphaMin = {mp['alphaMin']};")
         if "phases" in mp:
-            phases_str = ", ".join(
-                f"{{{ph.get('gamma', 1.4)}, {ph.get('pInf', 0.0)}}}"
-                for ph in mp["phases"]
-            )
-            lines.append(f"    config.multiPhaseParams.phases = {{{phases_str}}};")
+            for i, ph in enumerate(mp["phases"]):
+                gamma = ph.get("gamma", 1.4)
+                pInf = ph.get("pInf", 0.0)
+                lines.append(f"    config.multiPhaseParams.phases[{i}].gamma = {gamma};")
+                lines.append(f"    config.multiPhaseParams.phases[{i}].pInf = {pInf};")
 
     # Body force
     if "bodyForceParams" in cfg:
@@ -230,7 +232,9 @@ def generate_config(cfg):
         for k in ["a", "b", "c", "d"]:
             if k in bf:
                 arr = bf[k]
-                lines.append(f"    config.bodyForceParams.{k} = {{{arr[0]}, {arr[1]}, {arr[2]}}};")
+                lines.append(f"    config.bodyForceParams.{k}[0] = {arr[0]};")
+                lines.append(f"    config.bodyForceParams.{k}[1] = {arr[1]};")
+                lines.append(f"    config.bodyForceParams.{k}[2] = {arr[2]};")
 
     # Viscous
     if "viscousParams" in cfg:
@@ -238,8 +242,8 @@ def generate_config(cfg):
         if "mu" in vp:
             lines.append(f"    config.viscousParams.mu = {vp['mu']};")
         if "phaseMu" in vp:
-            mu_str = ", ".join(str(m) for m in vp["phaseMu"])
-            lines.append(f"    config.viscousParams.phaseMu = {{{mu_str}}};")
+            for i, m in enumerate(vp["phaseMu"]):
+                lines.append(f"    config.viscousParams.phaseMu[{i}] = {m};")
 
     # Surface tension
     if "surfaceTensionParams" in cfg:
@@ -249,7 +253,7 @@ def generate_config(cfg):
         if "epsGradAlpha" in st:
             lines.append(f"    config.surfaceTensionParams.epsGradAlpha = {st['epsGradAlpha']};")
 
-    lines.append("    config.validate();")
+    lines.append("    config_validate(&config);")
     return "\n".join(lines)
 
 
@@ -271,33 +275,32 @@ def generate_ic_loop(data, dim):
     lines.append("")
 
     # Main loop
-    k_loop = "    for (int k = 0; k < mesh.nz(); ++k) {" if dim >= 3 else "    { int k = 0;"
-    j_loop = "    for (int j = 0; j < mesh.ny(); ++j) {" if dim >= 2 else "    { int j = 0;"
+    k_loop = "    for (int k = 0; k < mesh.nz; ++k) {" if dim >= 3 else "    { int k = 0;"
+    j_loop = "    for (int j = 0; j < mesh.ny; ++j) {" if dim >= 2 else "    { int j = 0;"
     lines.append(k_loop)
     lines.append(j_loop)
-    lines.append("    for (int i = 0; i < mesh.nx(); ++i) {")
-    lines.append("        std::size_t idx = mesh.index(i, j, k);")
-    lines.append("        double x = mesh.cellCentroidX(i);")
+    lines.append("    for (int i = 0; i < mesh.nx; ++i) {")
+    lines.append("        size_t idx = mesh_index(&mesh, i, j, k);")
+    lines.append("        double x = mesh_cellCentroidX(&mesh, i);")
     if dim >= 2:
-        lines.append("        double y = mesh.cellCentroidY(j);")
+        lines.append("        double y = mesh_cellCentroidY(&mesh, j);")
     else:
         lines.append("        [[maybe_unused]] double y = 0.0;")
     if dim >= 3:
-        lines.append("        double z = mesh.cellCentroidZ(k);")
+        lines.append("        double z = mesh_cellCentroidZ(&mesh, k);")
     else:
         lines.append("        [[maybe_unused]] double z = 0.0;")
     lines.append("")
     lines.append("        double rho = def_rho, u = def_u, v = def_v, w = def_w, p = def_p;")
 
     if is_multi and "alpha" in default_st:
-        alpha_str = ", ".join(str(a) for a in default_st["alpha"])
-        lines.append(f"        std::vector<double> alphas = {{{alpha_str}}};")
+        nph = data["config"]["multiPhaseParams"]["nPhases"]
+        lines.append(f"        double alphas[{nph}] = {{{', '.join(str(a) for a in default_st['alpha'])}}};")
         if "alphaRho" in default_st:
-            arho_str = ", ".join(str(a) for a in default_st["alphaRho"])
-            lines.append(f"        std::vector<double> alphaRhos = {{{arho_str}}};")
+            lines.append(f"        double alphaRhos[{nph}] = {{{', '.join(str(a) for a in default_st['alphaRho'])}}};")
     lines.append("")
 
-    # Apply patches — each patch is independent (not if/else)
+    # Apply patches -- each patch is independent (not if/else)
     for pi, patch in enumerate(patches):
         geom = patch.get("geometry", {})
         gtype = geom.get("type", "box")
@@ -372,29 +375,29 @@ def generate_ic_loop(data, dim):
     lines.append("")
 
     # Set state
-    lines.append("        PrimitiveState W;")
-    lines.append("        W.rho = rho; W.u = {u, v, w}; W.p = p;")
-    lines.append("        W.T = eos->temperature(W);")
-    lines.append("        state.setPrimitiveState(idx, W);")
+    lines.append("        PrimitiveState W = {};")
+    lines.append("        W.rho = rho; W.u[0] = u; W.u[1] = v; W.u[2] = w; W.p = p;")
+    lines.append("        W.T = eos_temperature(&eos, &W);")
+    lines.append("        state_set_primitive(&state, idx, &W);")
 
     if is_multi:
         nph = data["config"]["multiPhaseParams"]["nPhases"]
         lines.append(f"        double mixRho = 0.0;")
         lines.append(f"        for (int ph = 0; ph < {nph}; ++ph) {{")
-        lines.append(f"            state.alpha[ph][idx] = alphas[ph];")
-        lines.append(f"            state.alphaRho[ph][idx] = alphaRhos[ph];")
+        lines.append(f"            state.alpha[ph * state.totalCells + idx] = alphas[ph];")
+        lines.append(f"            state.alphaRho[ph * state.totalCells + idx] = alphaRhos[ph];")
         lines.append(f"            mixRho += alphaRhos[ph];")
         lines.append(f"        }}")
         lines.append(f"        state.rho[idx] = mixRho;")
         lines.append(f"        double ke = 0.5 * mixRho * (u*u + v*v + w*w);")
-        lines.append(f"        state.rhoE[idx] = MixtureEOS::mixtureTotalEnergy(mixRho, p, alphas, ke, config.multiPhaseParams);")
+        lines.append(f"        state.rhoE[idx] = mixture_total_energy(mixRho, p, alphas, {nph}, ke, config.multiPhaseParams.phases);")
         lines.append(f"        state.rhoU[idx] = mixRho * u;")
         if dim >= 2:
             lines.append(f"        state.rhoV[idx] = mixRho * v;")
         if dim >= 3:
             lines.append(f"        state.rhoW[idx] = mixRho * w;")
     else:
-        lines.append("        state.setConservativeState(idx, eos->toConservative(W));")
+        lines.append("        { ConservativeState U = eos_to_conservative(&eos, &W); state_set_conservative(&state, idx, &U); }")
 
     lines.append("    }")  # i loop
     if dim >= 2:
@@ -428,25 +431,17 @@ def generate(data, input_filename):
 
     # Includes
     includes = [
-        "RectilinearMesh.hpp", "SolutionState.hpp", "State.hpp",
-        RIEMANN_HEADERS[riemann_type],
-        "SimulationConfig.hpp", "Runtime.hpp", "VTKSession.hpp",
+        "SimulationConfig.hpp", "State.hpp", "EquationOfState.hpp",
+        "RectilinearMesh.hpp", "SolutionState.hpp",
+        "RiemannSolver.hpp", "Runtime.hpp", "VTKSession.hpp",
         "RKTimeStepping.hpp",
     ]
-
-    if eos_cfg.get("type", "IdealGas") == "StiffenedGas":
-        includes.append("StiffenedGasEOS.hpp")
-    else:
-        includes.append("IdealGasEOS.hpp")
 
     pressure_solver_type = data.get("pressureSolver", "GaussSeidel") if is_semi else None
 
     if is_semi:
         includes.append("SemiImplicitSolver.hpp")
-        if pressure_solver_type == "Jacobi":
-            includes.append("JacobiPressureSolver.hpp")
-        elif pressure_solver_type != "PETSc":
-            includes.append("GaussSeidelPressureSolver.hpp")
+        includes.append("PressureSolver.hpp")
     else:
         includes.append("ExplicitSolver.hpp")
 
@@ -461,23 +456,17 @@ def generate(data, input_filename):
 
     include_str = "\n".join(f'#include "{h}"' for h in includes)
 
-    # PETSc include is conditional on SIFV_HAS_PETSC (matches driver pattern)
-    if pressure_solver_type == "PETSc":
-        include_str += ("\n#ifdef SIFV_HAS_PETSC\n"
-                        '#include "PETScPressureSolver.hpp"\n'
-                        "#endif")
-
     # Standard includes
     std_inc_list = [
         "#include <iostream>",
-        "#include <memory>",
         "#include <cmath>",
-        "#include <vector>",
-        "#include <functional>",
+        "#include <cstdio>",
+        "#include <cstring>",
     ]
     if restart_file:
         std_inc_list.append("#include <iomanip>")
         std_inc_list.append("#include <sstream>")
+        std_inc_list.append("#include <string>")
     std_includes = "\n".join(std_inc_list)
 
     # Config code
@@ -487,32 +476,39 @@ def generate(data, input_filename):
     px = 1 if bc_cfg.get("xLow", "") == "Periodic" else 0
     py = 1 if bc_cfg.get("yLow", "") == "Periodic" else 0
     pz = 1 if bc_cfg.get("zLow", "") == "Periodic" else 0
-    periods_arg = f", std::array<int,3>{{{{{px}, {py}, {pz}}}}})"
+    periods_arg = f"periods"
+
+    # Periods array
+    periods_code = f"    int periods[3] = {{{px}, {py}, {pz}}};"
 
     # Mesh creation
     if dim == 1:
-        mesh_code = (f"    RectilinearMesh mesh = rt.createUniformMesh(config, "
-                     f"{mesh_cfg.get('nx', 100)}, {mesh_cfg.get('xMin', 0.0)}, {mesh_cfg.get('xMax', 1.0)}"
-                     f"{periods_arg};")
-    elif dim == 2:
-        mesh_code = (f"    RectilinearMesh mesh = rt.createUniformMesh(config, "
+        mesh_code = (f"    RectilinearMesh mesh;\n"
+                     f"    runtime_create_uniform_mesh_1d(&rt, &mesh, &config, "
                      f"{mesh_cfg.get('nx', 100)}, {mesh_cfg.get('xMin', 0.0)}, {mesh_cfg.get('xMax', 1.0)}, "
-                     f"{mesh_cfg.get('ny', 1)}, {mesh_cfg.get('yMin', 0.0)}, {mesh_cfg.get('yMax', 1.0)}"
-                     f"{periods_arg};")
-    else:
-        mesh_code = (f"    RectilinearMesh mesh = rt.createUniformMesh(config, "
+                     f"{periods_arg});")
+    elif dim == 2:
+        mesh_code = (f"    RectilinearMesh mesh;\n"
+                     f"    runtime_create_uniform_mesh_2d(&rt, &mesh, &config, "
                      f"{mesh_cfg.get('nx', 100)}, {mesh_cfg.get('xMin', 0.0)}, {mesh_cfg.get('xMax', 1.0)}, "
                      f"{mesh_cfg.get('ny', 1)}, {mesh_cfg.get('yMin', 0.0)}, {mesh_cfg.get('yMax', 1.0)}, "
-                     f"{mesh_cfg.get('nz', 1)}, {mesh_cfg.get('zMin', 0.0)}, {mesh_cfg.get('zMax', 1.0)}"
-                     f"{periods_arg};")
+                     f"{periods_arg});")
+    else:
+        mesh_code = (f"    RectilinearMesh mesh;\n"
+                     f"    runtime_create_uniform_mesh_3d(&rt, &mesh, &config, "
+                     f"{mesh_cfg.get('nx', 100)}, {mesh_cfg.get('xMin', 0.0)}, {mesh_cfg.get('xMax', 1.0)}, "
+                     f"{mesh_cfg.get('ny', 1)}, {mesh_cfg.get('yMin', 0.0)}, {mesh_cfg.get('yMax', 1.0)}, "
+                     f"{mesh_cfg.get('nz', 1)}, {mesh_cfg.get('zMin', 0.0)}, {mesh_cfg.get('zMax', 1.0)}, "
+                     f"{periods_arg});")
 
     # BCs
     face_names = ["xLow", "xHigh", "yLow", "yHigh", "zLow", "zHigh"]
+    face_enums = ["XLOW", "XHIGH", "YLOW", "YHIGH", "ZLOW", "ZHIGH"]
     bc_lines = []
     for fi, fn in enumerate(face_names):
         if fn in bc_cfg:
-            bc_val = BC_MAP.get(bc_cfg[fn], "BoundaryCondition::Outflow")
-            bc_lines.append(f"    rt.setBoundaryCondition(mesh, {fi}, {bc_val});")
+            bc_val = BC_MAP.get(bc_cfg[fn], "BC_OUTFLOW")
+            bc_lines.append(f"    runtime_set_bc(&rt, &mesh, {face_enums[fi]}, {bc_val});")
     bc_code = "\n".join(bc_lines)
 
     # EOS
@@ -521,78 +517,116 @@ def generate(data, input_filename):
     R = eos_cfg.get("R", 287.0)
     pInf = eos_cfg.get("pInf", 0.0)
     if eos_type == "StiffenedGas":
-        eos_code = f"    auto eos = std::make_shared<StiffenedGasEOS>({gamma}, {pInf}, {R}, config);"
+        eos_code = f"    EOSData eos = eos_create_stiffened_gas({gamma}, {pInf}, {R}, config.dim);"
     else:
-        eos_code = f"    auto eos = std::make_shared<IdealGasEOS>({gamma}, {R}, config);"
+        eos_code = f"    EOSData eos = eos_create_ideal_gas({gamma}, {R}, config.dim);"
 
-    # Riemann solver
-    rs_class = RIEMANN_MAP[riemann_type]
-    rs_code = f"    auto riemannSolver = std::make_shared<{rs_class}>(eos, config);"
+    # Riemann solver enum
+    rs_enum = RIEMANN_MAP[riemann_type]
 
     # IC loop
     ic_code = generate_ic_loop(data, dim)
 
     # Smoothing (placed after solver attachment since attachSolver creates HaloExchange)
     smooth_iters = smooth_cfg.get("iterations", 0)
-    smooth_code = f"    rt.smoothFields(state, mesh, {smooth_iters}, config);" if smooth_iters > 0 else ""
+    smooth_code = f"    runtime_smooth_fields(&rt, &state, &mesh, {smooth_iters});" if smooth_iters > 0 else ""
 
-    # Solver
+    # Step context struct and callback function
     if is_semi:
-        igr = "igrSolver" if cfg.get("useIGR") else "nullptr"
+        step_ctx_struct = """
+struct StepContext {
+    SemiImplicitSolverWork* solver;
+    SimulationConfig* config;
+    RectilinearMesh* mesh;
+    SolutionState* state;
+};
+
+static double step_callback(double targetDt, void* ctx) {
+    StepContext* sc = (StepContext*)ctx;
+    return semi_implicit_step(sc->solver, sc->config, sc->mesh, sc->state, targetDt);
+}"""
+        # Acoustic dt context and callback
+        acoustic_ctx_struct = """
+struct AcousticDtContext {
+    RectilinearMesh* mesh;
+    SolutionState* state;
+    EOSData* eos;
+    SimulationConfig* config;
+    Runtime* rt;
+};
+
+static double acoustic_dt_callback(void* ctx) {
+    AcousticDtContext* ac = (AcousticDtContext*)ctx;
+    return computeAcousticTimeStep_config_mpi(ac->mesh, ac->state, ac->eos, ac->config,
+                                              1.0, 1e30, ac->rt->mpiCtx->cartComm);
+}"""
+        step_ctx_struct = acoustic_ctx_struct + "\n" + step_ctx_struct
+    else:
+        step_ctx_struct = """
+struct StepContext {
+    ExplicitSolverWork* solver;
+    SimulationConfig* config;
+    RectilinearMesh* mesh;
+    SolutionState* state;
+};
+
+static double step_callback(double targetDt, void* ctx) {
+    StepContext* sc = (StepContext*)ctx;
+    return explicit_step(sc->solver, sc->config, sc->mesh, sc->state, targetDt);
+}"""
+
+    # Solver init code
+    if is_semi:
+        # Pressure solver
         if pressure_solver_type == "PETSc":
-            # Detect periodic flags from BCs
-            px = 1 if bc_cfg.get("xLow", "") == "Periodic" else 0
-            py = 1 if bc_cfg.get("yLow", "") == "Periodic" else 0
-            pz = 1 if bc_cfg.get("zLow", "") == "Periodic" else 0
             ps_lines = [
-                "#ifdef SIFV_HAS_PETSC",
-                "    std::shared_ptr<PressureSolver> pressureSolver;",
-                "    if (rt.size() > 1) {",
-                "        pressureSolver = std::make_shared<PETScPressureSolver>(",
-                "            rt.mpiContext().comm(),",
-                "            rt.mpiContext().localExtent(),",
-                f"            std::array<int,3>{{{px}, {py}, {pz}}},",
-                "            rt.mpiContext().dims());",
+                "    PressureSolverData ps;",
+                "    if (rt.size > 1) {",
+                "        pressure_solver_init_petsc_mpi(&ps,",
+                "            &rt.mpiCtx->cartComm,",
+                "            rt.mpiCtx->localExtent,",
+                f"            periods,",
+                "            rt.mpiCtx->dims);",
                 "    } else {",
-                "        pressureSolver = std::make_shared<PETScPressureSolver>();",
+                "        pressure_solver_init_petsc(&ps);",
                 "    }",
-                '#else',
-                '    #error "This case requires PETSc. Build with -DENABLE_PETSC=ON."',
-                "#endif",
             ]
             ps_code = "\n".join(ps_lines)
         elif pressure_solver_type == "Jacobi":
-            ps_code = "    auto pressureSolver = std::make_shared<JacobiPressureSolver>();"
+            ps_code = "    PressureSolverData ps;\n    pressure_solver_init(&ps, PS_JACOBI);"
         else:
-            ps_code = "    auto pressureSolver = std::make_shared<GaussSeidelPressureSolver>();"
+            ps_code = "    PressureSolverData ps;\n    pressure_solver_init(&ps, PS_GAUSS_SEIDEL);"
+
+        igr_ref = "&igrSolver" if cfg.get("useIGR") else "NULL"
+        # IGR is not a pointer-based solver anymore, need to check
+        igr_init = ""
+        if cfg.get("useIGR"):
+            igr_ref = "NULL"  # IGR is handled internally by the solver now
 
         solver_code = (ps_code + "\n" +
-            "    auto solver = std::make_unique<SemiImplicitSolver>(\n"
-            f"        mesh, riemannSolver, pressureSolver, eos, {igr}, config);\n"
-            "    rt.attachSolver(*solver, mesh);\n"
-            "    std::function<double(double)> stepFn = [&](double targetDt) {\n"
-            "        return solver->step(config, mesh, state, targetDt);\n"
-            "    };")
+            f"    SemiImplicitSolverWork solver;\n"
+            f"    semi_implicit_solver_init(&solver, &mesh, &eos, {rs_enum}, &ps, {igr_ref}, &config);\n"
+            f"    runtime_attach_semi_implicit(&rt, &solver, &mesh);\n"
+            f"    StepContext stepCtx = {{&solver, &config, &mesh, &state}};\n"
+            f"    AcousticDtContext acousticCtx = {{&mesh, &state, &eos, &config, &rt}};")
     else:
-        igr = "igrSolver" if cfg.get("useIGR") else "nullptr"
+        igr_ref = "NULL"
         solver_code = (
-            "    auto solver = std::make_unique<ExplicitSolver>(\n"
-            f"        mesh, riemannSolver, eos, {igr}, config);\n"
-            "    rt.attachSolver(*solver, mesh);\n"
-            "    std::function<double(double)> stepFn = [&](double targetDt) {\n"
-            "        return solver->step(config, mesh, state, targetDt);\n"
-            "    };")
+            f"    ExplicitSolverWork solver;\n"
+            f"    explicit_solver_init(&solver, &mesh, &eos, {rs_enum}, {igr_ref}, &config);\n"
+            f"    runtime_attach_explicit(&rt, &solver, &mesh);\n"
+            f"    StepContext stepCtx = {{&solver, &config, &mesh, &state}};")
 
     # IGR
     igr_code = ""
-    if cfg.get("useIGR", False):
-        igr_code = "    auto igrSolver = std::make_shared<IGRSolver>(config.igrParams);"
+    # IGR is now integrated into the solver; no separate solver object needed
 
     # VTK + time loop
     base = out_cfg.get("baseName", "output")
     vtk_dir = out_cfg.get("directory", "VTK")
     vtk_format = out_cfg.get("format", "VTKText")
-    vtk_format_enum = f"VTKFormat::{vtk_format}"
+    vtk_format_map = {"VTKText": "VTK_TEXT", "VTKRaw": "VTK_RAW"}
+    vtk_format_enum = vtk_format_map.get(vtk_format, "VTK_TEXT")
     end_time = tl_cfg.get("endTime", 1.0)
     out_int = tl_cfg.get("outputInterval", 0.01)
     print_int = tl_cfg.get("printInterval", 1)
@@ -600,26 +634,33 @@ def generate(data, input_filename):
     # Restart / checkpoint code
     if restart_file:
         restart_load_code = f'''    // ---- Load checkpoint or apply ICs ----
-    const std::string restartFile = "{restart_file}";
+    const char* restartFile = "{restart_file}";
     {{
-        std::string ckptFile = restartFile;
-        std::string placeholder = "{{rank}}";
-        auto pos = ckptFile.find(placeholder);
-        if (pos != std::string::npos) {{
-            std::ostringstream rankStr;
-            rankStr << std::setw(4) << std::setfill('0') << rt.rank();
-            ckptFile.replace(pos, placeholder.size(), rankStr.str());
+        char ckptFile[512];
+        std::strncpy(ckptFile, restartFile, sizeof(ckptFile) - 1);
+        ckptFile[sizeof(ckptFile) - 1] = '\\0';
+        const char* placeholder = "{{rank}}";
+        char* pos = std::strstr(ckptFile, placeholder);
+        if (pos) {{
+            char rankStr[8];
+            std::snprintf(rankStr, sizeof(rankStr), "%04d", rt.rank);
+            char tmp[512];
+            size_t prefixLen = pos - ckptFile;
+            std::memcpy(tmp, ckptFile, prefixLen);
+            std::snprintf(tmp + prefixLen, sizeof(tmp) - prefixLen, "%s%s", rankStr, pos + std::strlen(placeholder));
+            std::strncpy(ckptFile, tmp, sizeof(ckptFile) - 1);
         }}
-        loadCheckpoint(ckptFile, mesh, state, config);
-        state.convertConservativeToPrimitiveVariables(mesh, eos);
-        rt.print("  Restarting from checkpoint: ", ckptFile, "\\n");
-        rt.print("  Restart time: ", config.time, ", step: ", config.step, "\\n\\n");
+        load_checkpoint(ckptFile, &mesh, &state, &config);
+        state_cons_to_prim(&state, &mesh, &eos);
+        char msg[512];
+        std::snprintf(msg, sizeof(msg), "  Restarting from checkpoint: %s\\n  Restart time: %g, step: %d\\n\\n", ckptFile, config.time, config.step);
+        runtime_print(&rt, msg);
     }}'''
         init_code = restart_load_code
     else:
         init_code = f"    // Initialize fields\n{ic_code}"
 
-    checkpoint_line = f"    tlp.checkpoint = true;" if do_checkpoint else ""
+    checkpoint_line = f"    tlp.checkpoint = 1;" if do_checkpoint else ""
 
     # Assemble
     source = f"""// Auto-generated from {os.path.basename(input_filename)}
@@ -628,22 +669,22 @@ def generate(data, input_filename):
 {include_str}
 
 {std_includes}
-
-using namespace SemiImplicitFV;
+{step_ctx_struct}
 
 int main(int argc, char** argv) {{
-    Runtime rt(argc, argv);
+    Runtime rt;
+    runtime_init(&rt, &argc, &argv);
 
 {config_code}
 
+{periods_code}
 {mesh_code}
 {bc_code}
 
     SolutionState state;
-    state.allocate(mesh.totalCells(), config);
+    solution_state_init(&state, mesh_total_cells(&mesh), &config);
 
 {eos_code}
-{rs_code}
 {igr_code}
 
 {init_code}
@@ -652,19 +693,25 @@ int main(int argc, char** argv) {{
 
 {smooth_code if not restart_file else ""}
 
-    VTKSession vtk(rt, "{base}", mesh, config, "{vtk_dir}", {vtk_format_enum});
+    VTKSession vtk;
+    vtk_session_init(&vtk, &rt, "{base}", &mesh, &config, "{vtk_dir}", {vtk_format_enum});
 
-    TimeLoopParams tlp;
+    TimeLoopParams tlp = time_loop_params_defaults();
     tlp.endTime = {end_time};
     tlp.outputInterval = {out_int};
     tlp.printInterval = {print_int};
 {checkpoint_line}
     tlp.startTime = config.time;
-{f"""    tlp.acousticDtFn = [&]() {{
-        return computeAcousticTimeStep(mesh, state, *eos, config,
-                                       1.0, 1e30, rt.mpiContext().comm());
-    }};""" if is_semi else ""}
-    runTimeLoop(rt, config, mesh, state, vtk, stepFn, tlp);
+{f"""    tlp.acousticDtFn = acoustic_dt_callback;
+    tlp.acousticDtCtx = &acousticCtx;""" if is_semi else ""}
+    run_time_loop(&rt, &config, &mesh, &state, &vtk, step_callback, &stepCtx, &tlp);
+
+    vtk_session_finalize(&vtk);
+    {"semi_implicit_solver_free(&solver);" if is_semi else "explicit_solver_free(&solver);"}
+    {"pressure_solver_free(&ps);" if is_semi else ""}
+    solution_state_free(&state);
+    mesh_free(&mesh);
+    runtime_free(&rt);
 
     return 0;
 }}

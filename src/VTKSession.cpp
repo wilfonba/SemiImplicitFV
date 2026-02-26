@@ -1,66 +1,92 @@
 #include "VTKSession.hpp"
+#include "Runtime.hpp"
 #include "RectilinearMesh.hpp"
 #include "SolutionState.hpp"
 
 #include <mpi.h>
-
+#include <cstring>
+#include <cstdio>
+#include <string>
 #include <vector>
 
-namespace SemiImplicitFV {
-
-VTKSession::VTKSession(Runtime& rt, const std::string& baseName,
-                       const RectilinearMesh& mesh, const SimulationConfig& config,
-                       const std::string& dir, VTKFormat format)
-    : rt_(rt), mesh_(mesh), baseName_(baseName), config_(config), dir_(dir),
-      format_(format)
+void vtk_session_init(VTKSession* s,
+                      Runtime* rt,
+                      const char* baseName,
+                      const RectilinearMesh* mesh,
+                      const SimulationConfig* config,
+                      const char* dir,
+                      VTKFormat format)
 {
-    localExtent_ = rt_.mpiContext().localExtent();
+    std::strncpy(s->baseName, baseName, sizeof(s->baseName) - 1);
+    s->baseName[sizeof(s->baseName) - 1] = '\0';
+    std::strncpy(s->dir, dir ? dir : "VTK", sizeof(s->dir) - 1);
+    s->dir[sizeof(s->dir) - 1] = '\0';
+    s->format = format;
+    s->fileNum = 0;
+    s->rt = rt;
+    s->mesh = mesh;
+    s->config = config;
 
-    if (rt_.isRoot()) {
-        VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "w");
+    std::memcpy(s->localExtent, rt->mpiCtx->localExtent, 6 * sizeof(int));
+
+    if (rt->rank == 0) {
+        std::string pvdPath = std::string(s->dir) + "/" + s->baseName + ".pvd";
+        vtk_write_pvd(pvdPath.c_str(), 'w', 0.0, NULL);
     }
 }
 
-void VTKSession::write(const SolutionState& state, double time) {
-    int rank = rt_.rank();
-    int nprocs = rt_.size();
+void vtk_session_write(VTKSession* s,
+                       const SolutionState* state,
+                       double time)
+{
+    if (!s) return;
+    int rank = s->rt->rank;
+    int nprocs = s->rt->size;
 
-    std::string snapshotDir = "snapshot_" + std::to_string(fileNum_);
+    std::string snapshotDir = "snapshot_" + std::to_string(s->fileNum);
 
-    std::string vtrFile = baseName_ + "_" + std::to_string(fileNum_)
+    std::string vtrFile = std::string(s->baseName) + "_" + std::to_string(s->fileNum)
                         + "_r" + std::to_string(rank) + ".vtr";
-    VTKWriter::writeVTR(dir_ + "/" + snapshotDir + "/" + vtrFile,
-                        mesh_, state, config_, localExtent_, rank, format_);
+    std::string vtrPath = std::string(s->dir) + "/" + snapshotDir + "/" + vtrFile;
+    vtk_write_vtr(vtrPath.c_str(), s->mesh, state, s->config,
+                  s->localExtent, rank, s->format);
 
-    // Gather all extents on rank 0
+    /* Gather all extents on rank 0 */
     std::vector<int> allExtBuf(nprocs * 6);
-    MPI_Gather(localExtent_.data(), 6, MPI_INT,
-               allExtBuf.data(), 6, MPI_INT, 0, rt_.mpiContext().comm());
+    MPI_Gather(s->localExtent, 6, MPI_INT,
+               allExtBuf.data(), 6, MPI_INT, 0, s->rt->mpiCtx->cartComm);
 
-    if (rt_.isRoot()) {
-        std::vector<std::array<int,6>> allExtents(nprocs);
-        std::vector<std::string> allFiles(nprocs);
+    if (rank == 0) {
+        std::vector<int> allExtents(nprocs * 6);
+        std::vector<std::string> allFileStrs(nprocs);
+        std::vector<const char*> allFiles(nprocs);
         for (int r = 0; r < nprocs; ++r) {
             for (int d = 0; d < 6; ++d)
-                allExtents[r][d] = allExtBuf[r * 6 + d];
-            allFiles[r] = baseName_ + "_" + std::to_string(fileNum_)
-                        + "_r" + std::to_string(r) + ".vtr";
+                allExtents[r * 6 + d] = allExtBuf[r * 6 + d];
+            allFileStrs[r] = std::string(s->baseName) + "_" + std::to_string(s->fileNum)
+                           + "_r" + std::to_string(r) + ".vtr";
+            allFiles[r] = allFileStrs[r].c_str();
         }
-        std::string pvtrFile = baseName_ + "_" + std::to_string(fileNum_) + ".pvtr";
-        VTKWriter::writePVTR(dir_ + "/" + snapshotDir + "/" + pvtrFile,
-                             rt_.globalNx(), rt_.globalNy(), rt_.globalNz(),
-                             allExtents, allFiles, config_, format_);
-        VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "a",
-                            time, snapshotDir + "/" + pvtrFile);
+        std::string pvtrFile = std::string(s->baseName) + "_" + std::to_string(s->fileNum) + ".pvtr";
+        std::string pvtrPath = std::string(s->dir) + "/" + snapshotDir + "/" + pvtrFile;
+        vtk_write_pvtr(pvtrPath.c_str(),
+                       s->rt->globalNx, s->rt->globalNy, s->rt->globalNz,
+                       allExtents.data(), allFiles.data(), nprocs,
+                       s->config, s->format);
+
+        std::string pvdPath = std::string(s->dir) + "/" + s->baseName + ".pvd";
+        std::string pvdDataFile = snapshotDir + "/" + pvtrFile;
+        vtk_write_pvd(pvdPath.c_str(), 'a', time, pvdDataFile.c_str());
     }
 
-    fileNum_++;
+    s->fileNum++;
 }
 
-void VTKSession::finalize() {
-    if (rt_.isRoot()) {
-        VTKWriter::writePVD(dir_ + "/" + baseName_ + ".pvd", "close");
+void vtk_session_finalize(VTKSession* s)
+{
+    if (!s) return;
+    if (s->rt->rank == 0) {
+        std::string pvdPath = std::string(s->dir) + "/" + s->baseName + ".pvd";
+        vtk_write_pvd(pvdPath.c_str(), 'c', 0.0, NULL);
     }
 }
-
-} // namespace SemiImplicitFV

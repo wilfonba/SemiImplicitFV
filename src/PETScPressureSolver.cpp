@@ -1,309 +1,248 @@
 #include "PETScPressureSolver.hpp"
+#include "RectilinearMesh.hpp"
 #include "HaloExchange.hpp"
+
+#ifdef SIFV_HAS_PETSC
 
 #include <petscksp.h>
 #include <petscdmda.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <vector>
 
-namespace SemiImplicitFV {
+/* ------------------------------------------------------------------ */
+/* Internal helpers                                                   */
+/* ------------------------------------------------------------------ */
 
-// ---------------------------------------------------------------------------
-// Constructors / destructor
-// ---------------------------------------------------------------------------
+static void setupPETSc(struct PETScContext* ctx, const RectilinearMesh* mesh) {
+    ctx->dim = mesh->dim;
 
-PETScPressureSolver::PETScPressureSolver()
-    : comm_(MPI_COMM_SELF)
-    , ilower_{0, 0, 0}
-    , iupper_{0, 0, 0}
-    , periodic_{0, 0, 0}
-    , procDims_{1, 1, 1}
-    , useMPI_(false)
-{}
+    const int nx = mesh->nx;
+    const int ny = mesh->ny;
+    const int nz = mesh->nz;
 
-PETScPressureSolver::PETScPressureSolver(
-    MPI_Comm comm,
-    const std::array<int,6>& localExtent,
-    const std::array<int,3>& periodic,
-    const std::array<int,3>& procDims)
-    : comm_(comm)
-    , ilower_{localExtent[0], localExtent[2], localExtent[4]}
-    , iupper_{localExtent[1] - 1, localExtent[3] - 1, localExtent[5] - 1}
-    , periodic_(periodic)
-    , procDims_(procDims)
-    , useMPI_(true)
-{}
+    DMBoundaryType bx = ctx->periodic[0] ? DM_BOUNDARY_PERIODIC : DM_BOUNDARY_NONE;
+    DMBoundaryType by = ctx->periodic[1] ? DM_BOUNDARY_PERIODIC : DM_BOUNDARY_NONE;
+    DMBoundaryType bz = ctx->periodic[2] ? DM_BOUNDARY_PERIODIC : DM_BOUNDARY_NONE;
 
-PETScPressureSolver::~PETScPressureSolver() {
-    destroyPETSc();
-}
-
-// ---------------------------------------------------------------------------
-// PETSc lifecycle
-// ---------------------------------------------------------------------------
-
-void PETScPressureSolver::setupPETSc(const RectilinearMesh& mesh) {
-    dim_ = mesh.dim();
-
-    const int nx = mesh.nx();
-    const int ny = mesh.ny();
-    const int nz = mesh.nz();
-
-    // Determine boundary types per direction
-    DMBoundaryType bx = periodic_[0] ? DM_BOUNDARY_PERIODIC : DM_BOUNDARY_NONE;
-    DMBoundaryType by = periodic_[1] ? DM_BOUNDARY_PERIODIC : DM_BOUNDARY_NONE;
-    DMBoundaryType bz = periodic_[2] ? DM_BOUNDARY_PERIODIC : DM_BOUNDARY_NONE;
-
-    // Compute global sizes from the exclusive upper bounds of cell extents.
-    // Using MPI_MAX is correct regardless of decomposition topology (e.g. 2x2x1).
     int globalNx = nx, globalNy = ny, globalNz = nz;
-    if (useMPI_) {
-        globalNx = iupper_[0] + 1;
-        globalNy = (dim_ >= 2) ? iupper_[1] + 1 : 1;
-        globalNz = (dim_ >= 3) ? iupper_[2] + 1 : 1;
-        MPI_Allreduce(MPI_IN_PLACE, &globalNx, 1, MPI_INT, MPI_MAX, comm_);
-        if (dim_ >= 2) MPI_Allreduce(MPI_IN_PLACE, &globalNy, 1, MPI_INT, MPI_MAX, comm_);
-        if (dim_ >= 3) MPI_Allreduce(MPI_IN_PLACE, &globalNz, 1, MPI_INT, MPI_MAX, comm_);
+    MPI_Comm comm = *(MPI_Comm*)ctx->comm;
+
+    if (ctx->useMPI) {
+        globalNx = ctx->iupper[0] + 1;
+        globalNy = (ctx->dim >= 2) ? ctx->iupper[1] + 1 : 1;
+        globalNz = (ctx->dim >= 3) ? ctx->iupper[2] + 1 : 1;
+        MPI_Allreduce(MPI_IN_PLACE, &globalNx, 1, MPI_INT, MPI_MAX, comm);
+        if (ctx->dim >= 2) MPI_Allreduce(MPI_IN_PLACE, &globalNy, 1, MPI_INT, MPI_MAX, comm);
+        if (ctx->dim >= 3) MPI_Allreduce(MPI_IN_PLACE, &globalNz, 1, MPI_INT, MPI_MAX, comm);
     }
 
-    // --- Remap communicator for DMDA compatibility ---
-    // MPI_Cart_create (used by MPIContext) and PETSc's DMDA use DIFFERENT
-    // rank-to-coordinate mappings:
-    //   MPI:  rank -> (z-fastest) i.e. divides z first, then y, then x
-    //   DMDA: rank -> (x-fastest) i.e. petsc_rank = ix + iy*mx + iz*mx*my
-    //
-    // When the Cartesian communicator has reorder=true (as MPIContext does),
-    // rank numbering may differ from both conventions. We must create a new
-    // communicator where each rank's number matches DMDA's expected ordering
-    // based on that rank's Cartesian coordinates.
-    MPI_Comm petscComm = comm_;
+    MPI_Comm petscComm = comm;
     std::vector<PetscInt> lx, ly, lz;
 
-    if (useMPI_) {
-        // Get this rank's Cartesian coordinates from the existing communicator
+    if (ctx->useMPI) {
         int coords[3] = {0, 0, 0};
         int myRank = 0;
-        MPI_Comm_rank(comm_, &myRank);
-        MPI_Cart_coords(comm_, myRank, 3, coords);
+        MPI_Comm_rank(comm, &myRank);
+        MPI_Cart_coords(comm, myRank, 3, coords);
 
-        // Compute the rank this process should have in DMDA's x-fastest ordering
-        int mx = procDims_[0], my = procDims_[1];
+        int mx = ctx->procDims[0], my = ctx->procDims[1];
         int petscRank = coords[0] + coords[1] * mx + coords[2] * mx * my;
 
-        // Create a new communicator with rank ordering matching DMDA
-        MPI_Comm_split(comm_, 0, petscRank, &petscComm_);
-        petscComm = petscComm_;
+        MPI_Comm newComm;
+        MPI_Comm_split(comm, 0, petscRank, &newComm);
+        ctx->petscComm = malloc(sizeof(MPI_Comm));
+        *(MPI_Comm*)ctx->petscComm = newComm;
+        petscComm = newComm;
 
-        // Gather local sizes in DMDA rank order to build lx/ly/lz arrays.
-        // In the remapped communicator, ranks are ordered x-fastest, so
-        // rank 0..mx-1 are the x-row of the first y,z slab, etc.
         int nProcs = 0;
         MPI_Comm_size(petscComm, &nProcs);
 
-        struct LocalSizes { int nx, ny, nz; };
-        LocalSizes mySizes = {nx, ny, nz};
-        std::vector<LocalSizes> allSizes(nProcs);
-        MPI_Allgather(&mySizes, sizeof(LocalSizes), MPI_BYTE,
-                      allSizes.data(), sizeof(LocalSizes), MPI_BYTE, petscComm);
+        struct { int nx, ny, nz; } mySizes = {nx, ny, nz};
+        std::vector<decltype(mySizes)> allSizes(nProcs);
+        MPI_Allgather(&mySizes, sizeof(mySizes), MPI_BYTE,
+                      allSizes.data(), sizeof(mySizes), MPI_BYTE, petscComm);
 
-        // Extract per-processor sizes along each dimension.
-        // In x-fastest ordering, ranks 0..mx-1 give the x-dimension sizes.
-        lx.resize(procDims_[0]);
-        for (int i = 0; i < procDims_[0]; ++i)
+        lx.resize(ctx->procDims[0]);
+        for (int i = 0; i < ctx->procDims[0]; ++i)
             lx[i] = allSizes[i].nx;
 
-        if (dim_ >= 2) {
-            ly.resize(procDims_[1]);
-            for (int j = 0; j < procDims_[1]; ++j)
+        if (ctx->dim >= 2) {
+            ly.resize(ctx->procDims[1]);
+            for (int j = 0; j < ctx->procDims[1]; ++j)
                 ly[j] = allSizes[j * mx].ny;
         }
 
-        if (dim_ >= 3) {
-            lz.resize(procDims_[2]);
-            for (int k = 0; k < procDims_[2]; ++k)
+        if (ctx->dim >= 3) {
+            lz.resize(ctx->procDims[2]);
+            for (int k = 0; k < ctx->procDims[2]; ++k)
                 lz[k] = allSizes[k * mx * my].nz;
         }
     }
 
-    // Create DMDA on the remapped communicator with explicit local sizes.
-    if (dim_ == 1) {
+    DM dm = NULL;
+    if (ctx->dim == 1) {
         DMDACreate1d(petscComm, bx, globalNx, 1, 1,
-                     lx.empty() ? nullptr : lx.data(), &dm_);
-    } else if (dim_ == 2) {
+                     lx.empty() ? NULL : lx.data(), &dm);
+    } else if (ctx->dim == 2) {
         DMDACreate2d(petscComm, bx, by,
                      DMDA_STENCIL_STAR,
                      globalNx, globalNy,
-                     procDims_[0], procDims_[1],
+                     ctx->procDims[0], ctx->procDims[1],
                      1, 1,
                      lx.data(), ly.data(),
-                     &dm_);
+                     &dm);
     } else {
         DMDACreate3d(petscComm, bx, by, bz,
                      DMDA_STENCIL_STAR,
                      globalNx, globalNy, globalNz,
-                     procDims_[0], procDims_[1], procDims_[2],
+                     ctx->procDims[0], ctx->procDims[1], ctx->procDims[2],
                      1, 1,
                      lx.data(), ly.data(), lz.data(),
-                     &dm_);
+                     &dm);
     }
+    ctx->dm = dm;
 
-    DMSetUp(dm_);
+    DMSetUp(dm);
 
-    // Validate that DMDA partition matches the local mesh
+    /* Validate partition */
     {
         PetscInt xs, ys, zs, xm, ym, zm;
-        if (dim_ == 1) {
-            DMDAGetCorners(dm_, &xs, nullptr, nullptr, &xm, nullptr, nullptr);
+        if (ctx->dim == 1) {
+            DMDAGetCorners(dm, &xs, NULL, NULL, &xm, NULL, NULL);
             ys = 0; zs = 0; ym = 1; zm = 1;
-        } else if (dim_ == 2) {
-            DMDAGetCorners(dm_, &xs, &ys, nullptr, &xm, &ym, nullptr);
+        } else if (ctx->dim == 2) {
+            DMDAGetCorners(dm, &xs, &ys, NULL, &xm, &ym, NULL);
             zs = 0; zm = 1;
         } else {
-            DMDAGetCorners(dm_, &xs, &ys, &zs, &xm, &ym, &zm);
+            DMDAGetCorners(dm, &xs, &ys, &zs, &xm, &ym, &zm);
         }
 
         int myRankPetsc = 0;
         MPI_Comm_rank(petscComm, &myRankPetsc);
 
-        bool mismatch = false;
-        if (static_cast<int>(xm) != nx) mismatch = true;
-        if (dim_ >= 2 && static_cast<int>(ym) != ny) mismatch = true;
-        if (dim_ >= 3 && static_cast<int>(zm) != nz) mismatch = true;
-        if (static_cast<int>(xs) != ilower_[0]) mismatch = true;
-        if (dim_ >= 2 && static_cast<int>(ys) != ilower_[1]) mismatch = true;
-        if (dim_ >= 3 && static_cast<int>(zs) != ilower_[2]) mismatch = true;
+        int mismatch = 0;
+        if ((int)xm != nx) mismatch = 1;
+        if (ctx->dim >= 2 && (int)ym != ny) mismatch = 1;
+        if (ctx->dim >= 3 && (int)zm != nz) mismatch = 1;
+        if ((int)xs != ctx->ilower[0]) mismatch = 1;
+        if (ctx->dim >= 2 && (int)ys != ctx->ilower[1]) mismatch = 1;
+        if (ctx->dim >= 3 && (int)zs != ctx->ilower[2]) mismatch = 1;
 
         if (mismatch) {
             int myRankOrig = 0;
-            MPI_Comm_rank(comm_, &myRankOrig);
+            MPI_Comm_rank(comm, &myRankOrig);
             std::fprintf(stderr,
                 "PETSc DMDA PARTITION MISMATCH on orig rank %d (petsc rank %d)!\n"
                 "  DMDA corners: xs=%d ys=%d zs=%d xm=%d ym=%d zm=%d\n"
                 "  Expected:     xs=%d ys=%d zs=%d xm=%d ym=%d zm=%d\n",
                 myRankOrig, myRankPetsc,
                 (int)xs, (int)ys, (int)zs, (int)xm, (int)ym, (int)zm,
-                ilower_[0], ilower_[1], ilower_[2], nx, ny, nz);
+                ctx->ilower[0], ctx->ilower[1], ctx->ilower[2], nx, ny, nz);
             MPI_Abort(petscComm, 1);
         }
     }
 
-    // Create matrix and vectors from DM
-    DMCreateMatrix(dm_, &A_);
-    DMCreateGlobalVector(dm_, &b_);
-    DMCreateGlobalVector(dm_, &x_);
+    Mat A = NULL;
+    Vec b = NULL, x = NULL;
+    DMCreateMatrix(dm, &A);
+    DMCreateGlobalVector(dm, &b);
+    DMCreateGlobalVector(dm, &x);
+    ctx->A = A;
+    ctx->b = b;
+    ctx->x = x;
 
-    // Create KSP solver on the same communicator as DMDA
-    KSPCreate(petscComm, &ksp_);
-    KSPSetDM(ksp_, dm_);
-    KSPSetDMActive(ksp_, PETSC_FALSE);  // We assemble the matrix ourselves
-    KSPSetType(ksp_, KSPCG);
+    KSP ksp = NULL;
+    KSPCreate(petscComm, &ksp);
+    KSPSetDM(ksp, dm);
+    KSPSetDMActive(ksp, PETSC_FALSE);
+    KSPSetType(ksp, KSPCG);
 
-    // Set GAMG preconditioner
     PC pc;
-    KSPGetPC(ksp_, &pc);
+    KSPGetPC(ksp, &pc);
     PCSetType(pc, PCGAMG);
 
-    // Use the UNPRECONDITIONED (true) residual norm for convergence testing.
-    // With GAMG, the preconditioned residual drops ~1000x in 1 iteration,
-    // causing premature convergence while the actual residual is still large.
-    KSPSetNormType(ksp_, KSP_NORM_UNPRECONDITIONED);
+    KSPSetNormType(ksp, KSP_NORM_UNPRECONDITIONED);
 
 #ifndef NDEBUG
-    // Enable residual monitoring: print true residual norm at each KSP iteration
-    PetscOptionsInsertString(nullptr, "-ksp_monitor");
+    PetscOptionsInsertString(NULL, "-ksp_monitor");
 #endif
 
-    // Allow runtime override via command-line options (-ksp_type, -pc_type, etc.)
-    KSPSetFromOptions(ksp_);
+    KSPSetFromOptions(ksp);
+    KSPSetInitialGuessNonzero(ksp, PETSC_TRUE);
+    ctx->ksp = ksp;
 
-    // Set tolerances and options that persist across solves
-    KSPSetInitialGuessNonzero(ksp_, PETSC_TRUE);
-
-    initialized_ = true;
+    ctx->initialized = 1;
 }
 
-void PETScPressureSolver::destroyPETSc() {
-    if (ksp_) { KSPDestroy(&ksp_); ksp_ = nullptr; }
-    if (x_)   { VecDestroy(&x_);   x_   = nullptr; }
-    if (b_)   { VecDestroy(&b_);   b_   = nullptr; }
-    if (A_)   { MatDestroy(&A_);   A_   = nullptr; }
-    if (dm_)  { DMDestroy(&dm_);   dm_  = nullptr; }
-    if (petscComm_ != MPI_COMM_NULL) {
-        MPI_Comm_free(&petscComm_);
-        petscComm_ = MPI_COMM_NULL;
-    }
-    initialized_ = false;
-}
-
-// ---------------------------------------------------------------------------
-// Matrix / vector assembly
-// ---------------------------------------------------------------------------
-
-void PETScPressureSolver::assembleSystem(
-    const RectilinearMesh& mesh,
-    const std::vector<double>& rho,
-    const std::vector<double>& rhoc2,
-    const std::vector<double>& rhs,
-    const std::vector<double>& pressure,
+static void assembleSystem(
+    struct PETScContext* ctx,
+    const RectilinearMesh* mesh,
+    const double* rho,
+    const double* rhoc2,
+    const double* rhs,
+    const double* pressure,
     double dt,
     HaloExchange* halo)
 {
     const double dt2 = dt * dt;
-    const int nx = mesh.nx();
-    const int ny = mesh.ny();
-    const int nz = mesh.nz();
+    const int nx = mesh->nx;
+    const int ny = mesh->ny;
+    const int nz = mesh->nz;
 
-    // Get local portion of the DMDA
+    DM dm = (DM)ctx->dm;
+    Mat A = (Mat)ctx->A;
+    Vec b = (Vec)ctx->b;
+    Vec x = (Vec)ctx->x;
+
     PetscInt xs, ys, zs, xm, ym, zm;
-    if (dim_ == 1) {
-        DMDAGetCorners(dm_, &xs, nullptr, nullptr, &xm, nullptr, nullptr);
+    if (ctx->dim == 1) {
+        DMDAGetCorners(dm, &xs, NULL, NULL, &xm, NULL, NULL);
         ys = 0; zs = 0; ym = 1; zm = 1;
-    } else if (dim_ == 2) {
-        DMDAGetCorners(dm_, &xs, &ys, nullptr, &xm, &ym, nullptr);
+    } else if (ctx->dim == 2) {
+        DMDAGetCorners(dm, &xs, &ys, NULL, &xm, &ym, NULL);
         zs = 0; zm = 1;
     } else {
-        DMDAGetCorners(dm_, &xs, &ys, &zs, &xm, &ym, &zm);
+        DMDAGetCorners(dm, &xs, &ys, &zs, &xm, &ym, &zm);
     }
 
     for (PetscInt k = zs; k < zs + zm; ++k) {
         for (PetscInt j = ys; j < ys + ym; ++j) {
             for (PetscInt i = xs; i < xs + xm; ++i) {
-                // Map DMDA (i,j,k) to local mesh indices
-                const int li = static_cast<int>(i - xs);
-                const int lj = static_cast<int>(j - ys);
-                const int lk = static_cast<int>(k - zs);
-                const std::size_t idx = mesh.index(li, lj, lk);
+                const int li = (int)(i - xs);
+                const int lj = (int)(j - ys);
+                const int lk = (int)(k - zs);
+                const size_t idx = mesh_index(mesh, li, lj, lk);
                 const double coeff = rhoc2[idx] * dt2;
 
                 double diagL = 0.0;
                 MatStencil row;
                 row.i = i; row.j = j; row.k = k;
 
-                // Maximum 7-point stencil (center + 2 per dimension)
                 MatStencil cols[7];
                 double vals[7];
                 int nEntries = 0;
 
-                // --- X direction ---
+                /* --- X direction --- */
                 {
-                    const std::size_t xm_idx = mesh.index(li - 1, lj, lk);
-                    const std::size_t xp_idx = mesh.index(li + 1, lj, lk);
+                    const size_t xm_idx = mesh_index(mesh, li - 1, lj, lk);
+                    const size_t xp_idx = mesh_index(mesh, li + 1, lj, lk);
                     const double rhoL = 0.5 * (rho[idx] + rho[xm_idx]);
                     const double rhoR = 0.5 * (rho[idx] + rho[xp_idx]);
-                    const double dL = 0.5 * (mesh.dx(li - 1) + mesh.dx(li));
-                    const double dR = 0.5 * (mesh.dx(li) + mesh.dx(li + 1));
-                    double cL = 1.0 / (std::max(rhoL, 1e-14) * dL * mesh.dx(li));
-                    double cR = 1.0 / (std::max(rhoR, 1e-14) * dR * mesh.dx(li));
+                    const double dL = 0.5 * (mesh_dx(mesh, li - 1) + mesh_dx(mesh, li));
+                    const double dR = 0.5 * (mesh_dx(mesh, li) + mesh_dx(mesh, li + 1));
+                    double cL = 1.0 / (std::max(rhoL, 1e-14) * dL * mesh_dx(mesh, li));
+                    double cR = 1.0 / (std::max(rhoR, 1e-14) * dR * mesh_dx(mesh, li));
 
-                    // Neumann BC: zero the coefficient at physical boundaries
-                    bool physLow = false, physHigh = false;
+                    int physLow = 0, physHigh = 0;
                     if (halo) {
-                        physLow  = (li == 0)      && halo->mpi().isPhysicalBoundary(MPIContext::XLow);
-                        physHigh = (li == nx - 1)  && halo->mpi().isPhysicalBoundary(MPIContext::XHigh);
+                        physLow  = (li == 0)       && mpi_is_physical_boundary(halo->mpi, XLOW);
+                        physHigh = (li == nx - 1)   && mpi_is_physical_boundary(halo->mpi, XHIGH);
                     } else {
-                        physLow  = (li == 0)      && mesh.boundaryCondition(RectilinearMesh::XLow)  != BoundaryCondition::Periodic;
-                        physHigh = (li == nx - 1)  && mesh.boundaryCondition(RectilinearMesh::XHigh) != BoundaryCondition::Periodic;
+                        physLow  = (li == 0)       && mesh->bc[XLOW]  != BC_PERIODIC;
+                        physHigh = (li == nx - 1)   && mesh->bc[XHIGH] != BC_PERIODIC;
                     }
 
                     if (physLow)  cL = 0.0;
@@ -322,24 +261,24 @@ void PETScPressureSolver::assembleSystem(
                     diagL += cL + cR;
                 }
 
-                // --- Y direction ---
-                if (dim_ >= 2) {
-                    const std::size_t ym_idx = mesh.index(li, lj - 1, lk);
-                    const std::size_t yp_idx = mesh.index(li, lj + 1, lk);
+                /* --- Y direction --- */
+                if (ctx->dim >= 2) {
+                    const size_t ym_idx = mesh_index(mesh, li, lj - 1, lk);
+                    const size_t yp_idx = mesh_index(mesh, li, lj + 1, lk);
                     const double rhoL = 0.5 * (rho[idx] + rho[ym_idx]);
                     const double rhoR = 0.5 * (rho[idx] + rho[yp_idx]);
-                    const double dL = 0.5 * (mesh.dy(lj - 1) + mesh.dy(lj));
-                    const double dR = 0.5 * (mesh.dy(lj) + mesh.dy(lj + 1));
-                    double cL = 1.0 / (std::max(rhoL, 1e-14) * dL * mesh.dy(lj));
-                    double cR = 1.0 / (std::max(rhoR, 1e-14) * dR * mesh.dy(lj));
+                    const double dL = 0.5 * (mesh_dy(mesh, lj - 1) + mesh_dy(mesh, lj));
+                    const double dR = 0.5 * (mesh_dy(mesh, lj) + mesh_dy(mesh, lj + 1));
+                    double cL = 1.0 / (std::max(rhoL, 1e-14) * dL * mesh_dy(mesh, lj));
+                    double cR = 1.0 / (std::max(rhoR, 1e-14) * dR * mesh_dy(mesh, lj));
 
-                    bool physLow = false, physHigh = false;
+                    int physLow = 0, physHigh = 0;
                     if (halo) {
-                        physLow  = (lj == 0)      && halo->mpi().isPhysicalBoundary(MPIContext::YLow);
-                        physHigh = (lj == ny - 1)  && halo->mpi().isPhysicalBoundary(MPIContext::YHigh);
+                        physLow  = (lj == 0)       && mpi_is_physical_boundary(halo->mpi, YLOW);
+                        physHigh = (lj == ny - 1)   && mpi_is_physical_boundary(halo->mpi, YHIGH);
                     } else {
-                        physLow  = (lj == 0)      && mesh.boundaryCondition(RectilinearMesh::YLow)  != BoundaryCondition::Periodic;
-                        physHigh = (lj == ny - 1)  && mesh.boundaryCondition(RectilinearMesh::YHigh) != BoundaryCondition::Periodic;
+                        physLow  = (lj == 0)       && mesh->bc[YLOW]  != BC_PERIODIC;
+                        physHigh = (lj == ny - 1)   && mesh->bc[YHIGH] != BC_PERIODIC;
                     }
 
                     if (physLow)  cL = 0.0;
@@ -358,24 +297,24 @@ void PETScPressureSolver::assembleSystem(
                     diagL += cL + cR;
                 }
 
-                // --- Z direction ---
-                if (dim_ >= 3) {
-                    const std::size_t zm_idx = mesh.index(li, lj, lk - 1);
-                    const std::size_t zp_idx = mesh.index(li, lj, lk + 1);
+                /* --- Z direction --- */
+                if (ctx->dim >= 3) {
+                    const size_t zm_idx = mesh_index(mesh, li, lj, lk - 1);
+                    const size_t zp_idx = mesh_index(mesh, li, lj, lk + 1);
                     const double rhoL = 0.5 * (rho[idx] + rho[zm_idx]);
                     const double rhoR = 0.5 * (rho[idx] + rho[zp_idx]);
-                    const double dL = 0.5 * (mesh.dz(lk - 1) + mesh.dz(lk));
-                    const double dR = 0.5 * (mesh.dz(lk) + mesh.dz(lk + 1));
-                    double cL = 1.0 / (std::max(rhoL, 1e-14) * dL * mesh.dz(lk));
-                    double cR = 1.0 / (std::max(rhoR, 1e-14) * dR * mesh.dz(lk));
+                    const double dL = 0.5 * (mesh_dz(mesh, lk - 1) + mesh_dz(mesh, lk));
+                    const double dR = 0.5 * (mesh_dz(mesh, lk) + mesh_dz(mesh, lk + 1));
+                    double cL = 1.0 / (std::max(rhoL, 1e-14) * dL * mesh_dz(mesh, lk));
+                    double cR = 1.0 / (std::max(rhoR, 1e-14) * dR * mesh_dz(mesh, lk));
 
-                    bool physLow = false, physHigh = false;
+                    int physLow = 0, physHigh = 0;
                     if (halo) {
-                        physLow  = (lk == 0)      && halo->mpi().isPhysicalBoundary(MPIContext::ZLow);
-                        physHigh = (lk == nz - 1)  && halo->mpi().isPhysicalBoundary(MPIContext::ZHigh);
+                        physLow  = (lk == 0)       && mpi_is_physical_boundary(halo->mpi, ZLOW);
+                        physHigh = (lk == nz - 1)   && mpi_is_physical_boundary(halo->mpi, ZHIGH);
                     } else {
-                        physLow  = (lk == 0)      && mesh.boundaryCondition(RectilinearMesh::ZLow)  != BoundaryCondition::Periodic;
-                        physHigh = (lk == nz - 1)  && mesh.boundaryCondition(RectilinearMesh::ZHigh) != BoundaryCondition::Periodic;
+                        physLow  = (lk == 0)       && mesh->bc[ZLOW]  != BC_PERIODIC;
+                        physHigh = (lk == nz - 1)   && mesh->bc[ZHIGH] != BC_PERIODIC;
                     }
 
                     if (physLow)  cL = 0.0;
@@ -394,148 +333,202 @@ void PETScPressureSolver::assembleSystem(
                     diagL += cL + cR;
                 }
 
-                // Diagonal: (1 + dt^2 * rhoc2 * sum_of_laplacian_coeffs)
                 cols[nEntries].i = i; cols[nEntries].j = j; cols[nEntries].k = k;
                 vals[nEntries] = 1.0 + coeff * diagL;
                 ++nEntries;
 
-                MatSetValuesStencil(A_, 1, &row, nEntries, cols, vals, INSERT_VALUES);
-
-                // RHS and initial guess are set via DMDAVecGetArray after this loop
+                MatSetValuesStencil(A, 1, &row, nEntries, cols, vals, INSERT_VALUES);
             }
         }
     }
 
-    MatAssemblyBegin(A_, MAT_FINAL_ASSEMBLY);
-    MatAssemblyEnd(A_, MAT_FINAL_ASSEMBLY);
+    MatAssemblyBegin(A, MAT_FINAL_ASSEMBLY);
+    MatAssemblyEnd(A, MAT_FINAL_ASSEMBLY);
 
-    // Set RHS and initial guess via DMDAVecGetArray
-    if (dim_ == 1) {
+    /* Set RHS and initial guess */
+    if (ctx->dim == 1) {
         PetscScalar *bArr, *xArr;
-        DMDAVecGetArray(dm_, b_, &bArr);
-        DMDAVecGetArray(dm_, x_, &xArr);
+        DMDAVecGetArray(dm, b, &bArr);
+        DMDAVecGetArray(dm, x, &xArr);
         for (PetscInt i = xs; i < xs + xm; ++i) {
-            const int li = static_cast<int>(i - xs);
-            const std::size_t idx = mesh.index(li, 0, 0);
+            const int li = (int)(i - xs);
+            const size_t idx = mesh_index(mesh, li, 0, 0);
             bArr[i] = rhs[idx];
             xArr[i] = pressure[idx];
         }
-        DMDAVecRestoreArray(dm_, b_, &bArr);
-        DMDAVecRestoreArray(dm_, x_, &xArr);
-    } else if (dim_ == 2) {
+        DMDAVecRestoreArray(dm, b, &bArr);
+        DMDAVecRestoreArray(dm, x, &xArr);
+    } else if (ctx->dim == 2) {
         PetscScalar **bArr, **xArr;
-        DMDAVecGetArray(dm_, b_, &bArr);
-        DMDAVecGetArray(dm_, x_, &xArr);
+        DMDAVecGetArray(dm, b, &bArr);
+        DMDAVecGetArray(dm, x, &xArr);
         for (PetscInt j = ys; j < ys + ym; ++j) {
             for (PetscInt i = xs; i < xs + xm; ++i) {
-                const int li = static_cast<int>(i - xs);
-                const int lj = static_cast<int>(j - ys);
-                const std::size_t idx = mesh.index(li, lj, 0);
+                const int li = (int)(i - xs);
+                const int lj = (int)(j - ys);
+                const size_t idx = mesh_index(mesh, li, lj, 0);
                 bArr[j][i] = rhs[idx];
                 xArr[j][i] = pressure[idx];
             }
         }
-        DMDAVecRestoreArray(dm_, b_, &bArr);
-        DMDAVecRestoreArray(dm_, x_, &xArr);
+        DMDAVecRestoreArray(dm, b, &bArr);
+        DMDAVecRestoreArray(dm, x, &xArr);
     } else {
         PetscScalar ***bArr, ***xArr;
-        DMDAVecGetArray(dm_, b_, &bArr);
-        DMDAVecGetArray(dm_, x_, &xArr);
+        DMDAVecGetArray(dm, b, &bArr);
+        DMDAVecGetArray(dm, x, &xArr);
         for (PetscInt k = zs; k < zs + zm; ++k) {
             for (PetscInt j = ys; j < ys + ym; ++j) {
                 for (PetscInt i = xs; i < xs + xm; ++i) {
-                    const int li = static_cast<int>(i - xs);
-                    const int lj = static_cast<int>(j - ys);
-                    const int lk = static_cast<int>(k - zs);
-                    const std::size_t idx = mesh.index(li, lj, lk);
+                    const int li = (int)(i - xs);
+                    const int lj = (int)(j - ys);
+                    const int lk = (int)(k - zs);
+                    const size_t idx = mesh_index(mesh, li, lj, lk);
                     bArr[k][j][i] = rhs[idx];
                     xArr[k][j][i] = pressure[idx];
                 }
             }
         }
-        DMDAVecRestoreArray(dm_, b_, &bArr);
-        DMDAVecRestoreArray(dm_, x_, &xArr);
+        DMDAVecRestoreArray(dm, b, &bArr);
+        DMDAVecRestoreArray(dm, x, &xArr);
     }
 }
 
-// ---------------------------------------------------------------------------
-// Solve
-// ---------------------------------------------------------------------------
+/* ------------------------------------------------------------------ */
+/* Public functions                                                   */
+/* ------------------------------------------------------------------ */
 
-int PETScPressureSolver::solveInternal(
-    const RectilinearMesh& mesh,
-    const std::vector<double>& rho,
-    const std::vector<double>& rhoc2,
-    const std::vector<double>& rhs,
-    std::vector<double>& pressure,
-    double dt,
-    double tolerance,
-    int maxIter,
-    HaloExchange* halo)
+void pressure_solver_init_petsc(struct PressureSolverData* ps) {
+    memset(ps, 0, sizeof(struct PressureSolverData));
+    ps->type = PS_PETSC;
+
+    struct PETScContext* ctx = (struct PETScContext*)calloc(1, sizeof(struct PETScContext));
+    ctx->comm = malloc(sizeof(MPI_Comm));
+    *(MPI_Comm*)ctx->comm = MPI_COMM_SELF;
+    ctx->procDims[0] = 1; ctx->procDims[1] = 1; ctx->procDims[2] = 1;
+    ctx->useMPI = 0;
+    ps->petsc = ctx;
+}
+
+void pressure_solver_init_petsc_mpi(struct PressureSolverData* ps,
+                                    void* comm_ptr,
+                                    const int localExtent[6],
+                                    const int periodic[3],
+                                    const int procDims[3])
 {
-    const int nx = mesh.nx();
-    const int ny = mesh.ny();
-    const int nz = mesh.nz();
+    memset(ps, 0, sizeof(struct PressureSolverData));
+    ps->type = PS_PETSC;
 
-    // Lazy one-time initialization
-    if (!initialized_) {
-        if (!useMPI_) {
-            ilower_ = {0, 0, 0};
-            iupper_ = {nx - 1,
-                       (mesh.dim() >= 2) ? ny - 1 : 0,
-                       (mesh.dim() >= 3) ? nz - 1 : 0};
-            // Detect periodic from mesh BCs
-            periodic_[0] = (mesh.boundaryCondition(RectilinearMesh::XLow) == BoundaryCondition::Periodic) ? 1 : 0;
-            if (mesh.dim() >= 2)
-                periodic_[1] = (mesh.boundaryCondition(RectilinearMesh::YLow) == BoundaryCondition::Periodic) ? 1 : 0;
-            if (mesh.dim() >= 3)
-                periodic_[2] = (mesh.boundaryCondition(RectilinearMesh::ZLow) == BoundaryCondition::Periodic) ? 1 : 0;
+    struct PETScContext* ctx = (struct PETScContext*)calloc(1, sizeof(struct PETScContext));
+    ctx->comm = malloc(sizeof(MPI_Comm));
+    *(MPI_Comm*)ctx->comm = *(MPI_Comm*)comm_ptr;
+    ctx->ilower[0] = localExtent[0]; ctx->ilower[1] = localExtent[2]; ctx->ilower[2] = localExtent[4];
+    ctx->iupper[0] = localExtent[1] - 1; ctx->iupper[1] = localExtent[3] - 1; ctx->iupper[2] = localExtent[5] - 1;
+    memcpy(ctx->periodic, periodic, 3 * sizeof(int));
+    memcpy(ctx->procDims, procDims, 3 * sizeof(int));
+    ctx->useMPI = 1;
+    ps->petsc = ctx;
+}
+
+void petsc_pressure_solver_free(struct PETScContext* ctx) {
+    if (!ctx) return;
+
+    KSP ksp = (KSP)ctx->ksp;
+    Vec x = (Vec)ctx->x;
+    Vec b = (Vec)ctx->b;
+    Mat A = (Mat)ctx->A;
+    DM dm = (DM)ctx->dm;
+
+    if (ksp) { KSPDestroy(&ksp); ctx->ksp = NULL; }
+    if (x)   { VecDestroy(&x);   ctx->x   = NULL; }
+    if (b)   { VecDestroy(&b);   ctx->b   = NULL; }
+    if (A)   { MatDestroy(&A);   ctx->A   = NULL; }
+    if (dm)  { DMDestroy(&dm);   ctx->dm  = NULL; }
+
+    if (ctx->petscComm) {
+        MPI_Comm petscComm = *(MPI_Comm*)ctx->petscComm;
+        if (petscComm != MPI_COMM_NULL) {
+            MPI_Comm_free(&petscComm);
         }
-        setupPETSc(mesh);
+        free(ctx->petscComm);
+        ctx->petscComm = NULL;
     }
 
-    // Assemble the linear system
-    assembleSystem(mesh, rho, rhoc2, rhs, pressure, dt, halo);
+    free(ctx->comm);
+    ctx->comm = NULL;
+    ctx->initialized = 0;
+}
 
-    // Tell PETSc about the (re-)assembled matrix every step.
-    // The sparsity pattern never changes, so PETSc can reuse symbolic setup,
-    // but GAMG must see updated coefficients to remain valid as dt changes.
-    KSPSetOperators(ksp_, A_, A_);
+int petsc_pressure_solve(struct PETScContext* ctx,
+                         const struct RectilinearMesh* mesh,
+                         const double* rho,
+                         const double* rhoc2,
+                         const double* rhs,
+                         double* pressure,
+                         size_t fieldSize,
+                         double dt,
+                         double tolerance,
+                         int maxIter,
+                         struct HaloExchange* halo)
+{
+    const int nx = mesh->nx;
+    const int ny = mesh->ny;
+    const int nz = mesh->nz;
 
-    // Use tolerance as ABSOLUTE (matching Hypre PCG behavior with two-norm).
-    // Hypre's PCG with SetTwoNorm(1) converges when ||r|| < tol (absolute).
-    // PETSc's rtol is relative to initial residual, so we disable it and use atol.
-    KSPSetTolerances(ksp_, 1e-50, tolerance, PETSC_DEFAULT, maxIter);
+    /* Lazy one-time initialization */
+    if (!ctx->initialized) {
+        if (!ctx->useMPI) {
+            ctx->ilower[0] = 0; ctx->ilower[1] = 0; ctx->ilower[2] = 0;
+            ctx->iupper[0] = nx - 1;
+            ctx->iupper[1] = (mesh->dim >= 2) ? ny - 1 : 0;
+            ctx->iupper[2] = (mesh->dim >= 3) ? nz - 1 : 0;
+            ctx->periodic[0] = (mesh->bc[XLOW] == BC_PERIODIC) ? 1 : 0;
+            if (mesh->dim >= 2)
+                ctx->periodic[1] = (mesh->bc[YLOW] == BC_PERIODIC) ? 1 : 0;
+            if (mesh->dim >= 3)
+                ctx->periodic[2] = (mesh->bc[ZLOW] == BC_PERIODIC) ? 1 : 0;
+        }
+        setupPETSc(ctx, mesh);
+    }
+
+    DM dm = (DM)ctx->dm;
+    Mat A = (Mat)ctx->A;
+    Vec b = (Vec)ctx->b;
+    Vec x = (Vec)ctx->x;
+    KSP ksp = (KSP)ctx->ksp;
+
+    assembleSystem(ctx, mesh, rho, rhoc2, rhs, pressure, dt, halo);
+
+    KSPSetOperators(ksp, A, A);
+    KSPSetTolerances(ksp, 1e-50, tolerance, PETSC_DEFAULT, maxIter);
 
 #ifndef NDEBUG
-    // Debug: print what PETSc actually has for tolerances
     {
+        MPI_Comm dbgComm = *(MPI_Comm*)ctx->comm;
         PetscReal rtol_out, atol_out, dtol_out;
         PetscInt maxits_out;
-        KSPGetTolerances(ksp_, &rtol_out, &atol_out, &dtol_out, &maxits_out);
+        KSPGetTolerances(ksp, &rtol_out, &atol_out, &dtol_out, &maxits_out);
         int rank = 0;
-        MPI_Comm_rank(comm_, &rank);
+        MPI_Comm_rank(dbgComm, &rank);
         if (rank == 0) {
-            PetscPrintf(comm_, "  PETSc KSP: rtol=%.2e atol=%.2e dtol=%.2e maxits=%d\n",
+            PetscPrintf(dbgComm, "  PETSc KSP: rtol=%.2e atol=%.2e dtol=%.2e maxits=%d\n",
                         rtol_out, atol_out, dtol_out, (int)maxits_out);
         }
     }
 #endif
 
-    // Solve
-    KSPSolve(ksp_, b_, x_);
+    KSPSolve(ksp, b, x);
 
 #ifndef NDEBUG
-    // Check convergence reason
     {
         KSPConvergedReason reason;
-        KSPGetConvergedReason(ksp_, &reason);
+        KSPGetConvergedReason(ksp, &reason);
         PetscInt numIter;
-        KSPGetIterationNumber(ksp_, &numIter);
+        KSPGetIterationNumber(ksp, &numIter);
         PetscReal rnorm;
-        KSPGetResidualNorm(ksp_, &rnorm);
+        KSPGetResidualNorm(ksp, &rnorm);
         int rank = 0;
-        if (useMPI_) MPI_Comm_rank(comm_, &rank);
+        if (ctx->useMPI) MPI_Comm_rank(*(MPI_Comm*)ctx->comm, &rank);
         if (rank == 0) {
             std::fprintf(stderr, "  KSP: %d its, rnorm=%.3e, reason=%d\n",
                          (int)numIter, (double)rnorm, (int)reason);
@@ -543,84 +536,56 @@ int PETScPressureSolver::solveInternal(
     }
 #endif
 
-    // Extract solution back to pressure array
+    /* Extract solution */
     PetscInt xs, ys, zs, xm, ym, zm;
-    if (dim_ == 1) {
-        DMDAGetCorners(dm_, &xs, nullptr, nullptr, &xm, nullptr, nullptr);
+    if (ctx->dim == 1) {
+        DMDAGetCorners(dm, &xs, NULL, NULL, &xm, NULL, NULL);
         ys = 0; zs = 0; ym = 1; zm = 1;
-    } else if (dim_ == 2) {
-        DMDAGetCorners(dm_, &xs, &ys, nullptr, &xm, &ym, nullptr);
+    } else if (ctx->dim == 2) {
+        DMDAGetCorners(dm, &xs, &ys, NULL, &xm, &ym, NULL);
         zs = 0; zm = 1;
     } else {
-        DMDAGetCorners(dm_, &xs, &ys, &zs, &xm, &ym, &zm);
+        DMDAGetCorners(dm, &xs, &ys, &zs, &xm, &ym, &zm);
     }
 
-    if (dim_ == 1) {
+    if (ctx->dim == 1) {
         const PetscScalar *xArr;
-        DMDAVecGetArrayRead(dm_, x_, &xArr);
+        DMDAVecGetArrayRead(dm, x, &xArr);
         for (PetscInt i = xs; i < xs + xm; ++i) {
-            const int li = static_cast<int>(i - xs);
-            pressure[mesh.index(li, 0, 0)] = xArr[i];
+            const int li = (int)(i - xs);
+            pressure[mesh_index(mesh, li, 0, 0)] = xArr[i];
         }
-        DMDAVecRestoreArrayRead(dm_, x_, &xArr);
-    } else if (dim_ == 2) {
+        DMDAVecRestoreArrayRead(dm, x, &xArr);
+    } else if (ctx->dim == 2) {
         const PetscScalar *const *xArr;
-        DMDAVecGetArrayRead(dm_, x_, &xArr);
+        DMDAVecGetArrayRead(dm, x, &xArr);
         for (PetscInt j = ys; j < ys + ym; ++j) {
             for (PetscInt i = xs; i < xs + xm; ++i) {
-                const int li = static_cast<int>(i - xs);
-                const int lj = static_cast<int>(j - ys);
-                pressure[mesh.index(li, lj, 0)] = xArr[j][i];
+                const int li = (int)(i - xs);
+                const int lj = (int)(j - ys);
+                pressure[mesh_index(mesh, li, lj, 0)] = xArr[j][i];
             }
         }
-        DMDAVecRestoreArrayRead(dm_, x_, &xArr);
+        DMDAVecRestoreArrayRead(dm, x, &xArr);
     } else {
         const PetscScalar *const *const *xArr;
-        DMDAVecGetArrayRead(dm_, x_, &xArr);
+        DMDAVecGetArrayRead(dm, x, &xArr);
         for (PetscInt k = zs; k < zs + zm; ++k) {
             for (PetscInt j = ys; j < ys + ym; ++j) {
                 for (PetscInt i = xs; i < xs + xm; ++i) {
-                    const int li = static_cast<int>(i - xs);
-                    const int lj = static_cast<int>(j - ys);
-                    const int lk = static_cast<int>(k - zs);
-                    pressure[mesh.index(li, lj, lk)] = xArr[k][j][i];
+                    const int li = (int)(i - xs);
+                    const int lj = (int)(j - ys);
+                    const int lk = (int)(k - zs);
+                    pressure[mesh_index(mesh, li, lj, lk)] = xArr[k][j][i];
                 }
             }
         }
-        DMDAVecRestoreArrayRead(dm_, x_, &xArr);
+        DMDAVecRestoreArrayRead(dm, x, &xArr);
     }
 
-    // Return iteration count
     PetscInt numIter;
-    KSPGetIterationNumber(ksp_, &numIter);
-    return static_cast<int>(numIter);
+    KSPGetIterationNumber(ksp, &numIter);
+    return (int)numIter;
 }
 
-int PETScPressureSolver::solve(
-    const RectilinearMesh& mesh,
-    const std::vector<double>& rho,
-    const std::vector<double>& rhoc2,
-    const std::vector<double>& rhs,
-    std::vector<double>& pressure,
-    double dt,
-    double tolerance,
-    int maxIter)
-{
-    return solveInternal(mesh, rho, rhoc2, rhs, pressure, dt, tolerance, maxIter, nullptr);
-}
-
-int PETScPressureSolver::solve(
-    const RectilinearMesh& mesh,
-    const std::vector<double>& rho,
-    const std::vector<double>& rhoc2,
-    const std::vector<double>& rhs,
-    std::vector<double>& pressure,
-    double dt,
-    double tolerance,
-    int maxIter,
-    HaloExchange& halo)
-{
-    return solveInternal(mesh, rho, rhoc2, rhs, pressure, dt, tolerance, maxIter, &halo);
-}
-
-} // namespace SemiImplicitFV
+#endif /* SIFV_HAS_PETSC */

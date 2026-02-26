@@ -1,128 +1,116 @@
 #include "ViscousFlux.hpp"
+#include "RectilinearMesh.hpp"
+#include "SolutionState.hpp"
 
-namespace SemiImplicitFV {
-
-namespace {
-// Compute face viscosity from the two neighboring cells.
-// Arithmetic mixture rule: mu_cell = sum_k(alpha_k * mu_k),
-// then face value = average of left and right cells.
-inline double computeFaceMu(
-    std::size_t idxL, std::size_t idxR,
-    bool perPhase, double muConst,
-    const SolutionState& state,
-    const std::vector<double>& phaseMu, int nPhases)
+/* Compute face viscosity from the two neighboring cells.
+   Arithmetic mixture rule: mu_cell = sum_k(alpha_k * mu_k),
+   then face value = average of left and right cells. */
+static inline double compute_face_mu(
+    size_t idxL, size_t idxR,
+    int perPhase, double muConst,
+    const SolutionState* state,
+    const double* phaseMu, int nPhases)
 {
     if (!perPhase) return muConst;
+    size_t tc = state->totalCells;
     double muL = 0.0, muR = 0.0;
     for (int ph = 0; ph < nPhases; ++ph) {
-        muL += state.alpha[ph][idxL] * phaseMu[ph];
-        muR += state.alpha[ph][idxR] * phaseMu[ph];
+        muL += state->alpha[ph * tc + idxL] * phaseMu[ph];
+        muR += state->alpha[ph * tc + idxR] * phaseMu[ph];
     }
     return 0.5 * (muL + muR);
 }
-} // anonymous namespace
 
-void addViscousFluxes(
-    const SimulationConfig& config,
-    const RectilinearMesh& mesh,
-    const SolutionState& state,
-    std::vector<double>& rhsRhoU,
-    std::vector<double>& rhsRhoV,
-    std::vector<double>& rhsRhoW,
-    std::vector<double>& rhsRhoE)
+void add_viscous_fluxes(
+    const SimulationConfig* config,
+    const RectilinearMesh* mesh,
+    const SolutionState* state,
+    double* rhsRhoU,
+    double* rhsRhoV,
+    double* rhsRhoW,
+    double* rhsRhoE)
 {
-    int dim = config.dim;
-    const auto& vp = config.viscousParams;
-    const auto& mp = config.multiPhaseParams;
-    const bool perPhase = !vp.phaseMu.empty();
+    int dim = config->dim;
+    const ViscousParams* vp = &config->viscousParams;
+    const MultiPhaseParams* mp = &config->multiPhaseParams;
+    int perPhase = (vp->nPhaseMu > 0);
 
-    // faceMu is computed inline below at each call site
-    // (replaced lambda capture to enable future OpenACC porting)
+    /* --- X-direction faces --- */
+    for (int k = 0; k < mesh->nz; ++k) {
+        for (int j = 0; j < mesh->ny; ++j) {
+            for (int i = 0; i <= mesh->nx; ++i) {
+                size_t idxL = mesh_index(mesh, i - 1, j, k);
+                size_t idxR = mesh_index(mesh, i, j, k);
 
-    // --- X-direction faces ---
-    for (int k = 0; k < mesh.nz(); ++k) {
-        for (int j = 0; j < mesh.ny(); ++j) {
-            for (int i = 0; i <= mesh.nx(); ++i) {
-                // Left cell  = (i-1, j, k)
-                // Right cell = (i,   j, k)
-                std::size_t idxL = mesh.index(i - 1, j, k);
-                std::size_t idxR = mesh.index(i, j, k);
+                double dxi = 0.5 * (mesh_dx(mesh, i - 1) + mesh_dx(mesh, i));
 
-                double dxi = 0.5 * (mesh.dx(i - 1) + mesh.dx(i));
-
-                // Normal velocity gradients: du/dx, dv/dx, dw/dx
-                double dudx = (state.velU[idxR] - state.velU[idxL]) / dxi;
+                double dudx = (state->velU[idxR] - state->velU[idxL]) / dxi;
                 double dvdx = 0.0;
                 double dwdx = 0.0;
-                if (dim >= 2) dvdx = (state.velV[idxR] - state.velV[idxL]) / dxi;
-                if (dim >= 3) dwdx = (state.velW[idxR] - state.velW[idxL]) / dxi;
+                if (dim >= 2) dvdx = (state->velV[idxR] - state->velV[idxL]) / dxi;
+                if (dim >= 3) dwdx = (state->velW[idxR] - state->velW[idxL]) / dxi;
 
-                // Transverse gradients averaged from both cells
                 double dudy = 0.0, dvdy = 0.0;
                 if (dim >= 2) {
-                    double dyj = mesh.dy(j);
-                    std::size_t Ljm = mesh.index(i - 1, j - 1, k);
-                    std::size_t Ljp = mesh.index(i - 1, j + 1, k);
-                    std::size_t Rjm = mesh.index(i, j - 1, k);
-                    std::size_t Rjp = mesh.index(i, j + 1, k);
+                    double dyj = mesh_dy(mesh, j);
+                    size_t Ljm = mesh_index(mesh, i - 1, j - 1, k);
+                    size_t Ljp = mesh_index(mesh, i - 1, j + 1, k);
+                    size_t Rjm = mesh_index(mesh, i, j - 1, k);
+                    size_t Rjp = mesh_index(mesh, i, j + 1, k);
 
-                    double dudy_L = (state.velU[Ljp] - state.velU[Ljm]) / (2.0 * dyj);
-                    double dudy_R = (state.velU[Rjp] - state.velU[Rjm]) / (2.0 * dyj);
+                    double dudy_L = (state->velU[Ljp] - state->velU[Ljm]) / (2.0 * dyj);
+                    double dudy_R = (state->velU[Rjp] - state->velU[Rjm]) / (2.0 * dyj);
                     dudy = 0.5 * (dudy_L + dudy_R);
 
-                    double dvdy_L = (state.velV[Ljp] - state.velV[Ljm]) / (2.0 * dyj);
-                    double dvdy_R = (state.velV[Rjp] - state.velV[Rjm]) / (2.0 * dyj);
+                    double dvdy_L = (state->velV[Ljp] - state->velV[Ljm]) / (2.0 * dyj);
+                    double dvdy_R = (state->velV[Rjp] - state->velV[Rjm]) / (2.0 * dyj);
                     dvdy = 0.5 * (dvdy_L + dvdy_R);
                 }
 
                 double dudz = 0.0, dwdz = 0.0;
                 if (dim >= 3) {
-                    double dzk = mesh.dz(k);
-                    std::size_t Lkm = mesh.index(i - 1, j, k - 1);
-                    std::size_t Lkp = mesh.index(i - 1, j, k + 1);
-                    std::size_t Rkm = mesh.index(i, j, k - 1);
-                    std::size_t Rkp = mesh.index(i, j, k + 1);
+                    double dzk = mesh_dz(mesh, k);
+                    size_t Lkm = mesh_index(mesh, i - 1, j, k - 1);
+                    size_t Lkp = mesh_index(mesh, i - 1, j, k + 1);
+                    size_t Rkm = mesh_index(mesh, i, j, k - 1);
+                    size_t Rkp = mesh_index(mesh, i, j, k + 1);
 
-                    double dudz_L = (state.velU[Lkp] - state.velU[Lkm]) / (2.0 * dzk);
-                    double dudz_R = (state.velU[Rkp] - state.velU[Rkm]) / (2.0 * dzk);
+                    double dudz_L = (state->velU[Lkp] - state->velU[Lkm]) / (2.0 * dzk);
+                    double dudz_R = (state->velU[Rkp] - state->velU[Rkm]) / (2.0 * dzk);
                     dudz = 0.5 * (dudz_L + dudz_R);
 
-                    double dwdz_L = (state.velW[Lkp] - state.velW[Lkm]) / (2.0 * dzk);
-                    double dwdz_R = (state.velW[Rkp] - state.velW[Rkm]) / (2.0 * dzk);
+                    double dwdz_L = (state->velW[Lkp] - state->velW[Lkm]) / (2.0 * dzk);
+                    double dwdz_R = (state->velW[Rkp] - state->velW[Rkm]) / (2.0 * dzk);
                     dwdz = 0.5 * (dwdz_L + dwdz_R);
                 }
 
                 double divU = dudx + dvdy + dwdz;
 
-                // Viscous stress components (x-face normal = x)
-                double muF = computeFaceMu(idxL, idxR, perPhase, vp.mu, state, vp.phaseMu, mp.nPhases);
+                double muF = compute_face_mu(idxL, idxR, perPhase, vp->mu, state, vp->phaseMu, mp->nPhases);
                 double tau_xx = muF * (2.0 * dudx - (2.0 / 3.0) * divU);
                 double tau_xy = muF * (dvdx + dudy);
                 double tau_xz = muF * (dwdx + dudz);
 
-                // Face velocity (simple average)
-                double uFace = 0.5 * (state.velU[idxL] + state.velU[idxR]);
+                double uFace = 0.5 * (state->velU[idxL] + state->velU[idxR]);
                 double vFace = 0.0;
                 double wFace = 0.0;
-                if (dim >= 2) vFace = 0.5 * (state.velV[idxL] + state.velV[idxR]);
-                if (dim >= 3) wFace = 0.5 * (state.velW[idxL] + state.velW[idxR]);
+                if (dim >= 2) vFace = 0.5 * (state->velV[idxL] + state->velV[idxR]);
+                if (dim >= 3) wFace = 0.5 * (state->velW[idxL] + state->velW[idxR]);
 
-                // Viscous work: tau_x . u
                 double work = tau_xx * uFace + tau_xy * vFace + tau_xz * wFace;
 
-                double area = mesh.faceAreaX(j, k);
+                double area = mesh_faceAreaX(mesh, j, k);
 
-                // Accumulate: viscous flux has opposite sign convention to inviscid
                 if (i >= 1) {
-                    double coeff = area / mesh.cellVolume(i - 1, j, k);
+                    double coeff = area / mesh_cell_volume(mesh, i - 1, j, k);
                     rhsRhoU[idxL] += coeff * tau_xx;
                     if (dim >= 2) rhsRhoV[idxL] += coeff * tau_xy;
                     if (dim >= 3) rhsRhoW[idxL] += coeff * tau_xz;
                     rhsRhoE[idxL] += coeff * work;
                 }
 
-                if (i < mesh.nx()) {
-                    double coeff = area / mesh.cellVolume(i, j, k);
+                if (i < mesh->nx) {
+                    double coeff = area / mesh_cell_volume(mesh, i, j, k);
                     rhsRhoU[idxR] -= coeff * tau_xx;
                     if (dim >= 2) rhsRhoV[idxR] -= coeff * tau_xy;
                     if (dim >= 3) rhsRhoW[idxR] -= coeff * tau_xz;
@@ -132,83 +120,78 @@ void addViscousFluxes(
         }
     }
 
-    // --- Y-direction faces ---
+    /* --- Y-direction faces --- */
     if (dim >= 2) {
-        for (int k = 0; k < mesh.nz(); ++k) {
-            for (int j = 0; j <= mesh.ny(); ++j) {
-                for (int i = 0; i < mesh.nx(); ++i) {
-                    std::size_t idxL = mesh.index(i, j - 1, k);
-                    std::size_t idxR = mesh.index(i, j, k);
+        for (int k = 0; k < mesh->nz; ++k) {
+            for (int j = 0; j <= mesh->ny; ++j) {
+                for (int i = 0; i < mesh->nx; ++i) {
+                    size_t idxL = mesh_index(mesh, i, j - 1, k);
+                    size_t idxR = mesh_index(mesh, i, j, k);
 
-                    double dyj = 0.5 * (mesh.dy(j - 1) + mesh.dy(j));
+                    double dyj = 0.5 * (mesh_dy(mesh, j - 1) + mesh_dy(mesh, j));
 
-                    // Normal gradients: du/dy, dv/dy, dw/dy
-                    double dudy = (state.velU[idxR] - state.velU[idxL]) / dyj;
-                    double dvdy = (state.velV[idxR] - state.velV[idxL]) / dyj;
+                    double dudy = (state->velU[idxR] - state->velU[idxL]) / dyj;
+                    double dvdy = (state->velV[idxR] - state->velV[idxL]) / dyj;
                     double dwdy = 0.0;
-                    if (dim >= 3) dwdy = (state.velW[idxR] - state.velW[idxL]) / dyj;
+                    if (dim >= 3) dwdy = (state->velW[idxR] - state->velW[idxL]) / dyj;
 
-                    // Transverse x-gradients
-                    double dxi = mesh.dx(i);
-                    std::size_t Lim = mesh.index(i - 1, j - 1, k);
-                    std::size_t Lip = mesh.index(i + 1, j - 1, k);
-                    std::size_t Rim = mesh.index(i - 1, j, k);
-                    std::size_t Rip = mesh.index(i + 1, j, k);
+                    double dxi = mesh_dx(mesh, i);
+                    size_t Lim = mesh_index(mesh, i - 1, j - 1, k);
+                    size_t Lip = mesh_index(mesh, i + 1, j - 1, k);
+                    size_t Rim = mesh_index(mesh, i - 1, j, k);
+                    size_t Rip = mesh_index(mesh, i + 1, j, k);
 
-                    double dudx_L = (state.velU[Lip] - state.velU[Lim]) / (2.0 * dxi);
-                    double dudx_R = (state.velU[Rip] - state.velU[Rim]) / (2.0 * dxi);
+                    double dudx_L = (state->velU[Lip] - state->velU[Lim]) / (2.0 * dxi);
+                    double dudx_R = (state->velU[Rip] - state->velU[Rim]) / (2.0 * dxi);
                     double dudx = 0.5 * (dudx_L + dudx_R);
 
-                    double dvdx_L = (state.velV[Lip] - state.velV[Lim]) / (2.0 * dxi);
-                    double dvdx_R = (state.velV[Rip] - state.velV[Rim]) / (2.0 * dxi);
+                    double dvdx_L = (state->velV[Lip] - state->velV[Lim]) / (2.0 * dxi);
+                    double dvdx_R = (state->velV[Rip] - state->velV[Rim]) / (2.0 * dxi);
                     double dvdx = 0.5 * (dvdx_L + dvdx_R);
 
-                    // Transverse z-gradients
                     double dvdz = 0.0, dwdz = 0.0;
                     if (dim >= 3) {
-                        double dzk = mesh.dz(k);
-                        std::size_t Lkm = mesh.index(i, j - 1, k - 1);
-                        std::size_t Lkp = mesh.index(i, j - 1, k + 1);
-                        std::size_t Rkm = mesh.index(i, j, k - 1);
-                        std::size_t Rkp = mesh.index(i, j, k + 1);
+                        double dzk = mesh_dz(mesh, k);
+                        size_t Lkm = mesh_index(mesh, i, j - 1, k - 1);
+                        size_t Lkp = mesh_index(mesh, i, j - 1, k + 1);
+                        size_t Rkm = mesh_index(mesh, i, j, k - 1);
+                        size_t Rkp = mesh_index(mesh, i, j, k + 1);
 
-                        double dvdz_L = (state.velV[Lkp] - state.velV[Lkm]) / (2.0 * dzk);
-                        double dvdz_R = (state.velV[Rkp] - state.velV[Rkm]) / (2.0 * dzk);
+                        double dvdz_L = (state->velV[Lkp] - state->velV[Lkm]) / (2.0 * dzk);
+                        double dvdz_R = (state->velV[Rkp] - state->velV[Rkm]) / (2.0 * dzk);
                         dvdz = 0.5 * (dvdz_L + dvdz_R);
 
-                        double dwdz_L = (state.velW[Lkp] - state.velW[Lkm]) / (2.0 * dzk);
-                        double dwdz_R = (state.velW[Rkp] - state.velW[Rkm]) / (2.0 * dzk);
+                        double dwdz_L = (state->velW[Lkp] - state->velW[Lkm]) / (2.0 * dzk);
+                        double dwdz_R = (state->velW[Rkp] - state->velW[Rkm]) / (2.0 * dzk);
                         dwdz = 0.5 * (dwdz_L + dwdz_R);
                     }
 
                     double divU = dudx + dvdy + dwdz;
 
-                    // Viscous stress components (y-face normal = y)
-                    double muF = computeFaceMu(idxL, idxR, perPhase, vp.mu, state, vp.phaseMu, mp.nPhases);
+                    double muF = compute_face_mu(idxL, idxR, perPhase, vp->mu, state, vp->phaseMu, mp->nPhases);
                     double tau_yx = muF * (dudy + dvdx);
                     double tau_yy = muF * (2.0 * dvdy - (2.0 / 3.0) * divU);
                     double tau_yz = muF * (dwdy + dvdz);
 
-                    // Face velocity
-                    double uFace = 0.5 * (state.velU[idxL] + state.velU[idxR]);
-                    double vFace = 0.5 * (state.velV[idxL] + state.velV[idxR]);
+                    double uFace = 0.5 * (state->velU[idxL] + state->velU[idxR]);
+                    double vFace = 0.5 * (state->velV[idxL] + state->velV[idxR]);
                     double wFace = 0.0;
-                    if (dim >= 3) wFace = 0.5 * (state.velW[idxL] + state.velW[idxR]);
+                    if (dim >= 3) wFace = 0.5 * (state->velW[idxL] + state->velW[idxR]);
 
                     double work = tau_yx * uFace + tau_yy * vFace + tau_yz * wFace;
 
-                    double area = mesh.faceAreaY(i, k);
+                    double area = mesh_faceAreaY(mesh, i, k);
 
                     if (j >= 1) {
-                        double coeff = area / mesh.cellVolume(i, j - 1, k);
+                        double coeff = area / mesh_cell_volume(mesh, i, j - 1, k);
                         rhsRhoU[idxL] += coeff * tau_yx;
                         rhsRhoV[idxL] += coeff * tau_yy;
                         if (dim >= 3) rhsRhoW[idxL] += coeff * tau_yz;
                         rhsRhoE[idxL] += coeff * work;
                     }
 
-                    if (j < mesh.ny()) {
-                        double coeff = area / mesh.cellVolume(i, j, k);
+                    if (j < mesh->ny) {
+                        double coeff = area / mesh_cell_volume(mesh, i, j, k);
                         rhsRhoU[idxR] -= coeff * tau_yx;
                         rhsRhoV[idxR] -= coeff * tau_yy;
                         if (dim >= 3) rhsRhoW[idxR] -= coeff * tau_yz;
@@ -219,78 +202,73 @@ void addViscousFluxes(
         }
     }
 
-    // --- Z-direction faces ---
+    /* --- Z-direction faces --- */
     if (dim >= 3) {
-        for (int k = 0; k <= mesh.nz(); ++k) {
-            for (int j = 0; j < mesh.ny(); ++j) {
-                for (int i = 0; i < mesh.nx(); ++i) {
-                    std::size_t idxL = mesh.index(i, j, k - 1);
-                    std::size_t idxR = mesh.index(i, j, k);
+        for (int k = 0; k <= mesh->nz; ++k) {
+            for (int j = 0; j < mesh->ny; ++j) {
+                for (int i = 0; i < mesh->nx; ++i) {
+                    size_t idxL = mesh_index(mesh, i, j, k - 1);
+                    size_t idxR = mesh_index(mesh, i, j, k);
 
-                    double dzk = 0.5 * (mesh.dz(k - 1) + mesh.dz(k));
+                    double dzk = 0.5 * (mesh_dz(mesh, k - 1) + mesh_dz(mesh, k));
 
-                    // Normal gradients: du/dz, dv/dz, dw/dz
-                    double dudz = (state.velU[idxR] - state.velU[idxL]) / dzk;
-                    double dvdz = (state.velV[idxR] - state.velV[idxL]) / dzk;
-                    double dwdz = (state.velW[idxR] - state.velW[idxL]) / dzk;
+                    double dudz = (state->velU[idxR] - state->velU[idxL]) / dzk;
+                    double dvdz = (state->velV[idxR] - state->velV[idxL]) / dzk;
+                    double dwdz = (state->velW[idxR] - state->velW[idxL]) / dzk;
 
-                    // Transverse x-gradients
-                    double dxi = mesh.dx(i);
-                    std::size_t Lim = mesh.index(i - 1, j, k - 1);
-                    std::size_t Lip = mesh.index(i + 1, j, k - 1);
-                    std::size_t Rim = mesh.index(i - 1, j, k);
-                    std::size_t Rip = mesh.index(i + 1, j, k);
+                    double dxi = mesh_dx(mesh, i);
+                    size_t Lim = mesh_index(mesh, i - 1, j, k - 1);
+                    size_t Lip = mesh_index(mesh, i + 1, j, k - 1);
+                    size_t Rim = mesh_index(mesh, i - 1, j, k);
+                    size_t Rip = mesh_index(mesh, i + 1, j, k);
 
-                    double dudx_L = (state.velU[Lip] - state.velU[Lim]) / (2.0 * dxi);
-                    double dudx_R = (state.velU[Rip] - state.velU[Rim]) / (2.0 * dxi);
+                    double dudx_L = (state->velU[Lip] - state->velU[Lim]) / (2.0 * dxi);
+                    double dudx_R = (state->velU[Rip] - state->velU[Rim]) / (2.0 * dxi);
                     double dudx = 0.5 * (dudx_L + dudx_R);
 
-                    double dwdx_L = (state.velW[Lip] - state.velW[Lim]) / (2.0 * dxi);
-                    double dwdx_R = (state.velW[Rip] - state.velW[Rim]) / (2.0 * dxi);
+                    double dwdx_L = (state->velW[Lip] - state->velW[Lim]) / (2.0 * dxi);
+                    double dwdx_R = (state->velW[Rip] - state->velW[Rim]) / (2.0 * dxi);
                     double dwdx = 0.5 * (dwdx_L + dwdx_R);
 
-                    // Transverse y-gradients
-                    double dyj = mesh.dy(j);
-                    std::size_t Ljm = mesh.index(i, j - 1, k - 1);
-                    std::size_t Ljp = mesh.index(i, j + 1, k - 1);
-                    std::size_t Rjm = mesh.index(i, j - 1, k);
-                    std::size_t Rjp = mesh.index(i, j + 1, k);
+                    double dyj = mesh_dy(mesh, j);
+                    size_t Ljm = mesh_index(mesh, i, j - 1, k - 1);
+                    size_t Ljp = mesh_index(mesh, i, j + 1, k - 1);
+                    size_t Rjm = mesh_index(mesh, i, j - 1, k);
+                    size_t Rjp = mesh_index(mesh, i, j + 1, k);
 
-                    double dvdy_L = (state.velV[Ljp] - state.velV[Ljm]) / (2.0 * dyj);
-                    double dvdy_R = (state.velV[Rjp] - state.velV[Rjm]) / (2.0 * dyj);
+                    double dvdy_L = (state->velV[Ljp] - state->velV[Ljm]) / (2.0 * dyj);
+                    double dvdy_R = (state->velV[Rjp] - state->velV[Rjm]) / (2.0 * dyj);
                     double dvdy = 0.5 * (dvdy_L + dvdy_R);
 
-                    double dwdy_L = (state.velW[Ljp] - state.velW[Ljm]) / (2.0 * dyj);
-                    double dwdy_R = (state.velW[Rjp] - state.velW[Rjm]) / (2.0 * dyj);
+                    double dwdy_L = (state->velW[Ljp] - state->velW[Ljm]) / (2.0 * dyj);
+                    double dwdy_R = (state->velW[Rjp] - state->velW[Rjm]) / (2.0 * dyj);
                     double dwdy = 0.5 * (dwdy_L + dwdy_R);
 
                     double divU = dudx + dvdy + dwdz;
 
-                    // Viscous stress components (z-face normal = z)
-                    double muF = computeFaceMu(idxL, idxR, perPhase, vp.mu, state, vp.phaseMu, mp.nPhases);
+                    double muF = compute_face_mu(idxL, idxR, perPhase, vp->mu, state, vp->phaseMu, mp->nPhases);
                     double tau_zx = muF * (dudz + dwdx);
                     double tau_zy = muF * (dvdz + dwdy);
                     double tau_zz = muF * (2.0 * dwdz - (2.0 / 3.0) * divU);
 
-                    // Face velocity
-                    double uFace = 0.5 * (state.velU[idxL] + state.velU[idxR]);
-                    double vFace = 0.5 * (state.velV[idxL] + state.velV[idxR]);
-                    double wFace = 0.5 * (state.velW[idxL] + state.velW[idxR]);
+                    double uFace = 0.5 * (state->velU[idxL] + state->velU[idxR]);
+                    double vFace = 0.5 * (state->velV[idxL] + state->velV[idxR]);
+                    double wFace = 0.5 * (state->velW[idxL] + state->velW[idxR]);
 
                     double work = tau_zx * uFace + tau_zy * vFace + tau_zz * wFace;
 
-                    double area = mesh.faceAreaZ(i, j);
+                    double area = mesh_faceAreaZ(mesh, i, j);
 
                     if (k >= 1) {
-                        double coeff = area / mesh.cellVolume(i, j, k - 1);
+                        double coeff = area / mesh_cell_volume(mesh, i, j, k - 1);
                         rhsRhoU[idxL] += coeff * tau_zx;
                         rhsRhoV[idxL] += coeff * tau_zy;
                         rhsRhoW[idxL] += coeff * tau_zz;
                         rhsRhoE[idxL] += coeff * work;
                     }
 
-                    if (k < mesh.nz()) {
-                        double coeff = area / mesh.cellVolume(i, j, k);
+                    if (k < mesh->nz) {
+                        double coeff = area / mesh_cell_volume(mesh, i, j, k);
                         rhsRhoU[idxR] -= coeff * tau_zx;
                         rhsRhoV[idxR] -= coeff * tau_zy;
                         rhsRhoW[idxR] -= coeff * tau_zz;
@@ -301,5 +279,3 @@ void addViscousFluxes(
         }
     }
 }
-
-} // namespace SemiImplicitFV

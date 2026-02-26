@@ -5,8 +5,6 @@
 #include <string>
 #include <map>
 
-namespace SemiImplicitFV {
-
 /// Evaluates math expressions with variables x, y, z.
 /// Uses pimpl pattern to isolate the exprtk header (40K+ lines) to one TU.
 class ExpressionEvaluator {
@@ -32,7 +30,5 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
-
-} // namespace SemiImplicitFV
 
 #endif // EXPRESSION_EVALUATOR_HPP

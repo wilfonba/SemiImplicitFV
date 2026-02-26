@@ -4,17 +4,25 @@ Finite volume solver for compressible Euler equations on rectilinear meshes (1D/
 
 ## Build and Run
 
-Use `run_case.sh` to configure, build, and run cases automatically:
+Use `sifv.sh` to configure, build, and run cases or tests automatically:
 
 ```bash
-./run_case.sh <case>                         # Build and run a JSON case
-./run_case.sh --debug <case>                 # Debug build (AddressSanitizer)
-./run_case.sh -n 4 <case>                    # Run with 4 MPI ranks
-./run_case.sh --case-optimization <case>     # Codegen optimized build
-./run_case.sh --compiled <case>              # Build compiled C++ case
-./run_case.sh --petsc <case>                 # Enable PETSc pressure solver
-./run_case.sh --nsys <case>                  # Profile with Nsight Systems (NVTX)
-./run_case.sh --list                         # List available cases
+./sifv.sh run <case>                         # Build and run a JSON case
+./sifv.sh run --debug <case>                 # Debug build (AddressSanitizer)
+./sifv.sh run -n 4 <case>                    # Run with 4 MPI ranks
+./sifv.sh run --case-optimization <case>     # Codegen optimized build
+./sifv.sh run --compiled <case>              # Build compiled C++ case
+./sifv.sh run --petsc <case>                 # Enable PETSc (saved across runs)
+./sifv.sh run --no-petsc <case>              # Disable PETSc (saved across runs)
+./sifv.sh run --nsys <case>                  # Profile with Nsight Systems (NVTX)
+./sifv.sh run --srun <case>                  # Use srun instead of mpirun (Slurm)
+./sifv.sh run -o <dir> <case>               # Override output directory
+./sifv.sh list                               # List available cases
+./sifv.sh test                               # Run all tests
+./sifv.sh test unit                          # Run unit tests only
+./sifv.sh test -j 8                          # Parallel build and test execution
+./sifv.sh test -o <pattern>                  # Run tests matching pattern
+./sifv.sh test -l                            # List all test names
 ```
 
 Manual build (if needed):
@@ -31,16 +39,18 @@ make -j
 - `src/` — library source files
 - `driver/` — generic JSON driver (`sifv`), the main entry point for running cases
 - `cases/` — case definitions as JSON/JSONC input files (the primary way to define simulations)
+- `tests/` — three-tier test suite (unit, integration, regression) using GoogleTest + CTest
 - `tools/` — code generation (`codegen.py`: JSON → optimized C++) and utilities
+- `.github/workflows/` — GitHub Actions CI pipeline
 
 ## Case System
 
 **JSON input files** in `cases/<name>/<name>.jsonc` are the standard way to define simulations. The `sifv` driver reads a JSON file and runs the simulation without any C++ coding. VTK output is written into the case's own directory (e.g. `cases/1D_sod_shocktube/VTK/`).
 
-Run cases via `run_case.sh`:
-- `./run_case.sh <case>` — build `sifv` and run the JSON case
-- `./run_case.sh --case-optimization <case>` — generate optimized C++ from JSON via `tools/codegen.py`, compile, and run
-- `./run_case.sh --compiled <case>` — build and run a compiled `.cpp` source directly (for cases with custom post-processing)
+Run cases via `sifv.sh run`:
+- `./sifv.sh run <case>` — build `sifv` and run the JSON case
+- `./sifv.sh run --case-optimization <case>` — generate optimized C++ from JSON via `tools/codegen.py`, compile, and run
+- `./sifv.sh run --compiled <case>` — build and run a compiled `.cpp` source directly (for cases with custom post-processing)
 
 When adding new cases, prefer JSON input files. Use compiled C++ only when the case requires logic not expressible in JSON (custom diagnostics, drag/lift computation, convergence studies, etc.).
 
@@ -48,7 +58,7 @@ When adding new cases, prefer JSON input files. Use compiled C++ only when the c
 
 Top-level sections: `config`, `eos`, `riemannSolver`, `pressureSolver`, `mesh`, `boundaryConditions`, `timeLoop`, `output`, `initialConditions`, `smoothing`, `restart`. All sections except `config`, `mesh`, `timeLoop`, and `initialConditions` are optional.
 
-The `pressureSolver` key selects the pressure solver for semi-implicit runs: `"GaussSeidel"` (default) or `"PETSc"` (CG + GAMG algebraic multigrid via PETSc; requires `--petsc` build flag).
+The `pressureSolver` key selects the pressure solver for semi-implicit runs: `"GaussSeidel"` (default), `"Jacobi"`, or `"PETSc"` (CG + GAMG algebraic multigrid via PETSc; requires `--petsc` build flag). The `--petsc` flag is a stored toggle — once enabled, it persists across runs until disabled with `--no-petsc`.
 
 The `output` section supports a `"format"` field: `"VTKText"` (default, ASCII) or `"VTKRaw"` (appended raw binary, compact and fast).
 
@@ -58,7 +68,7 @@ Initial condition patches support `"box"`, `"sphere"`, `"plane"`, and `"analytic
 
 1. Create `cases/<name>/<name>.jsonc`
 2. Define config, mesh, BCs, ICs, and any optional sections
-3. Run: `./run_case.sh <name>`
+3. Run: `./sifv.sh run <name>`
 4. VTK output appears in `cases/<name>/VTK/`
 
 ## Checkpoint / Restart
@@ -94,45 +104,108 @@ Simple binary format (`Checkpoint.hpp` / `Checkpoint.cpp`):
   alphaRho[0..nPhases-1]  (if multi-phase)
 ```
 
-Only conservative variables are saved. Primitives are recomputed on restart via `convertConservativeToPrimitiveVariables()`.
+Only conservative variables are saved. Primitives are recomputed on restart via `state_cons_to_prim()`.
 
 ### Example workflow
 
 ```bash
 # 1. Run with checkpoints enabled (add "restart": {"checkpoint": true} to the JSONC)
-./run_case.sh 1D_sod_shocktube
+./sifv.sh run 1D_sod_shocktube
 
 # 2. Job gets killed at wall-time limit...
 
 # 3. Restart: add "file": "Checkpoint/checkpoint.{rank}.bin" to the "restart" section
-./run_case.sh 1D_sod_shocktube
+./sifv.sh run 1D_sod_shocktube
 ```
+
+## Testing
+
+Three-tier test suite using GoogleTest + CTest. All tests run through `mpirun` since the solver requires MPI initialization. Each GoogleTest `TEST()` case is registered as an individual CTest entry for granular pass/fail reporting.
+
+```bash
+./sifv.sh test                          # Build and run all tests
+./sifv.sh test unit                     # Unit tests only
+./sifv.sh test integration              # Integration tests only
+./sifv.sh test regression               # Regression tests (np=1 and np=4)
+./sifv.sh test -j 8                     # Parallel build (-j) and test execution (-j)
+./sifv.sh test -d unit                  # Debug build
+./sifv.sh test -c                       # Clean build directory first
+./sifv.sh test --build-only             # Build without running
+./sifv.sh test -o <pattern>             # Run tests matching regex pattern
+./sifv.sh test -l                       # List all test names
+./sifv.sh test --generate               # Regenerate all regression reference data
+./sifv.sh test -o TaylorGreenVortex3D --generate  # Regenerate one reference
+```
+
+- **Unit tests** (`tests/unit/`): Individual functions — EOS, Riemann solvers, reconstruction, mixture EOS, IGR
+- **Integration tests** (`tests/integration/`): Multi-module — BCs, state conversion, explicit stepping, pressure solvers
+- **Regression tests** (`tests/regression/`): Full 50-step simulations compared pointwise against committed reference data at both np=1 and np=4. Tolerance: 1e-8. Cases are listed in `REGRESSION_CASES` in `tests/CMakeLists.txt`.
+
+CI runs all tiers on every push/PR to master via `.github/workflows/tests.yml`.
 
 ## Architecture
 
-**Solvers**: `ExplicitSolver` (SSP-RK1/2/3 with acoustic CFL) and `SemiImplicitSolver` (advective CFL + implicit pressure). Both use shared RK utilities from `RKTimeStepping.hpp`.
+The codebase uses C-style architecture: plain C structs, free functions, and enum+switch dispatch. There are no classes (except `ExpressionEvaluator`, which uses the pimpl pattern to isolate the exprtk dependency), no virtual dispatch, no namespaces, and no `shared_ptr` polymorphism. This design is chosen for GPU acceleration readiness.
 
-**Riemann solvers**: `LFSolver` (Lax-Friedrichs), `RusanovSolver`, `HLLCSolver` — all inherit from `RiemannSolver`. Hot-path flux computation uses devirtualized free functions (`computeLFFlux`, `computeRusanovFlux`, `computeHLLCFlux`) dispatched via `RiemannSolverType` enum + switch in `computeFluxDirect()`. See `RiemannSolver.hpp` for the enum, `FluxConfig` struct, and inline dispatch function.
+### Naming conventions
 
-**Reconstruction**: WENO1/3/5 and UPWIND1/3/5 schemes in `Reconstruction.cpp`. Ghost cell count in `SimulationConfig::nGhost` must satisfy `requiredGhostCells()`. The `Reconstructor` always populates `gammaEff`/`piInfEff` on face states — for multi-phase from mixture EOS, for single-phase from the scalar EOS gamma/pInf passed at construction. This ensures Riemann solvers never need virtual EOS calls.
+- Structs: `PascalCase` (e.g. `SimulationConfig`, `SolutionState`, `RectilinearMesh`)
+- Free functions: `module_action()` (e.g. `config_validate()`, `eos_pressure()`, `mesh_index()`, `state_cons_to_prim()`)
+- Enums: plain `enum` (not `enum class`), `UPPER_CASE` values (e.g. `EOS_IDEAL_GAS`, `RS_HLLC`, `BC_OUTFLOW`, `WENO5`)
+- Defines: `UPPER_CASE` (e.g. `MAX_PHASES`, `XLOW`, `ZHIGH`)
+- Lifecycle: `_init()` / `_free()` for structs with heap allocations
 
-**EOS**: `IdealGasEOS` and `StiffenedGasEOS`, both inherit from `EquationOfState`. The base class provides virtual `gamma()` and `pInf()` accessors so solvers can extract scalar EOS parameters at construction time for use in devirtualized compute loops.
+### Module layout
 
-**Multi-phase**: `MixtureEOS` namespace (`MixtureEOS.hpp` / `MixtureEOS.cpp`) provides N-phase mixture routines — effective gamma/piInf from volume fractions, Wood's mixture sound speed, mixture pressure, and mixture total energy. All functions have raw-pointer overloads (`const double*`, `const PhaseEOS*`) for GPU readiness alongside `std::vector` convenience wrappers. Enabled by setting `config.multiPhaseParams.nPhases >= 2` with per-phase `{gamma, pInf}` in `PhaseEOS`. All N volume fractions (`alpha[k]` for k=0..nPhases-1) and N partial densities (`alphaRho[k]` for k=0..nPhases-1) are stored and advected in `SolutionState`. After each RK stage, alphas are clamped to `alphaMin` and normalized so `sum(alpha) = 1`. At faces, `gammaEff` and `piInfEff` are computed from reconstructed alphas via `MixtureEOS::effectiveGammaAndPiInf()`. Cell-center sound speed uses the full Wood's formula.
+**State** (`State.hpp`): Core data types — `ConservativeState`, `PrimitiveState`. Defines `MAX_PHASES` (8). All use plain `double` arrays (e.g. `double u[3]`, `double alpha[MAX_PHASES]`), no `std::array`.
 
-**IGR**: `IGRSolver` computes entropic pressure via Gauss-Seidel iteration on the elliptic equation. Controlled by `SimulationConfig::useIGR` and `IGRParams`.
+**SimulationConfig** (`SimulationConfig.hpp/cpp`): All simulation parameters in a single struct. Sub-structs: `ExplicitParams`, `SemiImplicitParams`, `IGRParams`, `MultiPhaseParams`, `BodyForceParams`, `ViscousParams`, `SurfaceTensionParams`. Fixed-size arrays (`PhaseEOS phases[MAX_PHASES]`). Free functions: `config_defaults()`, `config_validate()`, `config_is_multi_phase()`, `config_has_viscosity()`, `config_required_ghost_cells()`.
 
-**Pressure solvers**: `GaussSeidelPressureSolver` (default) for the semi-implicit pressure equation. `PETScPressureSolver` uses CG + GAMG algebraic multigrid via PETSc for mesh-independent convergence; enabled with `--petsc` build flag and `"pressureSolver": "PETSc"` in JSON.
+**EOS** (`EquationOfState.hpp/cpp`): Unified module replacing the old `IdealGasEOS`/`StiffenedGasEOS` class hierarchy. `enum EOSType { EOS_IDEAL_GAS, EOS_STIFFENED_GAS }`. `struct EOSData` with type tag. Free functions: `eos_pressure()`, `eos_temperature()`, `eos_sound_speed()`, `eos_internal_energy()`, `eos_total_energy()`, `eos_to_primitive()`, `eos_to_conservative()`.
 
-**Mesh**: `RectilinearMesh` with ghost cells and boundary conditions (Periodic, Reflective, Outflow).
+**Riemann solvers** (`RiemannSolver.hpp/cpp`): Unified module replacing `LFSolver`/`RusanovSolver`/`HLLCSolver`. `enum RiemannSolverType { RS_LF, RS_RUSANOV, RS_HLLC }`. `struct RiemannFlux`, `struct FluxConfig`. Free functions `computeLFFlux()`, `computeRusanovFlux()`, `computeHLLCFlux()` dispatched via `computeFluxDirect()`.
 
-**Output**: `VTKWriter` produces `.vtr` and `.pvd` files in ASCII (`VTKText`) or appended raw binary (`VTKRaw`) format. Multi-phase fields (`Alpha_k`, `AlphaRho_k`) are written automatically when present.
+**Reconstruction** (`Reconstruction.hpp/cpp`): `struct ReconstructorData` with pre-allocated `PrimitiveState*` face arrays. Free functions: `reconstructor_init()/_free()`, `reconstruct()`. `enum ReconstructionOrder { WENO1, WENO3, WENO5, UPWIND1, UPWIND3, UPWIND5 }`.
 
-**Profiling**: `NvtxRange.hpp` provides RAII-scoped NVTX ranges for Nsight Systems profiling. Enabled with `--nsys` build/run flag which sets `ENABLE_NVTX=ON` and wraps execution with `nsys profile`.
+**SolutionState** (`SolutionState.hpp/cpp`): Flat `double*` arrays for all fields. Multi-phase uses flat arrays with stride: `alpha[phase * totalCells + cell]`. Free functions: `solution_state_init()/_free()`, `state_get_conservative()`, `state_set_conservative()`, `state_get_primitive()`, `state_set_primitive()`, `state_cons_to_prim()`, `state_prim_to_cons()`.
 
-**Input parsing**: `InputParser` (`InputParser.hpp/cpp`) reads JSON/JSONC files into `InputData` structs. This includes `SimulationConfig`, mesh/EOS/BC parameters, and initial condition patches. The driver (`driver/main.cpp`) converts these data structs into runtime objects.
+**Mesh** (`RectilinearMesh.hpp/cpp`): `struct RectilinearMesh` with `double*` node arrays. `enum BoundaryCondition { BC_SYMMETRY, BC_OUTFLOW, BC_PERIODIC, BC_SLIP_WALL, BC_NO_SLIP_WALL }`. Inline accessors: `mesh_index()`, `mesh_dx()`, `mesh_total_cells()`, `mesh_cellCentroidX()`. Non-inline: `mesh_init()`, `mesh_init_uniform()`, `mesh_free()`, `mesh_apply_bcs()`, `mesh_fill_scalar_ghosts()`.
 
-**Code generation**: `tools/codegen.py` reads a JSON case file and emits a standalone C++ `main()` with hardcoded parameters for maximum performance.
+**Pressure solvers** (`PressureSolver.hpp/cpp`, `PETScPressureSolver.hpp/cpp`): Unified module replacing `GaussSeidelPressureSolver`/`JacobiPressureSolver`/`PETScPressureSolver`. `enum PressureSolverType { PS_GAUSS_SEIDEL, PS_JACOBI, PS_PETSC }`. `struct PressureSolverData`. Free functions: `pressure_solver_init()/_free()`, `pressure_solve()/_mpi()`.
+
+**IGR** (`IGR.hpp/cpp`): `typedef double GradientTensor[3][3]`. Free functions: `igr_compute_alpha()`, `igr_compute_rhs()`, `igr_solve_entropic_pressure()/_mpi()`, `igr_compute_velocity_gradient()`.
+
+**MPI** (`MPIContext.hpp/cpp`): `struct MPIContext` with `MPI_Comm cartComm`. Free functions: `mpi_context_create()/_free()`, `mpi_is_physical_boundary()`.
+
+**Halo exchange** (`HaloExchange.hpp/cpp`): `struct HaloExchange`. Free functions: `halo_init()/_free()`, `halo_exchange_state()/_scalar()`, `halo_exchange_state_direction()/_scalar_direction()`.
+
+**Multi-phase** (`MixtureEOS.hpp/cpp`): Free functions (no namespace): `mixture_pressure()`, `mixture_sound_speed()`, `mixture_total_energy()`, `effective_gamma_and_pi_inf()`. All take raw pointers (`const double*`, `const PhaseEOS*`).
+
+**Solvers** (`ExplicitSolver.hpp/cpp`, `SemiImplicitSolver.hpp/cpp`): `struct ExplicitSolverWork` / `struct SemiImplicitSolverWork` with pre-allocated scratch arrays. Free functions: `explicit_solver_init()/_free()`, `explicit_step()`, `semi_implicit_solver_init()/_free()`, `semi_implicit_step()`.
+
+**Time stepping** (`RKTimeStepping.hpp/cpp`): `struct TimeLoopParams`. `run_time_loop()` takes a C function pointer + `void* ctx` for per-step callbacks.
+
+**Runtime** (`Runtime.hpp/cpp`): `struct Runtime` aggregating mesh, state, halo, VTK session, and solver work structs. Free functions: `runtime_init()/_free()`, `runtime_create_uniform_mesh()`, `runtime_set_bc()`.
+
+**VTK output** (`VTKWriter.hpp/cpp`, `VTKSession.hpp/cpp`): `enum VTKFormat { VTK_TEXT, VTK_RAW }`. Free functions for writing `.vtr`/`.pvtr`/`.pvd` files. `struct VTKSession` with `vtk_session_init()/_write()/_finalize()`.
+
+**Viscous flux** (`ViscousFlux.hpp/cpp`): Free function `add_viscous_fluxes()`.
+
+**Surface tension** (`SurfaceTension.hpp/cpp`): Free function `add_surface_tension_fluxes()`.
+
+**IC patches** (`ICPatch.hpp/cpp`): `struct ICPatch` with geometry type tag and state override. Free functions: `ic_patch_apply()`.
+
+**Pressure Laplacian** (`PressureLaplacian.hpp/cpp`): Free function `pressureLaplacian()` for computing the discrete pressure Laplacian on the mesh.
+
+**Checkpoint** (`Checkpoint.hpp/cpp`): Free functions for binary checkpoint I/O.
+
+**Profiling** (`NvtxRange.hpp`): `NVTX_PUSH()` / `NVTX_POP()` macros for Nsight Systems.
+
+**Input parsing** (`InputParser.hpp/cpp`): Plain C structs with `char[]` fields. Free functions: `parse_input_file()`, `input_data_free()`. Internally uses nlohmann/json but the public API is C-compatible.
+
+**Expression evaluator** (`ExpressionEvaluator.hpp/cpp`): The one exception — kept as a C++ class with pimpl pattern to isolate the exprtk header dependency. Used only at initialization for analytic IC expressions.
+
+**Code generation** (`tools/codegen.py`): Reads a JSON case file and emits a standalone C++ `main()` using the C-style API.
 
 ## Key Configuration
 
@@ -141,28 +214,28 @@ All simulation parameters live in `SimulationConfig` (see `include/SimulationCon
 - `ExplicitParams`: cfl, constDt, maxDt, minDt
 - `SemiImplicitParams`: cfl, constDt, maxDt, minDt, maxAcousticCFL, maxPressureIters, pressureTol, singlePressureSolve
 - `IGRParams`: alphaCoeff, IGRIters, IGRWarmStartIters
-- `MultiPhaseParams`: nPhases (0=single-phase), phases (vector of `PhaseEOS{gamma, pInf}`), alphaMin
+- `MultiPhaseParams`: nPhases (0=single-phase), phases (`PhaseEOS phases[MAX_PHASES]`), alphaMin
+- `BodyForceParams`: a[3], b[3], c[3] — per-dimension acceleration: `a + b * cos(c * t + d)`
+- `ViscousParams`: mu, phaseMu[MAX_PHASES]
+- `SurfaceTensionParams`: sigma, epsGradAlpha
 - `RestartParams` (in `InputData`): file, checkpoint
 
-## GPU Readiness (OpenACC)
+## GPU Readiness
 
-The compute-path code has been refactored to eliminate patterns incompatible with GPU offloading:
+The codebase uses C-style architecture specifically designed for GPU offloading:
 
-- **No virtual dispatch in hot loops** — Riemann solver flux computation uses free functions + enum dispatch (`RiemannSolverType` / `computeFluxDirect()`). EOS calls in time step computation, pressure solve, and correction step are inlined using scalar gamma/pInf.
-- **No per-cell heap allocations** — All scratch arrays (`scratchAlphas_`, `scratchAlphaRhos_`) are pre-allocated at solver construction time.
-- **No lambda captures in compute paths** — ViscousFlux uses a static helper function instead of a lambda.
-- **Raw-pointer MixtureEOS overloads** — `mixturePressure`, `mixtureSoundSpeed`, `mixtureTotalEnergy` all have `const double*`/`const PhaseEOS*` overloads callable from device code.
-- **`gammaEff`/`piInfEff` always set on face states** — Reconstructor populates these for both single-phase and multi-phase, so Riemann solvers never fall back to virtual EOS calls.
-
-Remaining items for future GPU porting:
-- AoS → SoA conversion for face reconstruction data (`std::vector<PrimitiveState>`)
-- Flat multi-phase arrays (`vector<vector<double>>` → single flat vector with stride)
-- Gauss-Seidel → Jacobi iteration for IGR and pressure solvers (inherently serial)
+- **No virtual dispatch** — All dispatch uses enum + switch (EOS, Riemann solvers, pressure solvers, IC geometry)
+- **No heap allocations in hot loops** — All scratch arrays pre-allocated at solver init time
+- **No lambda captures** — ViscousFlux uses a static helper; time loop uses C function pointers + `void* ctx`
+- **Flat arrays** — Multi-phase data stored as flat `double*` with stride (`alpha[phase * totalCells + cell]`), not `vector<vector<double>>`
+- **Raw-pointer APIs** — All MixtureEOS functions take `const double*`/`const PhaseEOS*`, callable from device code
+- **`gammaEff`/`piInfEff` always set on face states** — Reconstructor populates these for both single-phase and multi-phase, so Riemann solvers never need EOS calls
 
 ## Code Style
 
-- C++17, namespace `SemiImplicitFV`
+- C++17, no namespaces (except `ExpressionEvaluator` class)
 - Headers use `#ifndef` include guards (not `#pragma once`)
-- Solver classes take shared pointers to EOS and Riemann solver
-- `SolutionState` holds all field data (rho, momentum, energy, sigma, primitives, and for multi-phase: alpha[k], alphaRho[k])
+- Plain C structs with `_init()` / `_free()` lifecycle functions
+- Free functions with `module_action()` naming
+- `SolutionState` holds all field data as flat `double*` arrays
 - New cases should be JSON files in `cases/`; compiled C++ cases are for specialized post-processing only

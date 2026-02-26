@@ -1,40 +1,36 @@
 #include "MixtureEOS.hpp"
+#include "RectilinearMesh.hpp"
+#include "SolutionState.hpp"
 #include <cmath>
 #include <algorithm>
 
-namespace SemiImplicitFV {
-namespace MixtureEOS {
-
-double effectiveGamma(const std::vector<double>& alphas,
-                      const MultiPhaseParams& mp) {
-    int nPhases = mp.nPhases;
+double effective_gamma(const double* alphas, int nPhases,
+                       const MultiPhaseParams* mp) {
     double sumInvGm1 = 0.0;
     for (int ph = 0; ph < nPhases; ++ph) {
-        sumInvGm1 += alphas[ph] / (mp.phases[ph].gamma - 1.0);
+        sumInvGm1 += alphas[ph] / (mp->phases[ph].gamma - 1.0);
     }
     return 1.0 + 1.0 / sumInvGm1;
 }
 
-void effectiveGammaAndPiInf(const double* alphas, int nAlphas,
-                             const MultiPhaseParams& mp,
-                             double& gammaEff, double& piInfEff) {
+void effective_gamma_and_pi_inf(const double* alphas, int nPhases,
+                                const MultiPhaseParams* mp,
+                                double* gammaEff, double* piInfEff) {
     double sumInvGm1 = 0.0;
     double sumPiInfTerm = 0.0;
-    for (int ph = 0; ph < nAlphas; ++ph) {
-        double gk = mp.phases[ph].gamma;
+    for (int ph = 0; ph < nPhases; ++ph) {
+        double gk = mp->phases[ph].gamma;
         double gm1 = gk - 1.0;
         sumInvGm1 += alphas[ph] / gm1;
-        sumPiInfTerm += alphas[ph] * gk * mp.phases[ph].pInf / gm1;
+        sumPiInfTerm += alphas[ph] * gk * mp->phases[ph].pInf / gm1;
     }
-    gammaEff = 1.0 + 1.0 / sumInvGm1;
-    piInfEff = (gammaEff - 1.0) / gammaEff * sumPiInfTerm;
+    *gammaEff = 1.0 + 1.0 / sumInvGm1;
+    *piInfEff = (*gammaEff - 1.0) / *gammaEff * sumPiInfTerm;
 }
 
-// ---- Raw-pointer implementations (GPU-ready) ----
-
-double mixturePressure(double rhoE_internal,
-                       const double* alphas, int nPhases,
-                       const PhaseEOS* phases) {
+double mixture_pressure(double rhoE_internal,
+                        const double* alphas, int nPhases,
+                        const PhaseEOS* phases) {
     double sumInvGm1 = 0.0;
     double sumPInfTerm = 0.0;
     for (int ph = 0; ph < nPhases; ++ph) {
@@ -45,10 +41,10 @@ double mixturePressure(double rhoE_internal,
     return (rhoE_internal - sumPInfTerm) / sumInvGm1;
 }
 
-double mixtureSoundSpeed(double rho, double p,
-                         const double* alphas,
-                         const double* alphaRhos,
-                         int nPhases, const PhaseEOS* phases) {
+double mixture_sound_speed(double rho, double p,
+                           const double* alphas,
+                           const double* alphaRhos,
+                           int nPhases, const PhaseEOS* phases) {
     double sumInvRhoc2 = 0.0;
     for (int ph = 0; ph < nPhases; ++ph) {
         double a = alphas[ph];
@@ -62,9 +58,9 @@ double mixtureSoundSpeed(double rho, double p,
     return std::sqrt(std::max(c2, 0.0));
 }
 
-double mixtureTotalEnergy(double /*rho*/, double p,
-                          const double* alphas, int nPhases,
-                          double ke, const PhaseEOS* phases) {
+double mixture_total_energy(double /*rho*/, double p,
+                            const double* alphas, int nPhases,
+                            double ke, const PhaseEOS* phases) {
     double result = ke;
     for (int ph = 0; ph < nPhases; ++ph) {
         double gm1 = phases[ph].gamma - 1.0;
@@ -73,107 +69,82 @@ double mixtureTotalEnergy(double /*rho*/, double p,
     return result;
 }
 
-// ---- std::vector wrappers ----
+void mixture_cons_to_prim(const RectilinearMesh* mesh,
+                          SolutionState* state,
+                          const MultiPhaseParams* mp) {
+    int dim = state->dim;
+    int nPhases = mp->nPhases;
+    size_t tc = state->totalCells;
 
-double mixturePressure(double rhoE_internal,
-                       const std::vector<double>& alphas,
-                       const MultiPhaseParams& mp) {
-    return mixturePressure(rhoE_internal, alphas.data(), mp.nPhases, mp.phases.data());
-}
+    /* Pre-allocate scratch outside the loop */
+    double alphas[MAX_PHASES];
 
-double mixtureSoundSpeed(double rho, double p,
-                         const std::vector<double>& alphas,
-                         const std::vector<double>& alphaRhos,
-                         const MultiPhaseParams& mp) {
-    return mixtureSoundSpeed(rho, p, alphas.data(), alphaRhos.data(),
-                             mp.nPhases, mp.phases.data());
-}
+    for (int k = 0; k < mesh->nz; ++k) {
+        for (int j = 0; j < mesh->ny; ++j) {
+            for (int i = 0; i < mesh->nx; ++i) {
+                size_t idx = mesh_index(mesh, i, j, k);
 
-double mixtureTotalEnergy(double rho, double p,
-                          const std::vector<double>& alphas,
-                          double ke,
-                          const MultiPhaseParams& mp) {
-    return mixtureTotalEnergy(rho, p, alphas.data(), mp.nPhases, ke, mp.phases.data());
-}
-
-void convertConservativeToPrimitive(const RectilinearMesh& mesh,
-                                    SolutionState& state,
-                                    const MultiPhaseParams& mp) {
-    int dim = state.dim();
-    int nPhases = mp.nPhases;
-
-    // Pre-allocate outside the loop to avoid per-cell heap allocations
-    std::vector<double> alphas(nPhases);
-
-    for (int k = 0; k < mesh.nz(); ++k) {
-        for (int j = 0; j < mesh.ny(); ++j) {
-            for (int i = 0; i < mesh.nx(); ++i) {
-                std::size_t idx = mesh.index(i, j, k);
-
-                // Density from sum of partial densities
+                /* Density from sum of partial densities */
                 double rho = 0.0;
                 for (int ph = 0; ph < nPhases; ++ph)
-                    rho += state.alphaRho[ph][idx];
-                state.rho[idx] = std::max(rho, 1e-14);
+                    rho += state->alphaRho[ph * tc + idx];
+                state->rho[idx] = std::max(rho, 1e-14);
 
-                // Velocity
-                double rhoSafe = state.rho[idx];
-                state.velU[idx] = state.rhoU[idx] / rhoSafe;
-                if (dim >= 2) state.velV[idx] = state.rhoV[idx] / rhoSafe;
-                if (dim >= 3) state.velW[idx] = state.rhoW[idx] / rhoSafe;
+                /* Velocity */
+                double rhoSafe = state->rho[idx];
+                state->velU[idx] = state->rhoU[idx] / rhoSafe;
+                if (dim >= 2) state->velV[idx] = state->rhoV[idx] / rhoSafe;
+                if (dim >= 3) state->velW[idx] = state->rhoW[idx] / rhoSafe;
 
-                // Kinetic energy
-                double ke = 0.5 * rhoSafe * state.velU[idx] * state.velU[idx];
-                if (dim >= 2) ke += 0.5 * rhoSafe * state.velV[idx] * state.velV[idx];
-                if (dim >= 3) ke += 0.5 * rhoSafe * state.velW[idx] * state.velW[idx];
+                /* Kinetic energy */
+                double ke = 0.5 * rhoSafe * state->velU[idx] * state->velU[idx];
+                if (dim >= 2) ke += 0.5 * rhoSafe * state->velV[idx] * state->velV[idx];
+                if (dim >= 3) ke += 0.5 * rhoSafe * state->velW[idx] * state->velW[idx];
 
-                // Gather volume fractions
+                /* Gather volume fractions */
                 for (int ph = 0; ph < nPhases; ++ph)
-                    alphas[ph] = state.alpha[ph][idx];
+                    alphas[ph] = state->alpha[ph * tc + idx];
 
-                // Internal energy
-                double rhoE_internal = state.rhoE[idx] - ke;
+                /* Internal energy */
+                double rhoE_internal = state->rhoE[idx] - ke;
 
-                // Pressure
-                double p = mixturePressure(rhoE_internal, alphas, mp);
-                state.pres[idx] = p;
+                /* Pressure */
+                double p = mixture_pressure(rhoE_internal, alphas, nPhases, mp->phases);
+                state->pres[idx] = p;
             }
         }
     }
 }
 
-void convertPrimitiveToConservative(const RectilinearMesh& mesh,
-                                    SolutionState& state,
-                                    const MultiPhaseParams& mp) {
-    int dim = state.dim();
-    int nPhases = mp.nPhases;
+void mixture_prim_to_cons(const RectilinearMesh* mesh,
+                          SolutionState* state,
+                          const MultiPhaseParams* mp) {
+    int dim = state->dim;
+    int nPhases = mp->nPhases;
+    size_t tc = state->totalCells;
 
-    // Pre-allocate outside the loop to avoid per-cell heap allocations
-    std::vector<double> alphas(nPhases);
+    double alphas[MAX_PHASES];
 
-    for (int k = 0; k < mesh.nz(); ++k) {
-        for (int j = 0; j < mesh.ny(); ++j) {
-            for (int i = 0; i < mesh.nx(); ++i) {
-                std::size_t idx = mesh.index(i, j, k);
+    for (int k = 0; k < mesh->nz; ++k) {
+        for (int j = 0; j < mesh->ny; ++j) {
+            for (int i = 0; i < mesh->nx; ++i) {
+                size_t idx = mesh_index(mesh, i, j, k);
 
-                double rho = state.rho[idx];
-                state.rhoU[idx] = rho * state.velU[idx];
-                if (dim >= 2) state.rhoV[idx] = rho * state.velV[idx];
-                if (dim >= 3) state.rhoW[idx] = rho * state.velW[idx];
+                double rho = state->rho[idx];
+                state->rhoU[idx] = rho * state->velU[idx];
+                if (dim >= 2) state->rhoV[idx] = rho * state->velV[idx];
+                if (dim >= 3) state->rhoW[idx] = rho * state->velW[idx];
 
-                double ke = 0.5 * rho * state.velU[idx] * state.velU[idx];
-                if (dim >= 2) ke += 0.5 * rho * state.velV[idx] * state.velV[idx];
-                if (dim >= 3) ke += 0.5 * rho * state.velW[idx] * state.velW[idx];
+                double ke = 0.5 * rho * state->velU[idx] * state->velU[idx];
+                if (dim >= 2) ke += 0.5 * rho * state->velV[idx] * state->velV[idx];
+                if (dim >= 3) ke += 0.5 * rho * state->velW[idx] * state->velW[idx];
 
                 for (int ph = 0; ph < nPhases; ++ph)
-                    alphas[ph] = state.alpha[ph][idx];
+                    alphas[ph] = state->alpha[ph * tc + idx];
 
-                state.rhoE[idx] = mixtureTotalEnergy(rho, state.pres[idx],
-                                                      alphas, ke, mp);
+                state->rhoE[idx] = mixture_total_energy(rho, state->pres[idx],
+                                                        alphas, nPhases, ke, mp->phases);
             }
         }
     }
 }
-
-} // namespace MixtureEOS
-} // namespace SemiImplicitFV

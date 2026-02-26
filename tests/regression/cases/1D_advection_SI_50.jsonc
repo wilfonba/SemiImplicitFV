@@ -1,0 +1,31 @@
+{
+    // 1D Advection SI — 50 steps for regression testing
+    "config": {
+        "dim": 1,
+        "nGhost": 3,
+        "RKOrder": 3,
+        "reconOrder": "WENO5",
+        "semiImplicit": true,
+        "semiImplicitParams": { "constDt": 2e-3, "maxPressureIters": 100, "pressureTol": 1e-6 }
+    },
+    "eos": { "type": "IdealGas", "gamma": 1.4, "R": 287.0 },
+    "riemannSolver": "HLLC",
+    "mesh": {
+        "nx": 100, "xMin": 0.0, "xMax": 1.0
+    },
+    "boundaryConditions": {
+        "xLow": "Periodic", "xHigh": "Periodic"
+    },
+    "timeLoop": { "endTime": 0.1, "outputInterval": 1e10, "printInterval": 100000 },
+    "initialConditions": {
+        "default": { "rho": 1.225, "u": 10.0, "p": 101325.0 },
+        "patches": [
+            {
+                "geometry": { "type": "analytic" },
+                "expressions": {
+                    "rho": "1.225 * (1.0 + 0.01 * exp(-((x - 0.5) / 0.05)^2))"
+                }
+            }
+        ]
+    }
+}

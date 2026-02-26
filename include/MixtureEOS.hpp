@@ -2,73 +2,48 @@
 #define MIXTURE_EOS_HPP
 
 #include "SimulationConfig.hpp"
-#include "SolutionState.hpp"
-#include "RectilinearMesh.hpp"
-#include <vector>
+#include <stddef.h>
 
-namespace SemiImplicitFV {
-namespace MixtureEOS {
+struct RectilinearMesh;
+struct SolutionState;
 
-// Effective gamma from volume fractions:
-//   1/(g_mix - 1) = sum(alpha_k / (g_k - 1))
-double effectiveGamma(const std::vector<double>& alphas,
-                      const MultiPhaseParams& mp);
+/* Effective gamma from volume fractions:
+   1/(g_mix - 1) = sum(alpha_k / (g_k - 1)) */
+double effective_gamma(const double* alphas, int nPhases,
+                       const struct MultiPhaseParams* mp);
 
-// Allocation-free version: compute both gammaEff and piInfEff from raw alpha array.
-// alphas has nAlphas = nPhases entries (all N volume fractions).
-// Math: 1/(g_mix-1) = sum(alpha_k/(g_k-1))
-//       piInf_mix = (g_mix-1)/g_mix * sum(alpha_k * g_k * pInf_k / (g_k-1))
-void effectiveGammaAndPiInf(const double* alphas, int nAlphas,
-                             const MultiPhaseParams& mp,
-                             double& gammaEff, double& piInfEff);
+/* Compute both gammaEff and piInfEff from raw alpha array. */
+void effective_gamma_and_pi_inf(const double* alphas, int nPhases,
+                                const struct MultiPhaseParams* mp,
+                                double* gammaEff, double* piInfEff);
 
-// Mixture pressure from internal energy and volume fractions:
-//   p = (rho*e - sum(alpha_k * g_k * pInf_k / (g_k - 1))) / sum(alpha_k / (g_k - 1))
-double mixturePressure(double rhoE_internal,
-                       const std::vector<double>& alphas,
-                       const MultiPhaseParams& mp);
+/* Mixture pressure from internal energy and volume fractions:
+   p = (rhoE_internal - sum(alpha_k * g_k * pInf_k / (g_k - 1))) / sum(alpha_k / (g_k - 1)) */
+double mixture_pressure(double rhoE_internal,
+                        const double* alphas, int nPhases,
+                        const struct PhaseEOS* phases);
 
-// Raw-pointer overload (GPU-ready, no STL)
-double mixturePressure(double rhoE_internal,
-                       const double* alphas, int nPhases,
-                       const PhaseEOS* phases);
+/* Wood's mixture sound speed:
+   1/(rho*c^2) = sum(alpha_k / (rho_k * c_k^2)) */
+double mixture_sound_speed(double rho, double p,
+                           const double* alphas,
+                           const double* alphaRhos,
+                           int nPhases, const struct PhaseEOS* phases);
 
-// Wood's mixture sound speed:
-//   1/(rho*c^2) = sum(alpha_k / (rho_k * c_k^2))
-double mixtureSoundSpeed(double rho, double p,
-                         const std::vector<double>& alphas,
-                         const std::vector<double>& alphaRhos,
-                         const MultiPhaseParams& mp);
+/* Mixture total energy from pressure:
+   rhoE = sum(alpha_k * (p + g_k * pInf_k) / (g_k - 1)) + ke */
+double mixture_total_energy(double rho, double p,
+                            const double* alphas, int nPhases,
+                            double ke, const struct PhaseEOS* phases);
 
-// Raw-pointer overload (GPU-ready, no STL)
-double mixtureSoundSpeed(double rho, double p,
-                         const double* alphas,
-                         const double* alphaRhos,
-                         int nPhases, const PhaseEOS* phases);
+/* Full mesh loop: conservative -> primitive for multi-phase */
+void mixture_cons_to_prim(const struct RectilinearMesh* mesh,
+                          struct SolutionState* state,
+                          const struct MultiPhaseParams* mp);
 
-// Mixture total energy from pressure:
-//   rhoE = sum(alpha_k * (p + g_k * pInf_k) / (g_k - 1)) + ke
-double mixtureTotalEnergy(double rho, double p,
-                          const std::vector<double>& alphas,
-                          double ke,
-                          const MultiPhaseParams& mp);
+/* Full mesh loop: primitive -> conservative for multi-phase */
+void mixture_prim_to_cons(const struct RectilinearMesh* mesh,
+                          struct SolutionState* state,
+                          const struct MultiPhaseParams* mp);
 
-// Raw-pointer overload (GPU-ready, no STL)
-double mixtureTotalEnergy(double rho, double p,
-                          const double* alphas, int nPhases,
-                          double ke, const PhaseEOS* phases);
-
-// Full mesh loop: conservative -> primitive for multi-phase
-void convertConservativeToPrimitive(const RectilinearMesh& mesh,
-                                    SolutionState& state,
-                                    const MultiPhaseParams& mp);
-
-// Full mesh loop: primitive -> conservative for multi-phase
-void convertPrimitiveToConservative(const RectilinearMesh& mesh,
-                                    SolutionState& state,
-                                    const MultiPhaseParams& mp);
-
-} // namespace MixtureEOS
-} // namespace SemiImplicitFV
-
-#endif // MIXTURE_EOS_HPP
+#endif /* MIXTURE_EOS_HPP */
