@@ -373,6 +373,296 @@ Output files are VTK XML RectilinearGrid format, viewable in [ParaView](https://
 
 Fields written per cell: density, velocity (u, v, w), momentum, pressure, temperature, total energy, and entropic pressure (sigma). Multi-phase simulations additionally write per-phase volume fractions (`Alpha_0`, `Alpha_1`, ...) and partial densities (`AlphaRho_0`, `AlphaRho_1`, ...).
 
+## Code Architecture
+
+### Project Layout
+
+```
+SemiImplicitFV/
+  driver/main.cpp          Entry point: parses JSON, builds runtime, runs time loop
+  include/                 All headers (.hpp)
+  src/                     All source files (.cpp)
+  cases/                   JSON case definitions (one directory per case)
+  tests/                   GoogleTest suite (unit / integration / regression)
+  tools/codegen.py         JSON -> standalone C++ code generator
+```
+
+### Call Graph
+
+The diagrams below show what gets called from where during a simulation. Indentation indicates caller-callee relationships.
+
+#### Startup (driver/main.cpp)
+
+```
+main()
+ |
+ |-- runtime_init()                         MPI_Init, PetscInitialize, rank/size
+ |-- parse_input_file()                     JSON/JSONC -> InputData struct
+ |-- config_validate()                      Sanity-check SimulationConfig
+ |
+ |-- runtime_create_uniform_mesh_{1,2,3}d() Build mesh with MPI decomposition
+ |    |-- mpi_context_create()                MPI_Cart_create, domain decomposition
+ |    +-- mesh_init()                         Allocate node arrays, set local dims
+ |
+ |-- runtime_set_bc() [x6 faces]            Set boundary conditions per face
+ |    |-- mpi_is_physical_boundary()          Is this rank at a global boundary?
+ |    +-- mesh_set_bc()                       Store BC type on mesh struct
+ |
+ |-- solution_state_init()                  Allocate all flat double* field arrays
+ |-- eos_create_{ideal_gas|stiffened_gas}() Build EOSData struct
+ |
+ |  [If restarting:]
+ |-- load_checkpoint()                      Read binary checkpoint -> state arrays
+ |-- state_cons_to_prim()                   Recompute primitives from conservatives
+ |
+ |  [If fresh start:]
+ |-- ic_patch_apply() [per patch]           Apply initial condition geometry patches
+ |
+ |  [Build solver (one of):]
+ |-- explicit_solver_init()                 Alloc scratch arrays, reconstructor_init()
+ |-- semi_implicit_solver_init()            Same + pressure_solver_init()
+ |-- runtime_attach_{explicit|semi_implicit}()
+ |    +-- halo_init()                         Set up MPI halo exchange buffers
+ |
+ |-- runtime_smooth_fields_config()         Optional post-IC smoothing
+ |-- vtk_session_init()                     Set up VTK output session
+ |
+ |-- run_time_loop()  ------>  [see Time Loop below]
+ |
+ |  [Cleanup:]
+ |-- vtk_session_finalize()
+ |-- {explicit|semi_implicit}_solver_free()
+ |-- pressure_solver_free()
+ |-- solution_state_free(), mesh_free()
+ |-- input_data_free()
+ +-- runtime_free()                         halo_free, mpi_context_free, MPI_Finalize
+```
+
+#### Time Loop (RKTimeStepping.cpp)
+
+```
+run_time_loop()
+ |
+ |-- vtk_session_write()                    Write initial VTK snapshot
+ |
+ +-- [while time < endTime:]
+      |
+      |-- step_callback() ------>  explicit_step() or semi_implicit_step()
+      |                            [see solver diagrams below]
+      |
+      |-- [at output intervals:]
+      |    |-- vtk_session_write()          Write VTK snapshot
+      |    |    |-- vtk_write_vtr()           Per-rank .vtr file
+      |    |    |-- MPI_Gather()              Collect extents on rank 0
+      |    |    |-- vtk_write_pvtr()          Rank 0: parallel .pvtr descriptor
+      |    |    +-- vtk_write_pvd()           Rank 0: append to .pvd time series
+      |    |
+      |    +-- write_checkpoint()           Binary checkpoint (if enabled)
+      |
+      +-- [at print intervals:]
+           +-- stdout: step, time, dt, CFL info
+```
+
+#### Explicit Solver (ExplicitSolver.cpp)
+
+```
+explicit_step()
+ |
+ |-- computeAcousticTimeStep_config_mpi()   dt from CFL on |u|+c (MPI_Allreduce MIN)
+ |-- computeViscousDt_config_mpi()          [if viscous]
+ |-- computeCapillaryDt_mpi()               [if surface tension]
+ |
+ +-- [RK stage loop, s = 0..RKOrder-1:]
+      |
+      |-- state_cons_to_prim()              Update primitives from conservatives
+      |
+      |-- mesh_apply_bcs_mpi() ---------->  [see Halo + BCs below]
+      |
+      |-- [if IGR enabled:]
+      |    |-- compute_velocity_gradients()   Central differences on velocity field
+      |    +-- igr_solve_entropic_pressure_mpi()
+      |         +-- [GS iterations:]
+      |              |-- igr_compute_rhs()    Entropy production rate
+      |              +-- mesh_fill_scalar_ghosts_mpi()
+      |
+      +-- explicit_compute_rhs() -------->  [see RHS Computation below]
+      |
+      +-- [RK update: U_{n+1} = blend of U_n, U_0, dt*RHS]
+
+ +-- [after final stage:]
+      |-- state_cons_to_prim()
+      +-- mesh_apply_bcs_mpi()
+```
+
+#### Semi-Implicit Solver (SemiImplicitSolver.cpp)
+
+The semi-implicit solver follows the same structure as explicit but splits pressure
+out of the Riemann flux and solves for it implicitly.
+
+```
+semi_implicit_step()
+ |
+ |-- computeAdvectiveTimeStep_mpi()         dt from advective CFL: |u| only (no sound speed)
+ |-- computeViscousDt_config_mpi()          [if viscous]
+ |-- computeCapillaryDt_mpi()               [if surface tension]
+ |-- computeAcousticTimeStep_config_mpi()   [if maxAcousticCFL > 0, upper bound]
+ |
+ +-- [RK stage loop, s = 0..RKOrder-1:]
+      |
+      |-- state_cons_to_prim()
+      |-- mesh_apply_bcs_mpi()
+      |
+      |-- [if IGR enabled:]                 Same as explicit (velocity gradients + sigma solve)
+      |
+      |-- semi_implicit_compute_rhs()       Same pipeline as explicit but pressure excluded
+      |                                     from Riemann flux (FluxConfig.includePressure=false)
+      |
+      |-- [Predictor: advance to "star" state without pressure gradient]
+      |-- mesh_apply_bcs_mpi()              Ghost fill for star velocities
+      |
+      |-- semi_implicit_solve_pressure()    [if not singlePressureSolve or last stage]
+      |    |-- compute rhoc2 per cell       (rho * c^2, using Wood's for multi-phase)
+      |    |-- semi_implicit_compute_divergence()   div(u*) via central differences
+      |    |-- pressure_solve_mpi() ------> [see Pressure Solver below]
+      |    +-- mesh_fill_scalar_ghosts_mpi()  Halo fill solved pressure
+      |
+      +-- semi_implicit_correction_step()
+           |-- Apply pressure gradient:     rhoU = rhoU* - dt * grad(p + sigma)
+           |-- Recompute velocities
+           +-- mesh_apply_bcs_mpi()
+```
+
+#### RHS Computation (shared by both solvers)
+
+```
+{explicit|semi_implicit}_compute_rhs()
+ |
+ |-- reconstruct()                          Build face states from cell data
+ |    |-- reconstructX()                      X-face left/right states (WENO/upwind stencils)
+ |    |-- reconstructY()                      [if dim >= 2]
+ |    +-- reconstructZ()                      [if dim >= 3]
+ |    [each face state gets gammaEff/piInfEff via effective_gamma_and_pi_inf()]
+ |
+ |-- [X faces:] computeFluxDirect()         Dispatch to Riemann solver
+ |    +-- computeLFFlux() / computeRusanovFlux() / computeHLLCFlux()
+ |-- [Y faces:] computeFluxDirect()         [if dim >= 2]
+ |-- [Z faces:] computeFluxDirect()         [if dim >= 3]
+ |
+ |-- [Multi-phase: alpha source terms]      alpha * divU -> rhsAlpha
+ |-- [Body force source terms]              [if config_has_body_force()]
+ |-- add_viscous_fluxes()                   [if config_has_viscosity()]
+ +-- add_surface_tension_fluxes()           [if config_has_surface_tension()]
+```
+
+#### Halo Exchange + Boundary Conditions
+
+```
+mesh_apply_bcs_mpi()
+ |
+ +-- [for each dimension (X, Y if dim>=2, Z if dim>=3):]
+      |
+      |-- halo_exchange_state_direction()   MPI neighbor exchange
+      |    |-- pack_state()                   Pack field data into send buffers
+      |    |-- do_exchange()                  MPI_Isend + MPI_Irecv + MPI_Waitall
+      |    +-- unpack_state()                 Unpack received data into ghost cells
+      |
+      +-- fill_ghost_{x|y|z}()              Physical boundary ghost fill
+           +-- [per BC type:] SYMMETRY / OUTFLOW / PERIODIC / SLIP_WALL / NO_SLIP_WALL
+```
+
+#### Pressure Solver (semi-implicit only)
+
+```
+pressure_solve_mpi()
+ |
+ +-- [dispatch on PressureSolverType:]
+      |
+      |-- PS_GAUSS_SEIDEL: gs_solve_mpi()
+      |    +-- [iterations:]
+      |         |-- mesh_fill_scalar_ghosts_mpi()
+      |         +-- pressureLaplacian() per cell -> GS update
+      |
+      |-- PS_JACOBI: jacobi_solve_mpi()
+      |    +-- [iterations:]
+      |         |-- mesh_fill_scalar_ghosts_mpi()
+      |         +-- pressureLaplacian() per cell -> write to scratch, swap
+      |
+      +-- PS_PETSC: petsc_pressure_solve()
+           +-- PETSc CG + GAMG algebraic multigrid
+```
+
+### Module Dependency Map
+
+Shows which modules depend on which. Arrows point from caller to callee.
+
+```
+                          +-------------+
+                          | driver/main |
+                          +------+------+
+                                 |
+          +----------+-----------+-----------+----------+
+          |          |           |           |          |
+          v          v           v           v          v
+     InputParser  Runtime  RKTimeStepping  VTKSession  Checkpoint
+                     |           |
+                     v           v
+               +-----+-----+  step_callback
+               |           |     |
+               v           v     v
+          RectilinearMesh  HaloExchange   ExplicitSolver / SemiImplicitSolver
+               |                                |
+               v                     +----------+----------+
+           MPIContext                 |          |          |
+                              Reconstruction  RiemannSolver  PressureSolver
+                                     |          |               |
+                                     v          v               v
+                                MixtureEOS  EquationOfState  PressureLaplacian
+                                     |          |
+                                     +----+-----+
+                                          |
+                                          v
+                                        State
+                                  (ConservativeState,
+                                   PrimitiveState)
+
+  Additional edges:
+    ExplicitSolver/SemiImplicitSolver --> IGR
+    ExplicitSolver/SemiImplicitSolver --> ViscousFlux
+    ExplicitSolver/SemiImplicitSolver --> SurfaceTension
+    InputParser --> ExpressionEvaluator (analytic ICs only)
+    driver/main --> ICPatch
+```
+
+### Data Flow Summary
+
+```
+JSON input
+    |
+    v
+parse_input_file() --> SimulationConfig + InputData
+    |
+    v
+runtime_create_uniform_mesh() --> RectilinearMesh (node arrays, ghost cells)
+    |
+    v
+solution_state_init() --> SolutionState (flat double* arrays for all fields)
+    |
+    v
+ic_patch_apply() or load_checkpoint() --> populated SolutionState
+    |
+    v
+run_time_loop():
+    |
+    +---> [each step] solver modifies SolutionState in-place
+    |         |
+    |         +---> reconstruct(): SolutionState --> face PrimitiveStates
+    |         +---> computeFluxDirect(): face states --> RiemannFlux
+    |         +---> RK update: RiemannFlux --> updated SolutionState
+    |
+    +---> [at intervals] vtk_session_write(): SolutionState --> .vtr/.pvtr/.pvd files
+    +---> [at intervals] write_checkpoint(): SolutionState --> binary checkpoint
+```
+
 ## License
 
 See [LICENSE](LICENSE) for details.
