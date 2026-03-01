@@ -276,6 +276,7 @@ TimeLoopParams time_loop_params_defaults(void) {
     p.acousticDtCtx = NULL;
     p.checkpoint = 0;
     p.startTime = 0.0;
+    p.restarting = 0;
     return p;
 }
 
@@ -289,8 +290,10 @@ void run_time_loop(
     void* stepCtx,
     const TimeLoopParams* params)
 {
-    /* Write initial VTK */
-    vtk_session_write(vtk, state, params->startTime);
+    /* Write initial VTK (skip on restart — already written before checkpoint) */
+    if (!params->restarting) {
+        vtk_session_write(vtk, state, params->startTime);
+    }
 
     if (params->printInterval > 0) {
         std::ostringstream oss;
@@ -332,6 +335,7 @@ void run_time_loop(
         wallTotal += stepWall;
 
         time += dt;
+        config->time = time;
         config->step++;
 
         if (time >= nextOutput - 1e-12 * params->outputInterval) {

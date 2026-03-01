@@ -25,7 +25,8 @@ void vtk_session_init(struct VTKSession* s,
                       const struct RectilinearMesh* mesh,
                       const struct SimulationConfig* config,
                       const char* dir,
-                      enum VTKFormat format);
+                      enum VTKFormat format,
+                      int restarting);
 
 /* Write current state at the given time. Collective in MPI mode. */
 void vtk_session_write(struct VTKSession* s,

@@ -8,6 +8,27 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include <filesystem>
+
+/* Scan the VTK output directory for existing snapshot_N directories and
+   return the next file number (max N + 1), or 0 if none exist. */
+static int find_next_file_num(const char* dir)
+{
+    int maxNum = -1;
+    namespace fs = std::filesystem;
+    if (!fs::is_directory(dir)) return 0;
+
+    for (auto& entry : fs::directory_iterator(dir)) {
+        if (!entry.is_directory()) continue;
+        std::string name = entry.path().filename().string();
+        const char* prefix = "snapshot_";
+        if (name.rfind(prefix, 0) == 0) {
+            int num = std::atoi(name.c_str() + std::strlen(prefix));
+            if (num > maxNum) maxNum = num;
+        }
+    }
+    return maxNum + 1;
+}
 
 void vtk_session_init(VTKSession* s,
                       Runtime* rt,
@@ -15,23 +36,30 @@ void vtk_session_init(VTKSession* s,
                       const RectilinearMesh* mesh,
                       const SimulationConfig* config,
                       const char* dir,
-                      VTKFormat format)
+                      VTKFormat format,
+                      int restarting)
 {
     std::strncpy(s->baseName, baseName, sizeof(s->baseName) - 1);
     s->baseName[sizeof(s->baseName) - 1] = '\0';
     std::strncpy(s->dir, dir ? dir : "VTK", sizeof(s->dir) - 1);
     s->dir[sizeof(s->dir) - 1] = '\0';
     s->format = format;
-    s->fileNum = 0;
     s->rt = rt;
     s->mesh = mesh;
     s->config = config;
 
     std::memcpy(s->localExtent, rt->mpiCtx->localExtent, 6 * sizeof(int));
 
-    if (rt->rank == 0) {
-        std::string pvdPath = std::string(s->dir) + "/" + s->baseName + ".pvd";
-        vtk_write_pvd(pvdPath.c_str(), 'w', 0.0, NULL);
+    if (restarting) {
+        /* Continue numbering from existing snapshots */
+        s->fileNum = find_next_file_num(s->dir);
+        /* Don't touch the existing PVD file — new entries will be appended */
+    } else {
+        s->fileNum = 0;
+        if (rt->rank == 0) {
+            std::string pvdPath = std::string(s->dir) + "/" + s->baseName + ".pvd";
+            vtk_write_pvd(pvdPath.c_str(), 'w', 0.0, NULL);
+        }
     }
 }
 

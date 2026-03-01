@@ -96,6 +96,7 @@ struct TimeLoopParams {
     void* acousticDtCtx;
     int checkpoint;
     double startTime;
+    int restarting;
 };
 
 struct TimeLoopParams time_loop_params_defaults(void);

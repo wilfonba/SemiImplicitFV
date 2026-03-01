@@ -145,3 +145,5 @@ __pycache__
 *.nsys-rep
 *.txt
 .sifv_toggles
+*.err
+*.out

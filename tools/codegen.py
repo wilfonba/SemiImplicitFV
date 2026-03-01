@@ -694,7 +694,7 @@ int main(int argc, char** argv) {{
 {smooth_code if not restart_file else ""}
 
     VTKSession vtk;
-    vtk_session_init(&vtk, &rt, "{base}", &mesh, &config, "{vtk_dir}", {vtk_format_enum});
+    vtk_session_init(&vtk, &rt, "{base}", &mesh, &config, "{vtk_dir}", {vtk_format_enum}, 0);
 
     TimeLoopParams tlp = time_loop_params_defaults();
     tlp.endTime = {end_time};

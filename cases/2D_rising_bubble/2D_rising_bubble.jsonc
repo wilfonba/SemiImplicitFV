@@ -8,7 +8,12 @@
         "reconOrder": "WENO5",
         "semiImplicit": true,
         //"explicitParams": { "cfl": 0.5 },
-        "semiImplicitParams": { "cfl": 0.5, "maxDt": 1e-3, "maxPressureIters": 200, "pressureTol": 1e-6 },
+        "semiImplicitParams": {
+            "cfl": 0.8,
+            "maxDt": 1e-3,
+            "maxPressureIters": 200,
+            "pressureTol": 1e-10
+        },
         "multiPhaseParams": {
             "nPhases": 2,
             "phases": [
@@ -25,8 +30,8 @@
     "riemannSolver": "HLLC",
     "pressureSolver": "PETSc",
     "mesh": {
-        "nx": 200, "xMin": 0.0, "xMax": 1.0,
-        "ny": 400, "yMin": 0.0, "yMax": 2.0
+        "nx": 400, "xMin": 0.0, "xMax": 1.0,
+        "ny": 800, "yMin": 0.0, "yMax": 2.0
     },
     "boundaryConditions": {
         "xLow": "SlipWall", "xHigh": "SlipWall",
@@ -37,7 +42,10 @@
         "checkpoint": true
         //"file": "Checkpoint/checkpoint.{rank}.bin"
     },
-    "output": { "baseName": "2D_rising_bubble" },
+    "output": {
+        "baseName": "2D_rising_bubble",
+        "format": "VTKRaw"
+    },
     "initialConditions": {
         // Default: heavy fluid everywhere
         // Hydrostatic pressure: p(y) = pRef + rhoHeavy * |g| * (Ly - y)

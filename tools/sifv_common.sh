@@ -16,11 +16,11 @@ load_toggles() {
     TOGGLE_PETSC=false
     if [[ -f "$TOGGLES_FILE" ]]; then
         local key val
-        while IFS='=' read -r key val; do
+        while IFS='=' read -r key val || [[ -n "$key" ]]; do
             key="${key// /}"
             val="${val// /}"
             case "$key" in
-                petsc) [[ "$val" == "true" ]] && TOGGLE_PETSC=true ;;
+                petsc) if [[ "$val" == "true" ]]; then TOGGLE_PETSC=true; fi ;;
             esac
         done < "$TOGGLES_FILE"
     fi

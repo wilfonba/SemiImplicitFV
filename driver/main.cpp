@@ -274,7 +274,8 @@ int main(int argc, char** argv) {
     /* ---- VTK output ---- */
     VTKSession vtk;
     vtk_session_init(&vtk, &rt, input.outputParams.baseName, &mesh, config,
-                     input.outputParams.directory, input.outputParams.format);
+                     input.outputParams.directory, input.outputParams.format,
+                     restarting);
 
     /* ---- Run time loop ---- */
     TimeLoopParams tlp = time_loop_params_defaults();
@@ -284,6 +285,7 @@ int main(int argc, char** argv) {
     tlp.checkNaN       = input.timeLoopParams.checkNaN;
     tlp.checkpoint     = input.restartParams.checkpoint;
     tlp.startTime      = config->time;
+    tlp.restarting     = restarting;
 
     AcousticDtContext acousticCtx;
     if (useSemiImplicit) {
