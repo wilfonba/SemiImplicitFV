@@ -206,9 +206,9 @@ static void explicit_compute_rhs(ExplicitSolverWork* w,
                     w->rhsRhoE[idxL] -= coeff * flux.energyFlux;
 
                     if (multiPhase) {
-                        double rhoUpw = std::max(state->rho[upwindIdx], 1e-14);
                         for (int ph = 0; ph < nPhases; ++ph) {
-                            double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / rhoUpw) * flux.massFlux;
+                            double aUpw = std::max(state->alpha[ph * tc + upwindIdx], 1e-14);
+                            double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / aUpw) * flux.alphaFlux[ph];
                             w->rhsAlphaRho[ph * n + idxL] -= coeff * alphaRhoFlux;
                         }
                         for (int ph = 0; ph < nPhases; ++ph)
@@ -227,9 +227,9 @@ static void explicit_compute_rhs(ExplicitSolverWork* w,
                     w->rhsRhoE[idxR] += coeff * flux.energyFlux;
 
                     if (multiPhase) {
-                        double rhoUpw = std::max(state->rho[upwindIdx], 1e-14);
                         for (int ph = 0; ph < nPhases; ++ph) {
-                            double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / rhoUpw) * flux.massFlux;
+                            double aUpw = std::max(state->alpha[ph * tc + upwindIdx], 1e-14);
+                            double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / aUpw) * flux.alphaFlux[ph];
                             w->rhsAlphaRho[ph * n + idxR] += coeff * alphaRhoFlux;
                         }
                         for (int ph = 0; ph < nPhases; ++ph)
@@ -269,9 +269,9 @@ static void explicit_compute_rhs(ExplicitSolverWork* w,
                         w->rhsRhoE[idxL] -= coeff * flux.energyFlux;
 
                         if (multiPhase) {
-                            double rhoUpw = std::max(state->rho[upwindIdx], 1e-14);
                             for (int ph = 0; ph < nPhases; ++ph) {
-                                double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / rhoUpw) * flux.massFlux;
+                                double aUpw = std::max(state->alpha[ph * tc + upwindIdx], 1e-14);
+                                double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / aUpw) * flux.alphaFlux[ph];
                                 w->rhsAlphaRho[ph * n + idxL] -= coeff * alphaRhoFlux;
                             }
                             for (int ph = 0; ph < nPhases; ++ph)
@@ -290,9 +290,9 @@ static void explicit_compute_rhs(ExplicitSolverWork* w,
                         w->rhsRhoE[idxR] += coeff * flux.energyFlux;
 
                         if (multiPhase) {
-                            double rhoUpw = std::max(state->rho[upwindIdx], 1e-14);
                             for (int ph = 0; ph < nPhases; ++ph) {
-                                double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / rhoUpw) * flux.massFlux;
+                                double aUpw = std::max(state->alpha[ph * tc + upwindIdx], 1e-14);
+                                double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / aUpw) * flux.alphaFlux[ph];
                                 w->rhsAlphaRho[ph * n + idxR] += coeff * alphaRhoFlux;
                             }
                             for (int ph = 0; ph < nPhases; ++ph)
@@ -333,9 +333,9 @@ static void explicit_compute_rhs(ExplicitSolverWork* w,
                         w->rhsRhoE[idxL] -= coeff * flux.energyFlux;
 
                         if (multiPhase) {
-                            double rhoUpw = std::max(state->rho[upwindIdx], 1e-14);
                             for (int ph = 0; ph < nPhases; ++ph) {
-                                double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / rhoUpw) * flux.massFlux;
+                                double aUpw = std::max(state->alpha[ph * tc + upwindIdx], 1e-14);
+                                double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / aUpw) * flux.alphaFlux[ph];
                                 w->rhsAlphaRho[ph * n + idxL] -= coeff * alphaRhoFlux;
                             }
                             for (int ph = 0; ph < nPhases; ++ph)
@@ -354,9 +354,9 @@ static void explicit_compute_rhs(ExplicitSolverWork* w,
                         w->rhsRhoE[idxR] += coeff * flux.energyFlux;
 
                         if (multiPhase) {
-                            double rhoUpw = std::max(state->rho[upwindIdx], 1e-14);
                             for (int ph = 0; ph < nPhases; ++ph) {
-                                double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / rhoUpw) * flux.massFlux;
+                                double aUpw = std::max(state->alpha[ph * tc + upwindIdx], 1e-14);
+                                double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / aUpw) * flux.alphaFlux[ph];
                                 w->rhsAlphaRho[ph * n + idxR] += coeff * alphaRhoFlux;
                             }
                             for (int ph = 0; ph < nPhases; ++ph)
