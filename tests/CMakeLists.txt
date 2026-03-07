@@ -21,7 +21,7 @@ set(MPI_TEST_ENV "OMPI_MCA_rmaps_base_oversubscribe=1")
 
 # ---- Shared MPI main ----
 add_library(test_main OBJECT test_main.cpp)
-target_link_libraries(test_main PUBLIC gtest MPI::MPI_CXX)
+target_link_libraries(test_main PUBLIC gtest MPI::MPI_CXX SemiImplicitFV)
 
 # ---- Unit tests ----
 add_executable(test_unit
