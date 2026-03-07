@@ -15,9 +15,9 @@ struct BCTestFixture {
     void setup(int nx, BoundaryCondition bcLow, BoundaryCondition bcHigh) {
         config = config_defaults();
         config.dim = 1;
-        config.nGhost = 3;
         config.RKOrder = 1;
         config.reconOrder = WENO5;
+        config_validate(&config);
 
         mesh_init_uniform(&mesh, &config, nx, 0.0, 1.0, 1, 0.0, 1.0, 1, 0.0, 1.0);
         mesh_set_bc(&mesh, XLOW, bcLow);

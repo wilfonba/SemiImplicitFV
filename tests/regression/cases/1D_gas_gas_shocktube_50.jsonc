@@ -2,7 +2,6 @@
     // 1D Gas-Gas Shock Tube — two ideal gases, 50 steps for regression testing
     "config": {
         "dim": 1,
-        "nGhost": 4,
         "RKOrder": 3,
         "reconOrder": "WENO5",
         "explicitParams": { "constDt": 3e-3 },

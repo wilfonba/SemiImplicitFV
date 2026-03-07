@@ -229,7 +229,6 @@ static InputData parseJson(const json& root) {
         SimulationConfig* cfg = &data.config;
 
         cfg->dim       = jget<int>(c, "dim", cfg->dim);
-        cfg->nGhost    = jget<int>(c, "nGhost", cfg->nGhost);
         cfg->RKOrder   = jget<int>(c, "RKOrder", cfg->RKOrder);
         cfg->useIGR    = jget<bool>(c, "useIGR", cfg->useIGR != 0) ? 1 : 0;
         cfg->semiImplicit = jget<bool>(c, "semiImplicit", cfg->semiImplicit != 0) ? 1 : 0;
@@ -307,6 +306,12 @@ static InputData parseJson(const json& root) {
             const auto& st = c["surfaceTensionParams"];
             cfg->surfaceTensionParams.sigma        = jget<double>(st, "sigma", cfg->surfaceTensionParams.sigma);
             cfg->surfaceTensionParams.epsGradAlpha = jget<double>(st, "epsGradAlpha", cfg->surfaceTensionParams.epsGradAlpha);
+        }
+
+        if (c.contains("mthincParams")) {
+            const auto& mt = c["mthincParams"];
+            cfg->mthincParams.enabled = jget<bool>(mt, "enabled", cfg->mthincParams.enabled != 0) ? 1 : 0;
+            cfg->mthincParams.beta    = jget<double>(mt, "beta", cfg->mthincParams.beta);
         }
     }
 

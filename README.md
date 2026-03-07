@@ -20,6 +20,7 @@ A finite volume solver for the compressible Euler equations on rectilinear meshe
 - **VTK output** — `.vtr` (serial), `.pvtr` (parallel), and `.pvd` (time series) for ParaView; ASCII or binary (appended raw) format
 - **PETSc pressure solver** — Optional CG + GAMG algebraic multigrid for mesh-independent semi-implicit pressure convergence
 - **NVTX profiling** — Nsight Systems integration with NVTX push/pop macros for performance analysis
+- **MTHINC interface sharpening** — Multi-dimensional Tangent of Hyperbola for INterface Capturing for sharp volume-fraction reconstruction at phase boundaries
 - **GPU-ready architecture** — C-style structs, free functions, enum+switch dispatch, flat arrays — no virtual dispatch, no heap allocations in hot loops
 
 ## Convergence
@@ -48,17 +49,41 @@ Output VTK files are written to a `VTK/` directory inside the case folder (e.g. 
 The `sifv.sh` script handles configuring, building, and running automatically. There is no need to invoke CMake or Make directly.
 
 ```bash
+./sifv.sh build                              # Build the sifv driver
 ./sifv.sh run 1D_sod_shocktube              # Build and run (1 MPI rank)
 ./sifv.sh run -n 4 2D_riemann               # Run with 4 MPI ranks
+./sifv.sh run -N 2 -n 4 2D_riemann          # 2 nodes, 4 ranks per node
 ./sifv.sh run --debug 1D_advection           # Debug build (enables AddressSanitizer)
 ./sifv.sh run --build-only 2D_riemann        # Build without running
 ./sifv.sh run --case-optimization 1D_sod     # Codegen: compile JSON into optimized C++
+./sifv.sh run --compiled 1D_advection_E      # Build and run a compiled C++ case
 ./sifv.sh run --petsc 3D_taylor_green_vortex # Enable PETSc (saved across runs)
 ./sifv.sh run --no-petsc <case>              # Disable PETSc (saved across runs)
 ./sifv.sh run --nsys 2D_riemann              # Profile with Nsight Systems (NVTX)
 ./sifv.sh run --srun -n 4 <case>             # Use srun instead of mpirun (Slurm)
 ./sifv.sh run -o <dir> <case>                # Override output directory
+./sifv.sh run /path/to/input.jsonc           # Run an arbitrary JSON file
 ./sifv.sh list                               # List available cases
+source ./sifv.sh load -c phoenix             # Load modules for a compute environment
+```
+
+### Batch Job Submission
+
+Submit jobs to a scheduler (e.g. Slurm) instead of running interactively:
+
+```bash
+./sifv.sh run --batch -N 2 -n 24 -a MY_ACCOUNT -w 02:00:00 2D_rising_bubble
+./sifv.sh run --batch -N 1 -n 4 -a MY_ACCOUNT -w 00:30:00 -p debug 1D_sod_shocktube
+```
+
+Batch submission uses job templates from `tools/templates/` and compute environment definitions from `tools/compute.conf`. The template is auto-detected from the available scheduler commands, or specified with `--template <name>`.
+
+### Compute Environments
+
+For HPC clusters, use `source ./sifv.sh load -c <name>` to load the required modules. Environments are defined in `tools/compute.conf`:
+
+```bash
+source ./sifv.sh load -c phoenix    # Load modules for Georgia Tech Phoenix cluster
 ```
 
 ### Requirements
@@ -129,6 +154,8 @@ Cases are defined as JSON files in `cases/<name>/<name>.jsonc`. This is the prim
 | `initialConditions` | Yes | Default state and geometry-based patches |
 | `smoothing` | No | Post-initialization field smoothing iterations |
 | `restart` | No | Checkpoint/restart settings |
+
+The `config` section supports an optional `"mthincParams"` object for MTHINC interface sharpening (multi-phase only).
 
 **Initial condition patches** support `"box"`, `"sphere"`, `"plane"`, and `"analytic"` geometry types. Patch states inherit from the default state — only specify fields that differ.
 
@@ -226,6 +253,22 @@ Capillary stress tensor (Schmidmayer et al. 2017) for multi-phase flows:
 }
 ```
 
+### MTHINC Parameters (`mthincParams`)
+
+Multi-dimensional Tangent of Hyperbola for INterface Capturing. Sharpens volume-fraction reconstruction at phase boundaries in multi-phase flows. Requires `nPhases >= 2` and at least 2 ghost cells (automatically enforced).
+
+```jsonc
+"mthincParams": {
+    "enabled": true,
+    "beta": 2.3
+}
+```
+
+| Field | Default | Description |
+|---|---|---|
+| `enabled` | false | Enable MTHINC interface sharpening |
+| `beta` | 2.3 | Sharpness parameter (must be > 0; higher = sharper interface) |
+
 ### IGR Parameters (`igrParams`)
 
 | Field | Description |
@@ -294,10 +337,12 @@ Compiled cases use the C-style API directly — call `config_defaults()` to init
 
 ## MPI Execution
 
-Run with multiple MPI ranks using the `-n` flag:
+Run with multiple MPI ranks using the `-n` flag (ranks per node) and `-N` flag (number of nodes):
 
 ```bash
-./sifv.sh run -n 4 2D_riemann
+./sifv.sh run -n 4 2D_riemann             # 4 ranks on 1 node
+./sifv.sh run -N 2 -n 4 2D_riemann        # 8 total ranks (2 nodes x 4 ppn)
+./sifv.sh run --srun -N 2 -n 4 <case>     # Use srun instead of mpirun (Slurm)
 ```
 
 The `Runtime` struct and associated free functions handle domain decomposition, halo exchange, and parallel VTK output automatically. Each rank writes its own `.vtr` piece file, and rank 0 writes the `.pvtr` and `.pvd` metadata files.
@@ -384,7 +429,17 @@ SemiImplicitFV/
   src/                     All source files (.cpp)
   cases/                   JSON case definitions (one directory per case)
   tests/                   GoogleTest suite (unit / integration / regression)
-  tools/codegen.py         JSON -> standalone C++ code generator
+  tools/
+    codegen.py             JSON -> standalone C++ code generator
+    sifv_common.sh         Shared variables and helpers for sifv.sh
+    sifv_build.sh          Build command implementation
+    sifv_run.sh            Run command implementation
+    sifv_test.sh           Test command implementation
+    sifv_list.sh           List command implementation
+    sifv_load.sh           Module loading for compute environments
+    sifv_batch.sh          Batch job submission (template rendering + sbatch)
+    compute.conf           Compute environment definitions (modules, submit commands)
+    templates/             Batch job script templates (e.g. phoenix.sh)
 ```
 
 ### Call Graph

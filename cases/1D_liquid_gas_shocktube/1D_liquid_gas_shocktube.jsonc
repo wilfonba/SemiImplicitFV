@@ -2,7 +2,6 @@
     // 1D Liquid-Gas Shock Tube — two-phase stiffened gas / ideal gas
     "config": {
         "dim": 1,
-        "nGhost": 3,
         "RKOrder": 3,
         "reconOrder": "WENO5",
         "explicitParams": { "cfl": 0.3 },

@@ -3,7 +3,6 @@
     // Matches examples/2D_quasi1D_sod
     "config": {
         "dim": 2,
-        "nGhost": 4,
         "RKOrder": 3,
         "reconOrder": "UPWIND5",
         "useIGR": true,

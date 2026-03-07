@@ -28,58 +28,9 @@ find_package(MPI REQUIRED)
 
 # PETSc (optional, built from source via ExternalProject)
 if(ENABLE_PETSC)
-    include(ExternalProject)
-
     set(PETSC_INSTALL_DIR ${CMAKE_BINARY_DIR}/petsc-install)
 
-    # Find MPI compiler wrappers for PETSc configure
-    find_program(MPI_CC_WRAPPER NAMES mpicc HINTS ENV PATH)
-    find_program(MPI_CXX_WRAPPER NAMES mpicxx mpic++ mpiCC HINTS ENV PATH)
-    if(NOT MPI_CC_WRAPPER)
-        set(MPI_CC_WRAPPER "mpicc")
-    endif()
-    if(NOT MPI_CXX_WRAPPER)
-        set(MPI_CXX_WRAPPER "mpicxx")
-    endif()
-
-    ExternalProject_Add(petsc_external
-        GIT_REPOSITORY https://gitlab.com/petsc/petsc.git
-        GIT_TAG v3.22.2
-        GIT_SHALLOW TRUE
-        PREFIX ${CMAKE_BINARY_DIR}/petsc-prefix
-        CONFIGURE_COMMAND ${CMAKE_BINARY_DIR}/petsc-prefix/src/petsc_external/configure
-            --prefix=${PETSC_INSTALL_DIR}
-            --with-cc=${MPI_CC_WRAPPER}
-            --with-cxx=${MPI_CXX_WRAPPER}
-            --with-fc=0
-            --with-x=0
-            --with-debugging=0
-            --with-shared-libraries=0
-            --download-f2cblaslapack=yes
-            "COPTFLAGS=-O3"
-            "CXXOPTFLAGS=-O3"
-        BUILD_COMMAND ${CMAKE_COMMAND} -E env --unset=MAKEFLAGS
-            make PETSC_DIR=<SOURCE_DIR> PETSC_ARCH=arch-linux-c-opt all
-        INSTALL_COMMAND ${CMAKE_COMMAND} -E env --unset=MAKEFLAGS
-            make PETSC_DIR=<SOURCE_DIR> PETSC_ARCH=arch-linux-c-opt install
-        BUILD_IN_SOURCE TRUE
-        LOG_CONFIGURE TRUE
-        LOG_BUILD TRUE
-        LOG_INSTALL TRUE
-    )
-
-    # Create the install directory so CMake doesn't complain about non-existent paths
-    # at configure time (PETSc is built later during the build step)
-    file(MAKE_DIRECTORY ${PETSC_INSTALL_DIR}/include)
-
-    # Create imported target for PETSc
-    add_library(PETSc::PETSc STATIC IMPORTED)
-    set_target_properties(PETSc::PETSc PROPERTIES
-        IMPORTED_LOCATION ${PETSC_INSTALL_DIR}/lib/libpetsc.a
-        INTERFACE_INCLUDE_DIRECTORIES ${PETSC_INSTALL_DIR}/include
-    )
-
-    # PETSc static lib dependencies
+    # PETSc static lib dependencies (needed whether building or reusing)
     find_library(DL_LIBRARY dl)
     find_library(M_LIBRARY m)
     find_library(RT_LIBRARY rt)
@@ -93,6 +44,63 @@ if(ENABLE_PETSC)
     if(RT_LIBRARY)
         list(APPEND PETSC_EXTRA_LIBS ${RT_LIBRARY})
     endif()
+
+    # Skip the slow ExternalProject if PETSc is already installed
+    if(EXISTS ${PETSC_INSTALL_DIR}/lib/libpetsc.a)
+        message(STATUS "PETSc: using existing install at ${PETSC_INSTALL_DIR}")
+    else()
+        message(STATUS "PETSc: building from source (first time)...")
+        include(ExternalProject)
+
+        # Find MPI compiler wrappers for PETSc configure
+        find_program(MPI_CC_WRAPPER NAMES mpicc HINTS ENV PATH)
+        find_program(MPI_CXX_WRAPPER NAMES mpicxx mpic++ mpiCC HINTS ENV PATH)
+        if(NOT MPI_CC_WRAPPER)
+            set(MPI_CC_WRAPPER "mpicc")
+        endif()
+        if(NOT MPI_CXX_WRAPPER)
+            set(MPI_CXX_WRAPPER "mpicxx")
+        endif()
+
+        ExternalProject_Add(petsc_external
+            GIT_REPOSITORY https://gitlab.com/petsc/petsc.git
+            GIT_TAG v3.22.2
+            GIT_SHALLOW TRUE
+            PREFIX ${CMAKE_BINARY_DIR}/petsc-prefix
+            CONFIGURE_COMMAND ${CMAKE_BINARY_DIR}/petsc-prefix/src/petsc_external/configure
+                --prefix=${PETSC_INSTALL_DIR}
+                --with-cc=${MPI_CC_WRAPPER}
+                --with-cxx=${MPI_CXX_WRAPPER}
+                --with-fc=0
+                --with-x=0
+                --with-debugging=0
+                --with-shared-libraries=0
+                --download-f2cblaslapack=yes
+                "COPTFLAGS=-O3"
+                "CXXOPTFLAGS=-O3"
+            BUILD_COMMAND ${CMAKE_COMMAND} -E env --unset=MAKEFLAGS
+                make PETSC_DIR=<SOURCE_DIR> PETSC_ARCH=arch-linux-c-opt all
+            INSTALL_COMMAND ${CMAKE_COMMAND} -E env --unset=MAKEFLAGS
+                make PETSC_DIR=<SOURCE_DIR> PETSC_ARCH=arch-linux-c-opt install
+            BUILD_IN_SOURCE TRUE
+            LOG_CONFIGURE TRUE
+            LOG_BUILD TRUE
+            LOG_INSTALL TRUE
+        )
+
+        # Create the install directory so CMake doesn't complain about non-existent paths
+        # at configure time (PETSc is built later during the build step)
+        file(MAKE_DIRECTORY ${PETSC_INSTALL_DIR}/include)
+
+        set(PETSC_NEEDS_BUILD TRUE)
+    endif()
+
+    # Create imported target for PETSc
+    add_library(PETSc::PETSc STATIC IMPORTED)
+    set_target_properties(PETSc::PETSc PROPERTIES
+        IMPORTED_LOCATION ${PETSC_INSTALL_DIR}/lib/libpetsc.a
+        INTERFACE_INCLUDE_DIRECTORIES ${PETSC_INSTALL_DIR}/include
+    )
 
     # f2cblaslapack is downloaded by PETSc configure
     set_target_properties(PETSc::PETSc PROPERTIES
@@ -146,7 +154,9 @@ if(ENABLE_PETSC)
     target_compile_definitions(SemiImplicitFV PUBLIC SIFV_HAS_PETSC)
     target_link_libraries(SemiImplicitFV PUBLIC PETSc::PETSc)
     target_include_directories(SemiImplicitFV PUBLIC ${PETSC_INSTALL_DIR}/include)
-    add_dependencies(SemiImplicitFV petsc_external)
+    if(PETSC_NEEDS_BUILD)
+        add_dependencies(SemiImplicitFV petsc_external)
+    endif()
 endif()
 
 # NVTX integration (NVTX3 is header-only in modern CUDA toolkits)

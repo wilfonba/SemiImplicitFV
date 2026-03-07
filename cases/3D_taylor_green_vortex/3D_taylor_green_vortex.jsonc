@@ -16,7 +16,6 @@
     //   p   = p0 + (rho0/16) * (cos(2x) + cos(2y)) * (cos(2z) + 2)
     "config": {
         "dim": 3,
-        "nGhost": 3,
         "RKOrder": 3,
         "reconOrder": "WENO5",
         "semiImplicit": false,

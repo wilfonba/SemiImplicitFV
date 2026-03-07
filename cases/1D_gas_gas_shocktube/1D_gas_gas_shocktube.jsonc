@@ -3,7 +3,6 @@
     // Matches examples/1D_gas_gas_shocktube
     "config": {
         "dim": 1,
-        "nGhost": 4,
         "RKOrder": 3,
         "reconOrder": "WENO5",
         "explicitParams": { "cfl": 0.5, "maxDt": 1e-2 },

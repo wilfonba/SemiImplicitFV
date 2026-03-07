@@ -2,7 +2,6 @@
     // 1D Sod Shock Tube — 50 steps for regression testing
     "config": {
         "dim": 1,
-        "nGhost": 4,
         "RKOrder": 3,
         "reconOrder": "UPWIND3",
         "useIGR": true,

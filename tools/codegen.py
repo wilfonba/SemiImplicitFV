@@ -169,7 +169,7 @@ def generate_config(cfg):
     lines.append("    SimulationConfig config = config_defaults();")
 
     simple_fields = {
-        "dim": "dim", "nGhost": "nGhost", "RKOrder": "RKOrder",
+        "dim": "dim", "RKOrder": "RKOrder",
         "wenoEps": "wenoEps",
     }
     for jkey, ckey in simple_fields.items():

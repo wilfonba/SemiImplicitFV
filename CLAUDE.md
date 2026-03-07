@@ -4,12 +4,15 @@ Finite volume solver for compressible Euler equations on rectilinear meshes (1D/
 
 ## Build and Run
 
-Use `sifv.sh` to configure, build, and run cases or tests automatically:
+Use `sifv.sh` to configure, build, and run cases or tests automatically. The script is split into subcommands (`build`, `run`, `test`, `load`, `list`) implemented in `tools/sifv_*.sh`.
 
 ```bash
+./sifv.sh build                              # Build the sifv driver
 ./sifv.sh run <case>                         # Build and run a JSON case
+./sifv.sh run /path/to/input.jsonc           # Run an arbitrary JSON file
 ./sifv.sh run --debug <case>                 # Debug build (AddressSanitizer)
-./sifv.sh run -n 4 <case>                    # Run with 4 MPI ranks
+./sifv.sh run -n 4 <case>                    # Run with 4 MPI ranks per node
+./sifv.sh run -N 2 -n 4 <case>              # 2 nodes, 4 ranks per node
 ./sifv.sh run --case-optimization <case>     # Codegen optimized build
 ./sifv.sh run --compiled <case>              # Build compiled C++ case
 ./sifv.sh run --petsc <case>                 # Enable PETSc (saved across runs)
@@ -17,7 +20,9 @@ Use `sifv.sh` to configure, build, and run cases or tests automatically:
 ./sifv.sh run --nsys <case>                  # Profile with Nsight Systems (NVTX)
 ./sifv.sh run --srun <case>                  # Use srun instead of mpirun (Slurm)
 ./sifv.sh run -o <dir> <case>               # Override output directory
+./sifv.sh run --batch -N 2 -n 4 -a ACCT -w 01:00:00 <case>  # Submit batch job
 ./sifv.sh list                               # List available cases
+source ./sifv.sh load -c phoenix             # Load modules for a compute environment
 ./sifv.sh test                               # Run all tests
 ./sifv.sh test unit                          # Run unit tests only
 ./sifv.sh test -j 8                          # Parallel build and test execution
@@ -40,7 +45,7 @@ make -j
 - `driver/` — generic JSON driver (`sifv`), the main entry point for running cases
 - `cases/` — case definitions as JSON/JSONC input files (the primary way to define simulations)
 - `tests/` — three-tier test suite (unit, integration, regression) using GoogleTest + CTest
-- `tools/` — code generation (`codegen.py`: JSON → optimized C++) and utilities
+- `tools/` — code generation (`codegen.py`), `sifv_*.sh` subcommand scripts, `compute.conf` (compute environments), `templates/` (batch job templates)
 - `.github/workflows/` — GitHub Actions CI pipeline
 
 ## Case System
@@ -61,6 +66,8 @@ Top-level sections: `config`, `eos`, `riemannSolver`, `pressureSolver`, `mesh`, 
 The `pressureSolver` key selects the pressure solver for semi-implicit runs: `"GaussSeidel"` (default), `"Jacobi"`, or `"PETSc"` (CG + GAMG algebraic multigrid via PETSc; requires `--petsc` build flag). The `--petsc` flag is a stored toggle — once enabled, it persists across runs until disabled with `--no-petsc`.
 
 The `output` section supports a `"format"` field: `"VTKText"` (default, ASCII) or `"VTKRaw"` (appended raw binary, compact and fast).
+
+The `config` section supports an optional `"mthincParams"` object for MTHINC interface sharpening (multi-phase only): `{"enabled": true, "beta": 2.3}`.
 
 Initial condition patches support `"box"`, `"sphere"`, `"plane"`, and `"analytic"` geometry types. Patch states inherit from the default state.
 
@@ -137,8 +144,8 @@ Three-tier test suite using GoogleTest + CTest. All tests run through `mpirun` s
 ./sifv.sh test -o TaylorGreenVortex3D --generate  # Regenerate one reference
 ```
 
-- **Unit tests** (`tests/unit/`): Individual functions — EOS, Riemann solvers, reconstruction, mixture EOS, IGR
-- **Integration tests** (`tests/integration/`): Multi-module — BCs, state conversion, explicit stepping, pressure solvers
+- **Unit tests** (`tests/unit/`): Individual functions — EOS, Riemann solvers, reconstruction, mixture EOS, IGR, MTHINC
+- **Integration tests** (`tests/integration/`): Multi-module — BCs, state conversion, explicit stepping, pressure solvers, MTHINC with time stepping
 - **Regression tests** (`tests/regression/`): Full 50-step simulations compared pointwise against committed reference data at both np=1 and np=4. Tolerance: 1e-8. Cases are listed in `REGRESSION_CASES` in `tests/CMakeLists.txt`.
 
 CI runs all tiers on every push/PR to master via `.github/workflows/tests.yml`.
@@ -159,13 +166,13 @@ The codebase uses C-style architecture: plain C structs, free functions, and enu
 
 **State** (`State.hpp`): Core data types — `ConservativeState`, `PrimitiveState`. Defines `MAX_PHASES` (8). All use plain `double` arrays (e.g. `double u[3]`, `double alpha[MAX_PHASES]`), no `std::array`.
 
-**SimulationConfig** (`SimulationConfig.hpp/cpp`): All simulation parameters in a single struct. Sub-structs: `ExplicitParams`, `SemiImplicitParams`, `IGRParams`, `MultiPhaseParams`, `BodyForceParams`, `ViscousParams`, `SurfaceTensionParams`. Fixed-size arrays (`PhaseEOS phases[MAX_PHASES]`). Free functions: `config_defaults()`, `config_validate()`, `config_is_multi_phase()`, `config_has_viscosity()`, `config_required_ghost_cells()`.
+**SimulationConfig** (`SimulationConfig.hpp/cpp`): All simulation parameters in a single struct. Sub-structs: `ExplicitParams`, `SemiImplicitParams`, `IGRParams`, `MultiPhaseParams`, `BodyForceParams`, `ViscousParams`, `SurfaceTensionParams`, `MTHINCParams`. Fixed-size arrays (`PhaseEOS phases[MAX_PHASES]`). Free functions: `config_defaults()`, `config_validate()`, `config_is_multi_phase()`, `config_has_viscosity()`, `config_required_ghost_cells()`.
 
 **EOS** (`EquationOfState.hpp/cpp`): Unified module replacing the old `IdealGasEOS`/`StiffenedGasEOS` class hierarchy. `enum EOSType { EOS_IDEAL_GAS, EOS_STIFFENED_GAS }`. `struct EOSData` with type tag. Free functions: `eos_pressure()`, `eos_temperature()`, `eos_sound_speed()`, `eos_internal_energy()`, `eos_total_energy()`, `eos_to_primitive()`, `eos_to_conservative()`.
 
 **Riemann solvers** (`RiemannSolver.hpp/cpp`): Unified module replacing `LFSolver`/`RusanovSolver`/`HLLCSolver`. `enum RiemannSolverType { RS_LF, RS_RUSANOV, RS_HLLC }`. `struct RiemannFlux`, `struct FluxConfig`. Free functions `computeLFFlux()`, `computeRusanovFlux()`, `computeHLLCFlux()` dispatched via `computeFluxDirect()`.
 
-**Reconstruction** (`Reconstruction.hpp/cpp`): `struct ReconstructorData` with pre-allocated `PrimitiveState*` face arrays. Free functions: `reconstructor_init()/_free()`, `reconstruct()`. `enum ReconstructionOrder { WENO1, WENO3, WENO5, UPWIND1, UPWIND3, UPWIND5 }`.
+**Reconstruction** (`Reconstruction.hpp/cpp`): `struct ReconstructorData` with pre-allocated `PrimitiveState*` face arrays. Free functions: `reconstructor_init()/_free()`, `reconstructor_allocate()`, `reconstruct()`. Inline face accessors: `x_face_index()`, `x_face_left()`. `enum ReconstructionOrder { WENO1, WENO3, WENO5, UPWIND1, UPWIND3, UPWIND5 }`. Includes MTHINC (Multi-dimensional Tangent of Hyperbola for INterface Capturing) for sharp volume-fraction reconstruction at multi-phase interfaces — applied as a post-pass over alpha face values after standard reconstruction.
 
 **SolutionState** (`SolutionState.hpp/cpp`): Flat `double*` arrays for all fields. Multi-phase uses flat arrays with stride: `alpha[phase * totalCells + cell]`. Free functions: `solution_state_init()/_free()`, `state_get_conservative()`, `state_set_conservative()`, `state_get_primitive()`, `state_set_primitive()`, `state_cons_to_prim()`, `state_prim_to_cons()`.
 
@@ -218,6 +225,7 @@ All simulation parameters live in `SimulationConfig` (see `include/SimulationCon
 - `BodyForceParams`: a[3], b[3], c[3] — per-dimension acceleration: `a + b * cos(c * t + d)`
 - `ViscousParams`: mu, phaseMu[MAX_PHASES]
 - `SurfaceTensionParams`: sigma, epsGradAlpha
+- `MTHINCParams`: enabled (int, 0/1), beta (sharpness parameter, default 2.3) — requires multi-phase, nGhost >= 2
 - `RestartParams` (in `InputData`): file, checkpoint
 
 ## GPU Readiness

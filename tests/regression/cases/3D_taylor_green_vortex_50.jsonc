@@ -3,7 +3,6 @@
     // Coarse 40x40x40 mesh, 50 steps with fixed dt
     "config": {
         "dim": 3,
-        "nGhost": 3,
         "RKOrder": 3,
         "reconOrder": "WENO5",
         "semiImplicit": false,

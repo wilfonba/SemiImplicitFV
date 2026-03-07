@@ -2,7 +2,6 @@
     // 2D Isentropic Vortex — 50 steps on small mesh for regression testing
     "config": {
         "dim": 2,
-        "nGhost": 3,
         "RKOrder": 3,
         "reconOrder": "WENO3",
         "semiImplicit": true,

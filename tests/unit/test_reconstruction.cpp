@@ -17,12 +17,12 @@ struct ReconTestFixture {
     EOSData eos;
     ReconstructorData recon;
 
-    void setup(int nx, int nGhost, ReconstructionOrder order) {
+    void setup(int nx, ReconstructionOrder order) {
         config = config_defaults();
         config.dim = 1;
-        config.nGhost = nGhost;
         config.RKOrder = 1;
         config.reconOrder = order;
+        config_validate(&config);
 
         mesh_init_uniform(&mesh, &config, nx, 0.0, 1.0, 1, 0.0, 1.0, 1, 0.0, 1.0);
 
@@ -70,7 +70,7 @@ struct ReconTestFixture {
 
 TEST(Reconstruction, WENO5_ConstantField) {
     ReconTestFixture f;
-    f.setup(20, 3, WENO5);
+    f.setup(20, WENO5);
     f.fillConstant(2.0);
 
     reconstruct(&f.recon, &f.config, &f.mesh, &f.state);
@@ -88,7 +88,7 @@ TEST(Reconstruction, WENO5_ConstantField) {
 
 TEST(Reconstruction, WENO3_ConstantField) {
     ReconTestFixture f;
-    f.setup(20, 2, WENO3);
+    f.setup(20, WENO3);
     f.fillConstant(3.0);
 
     reconstruct(&f.recon, &f.config, &f.mesh, &f.state);
@@ -103,7 +103,7 @@ TEST(Reconstruction, WENO3_ConstantField) {
 
 TEST(Reconstruction, UPWIND1_ConstantField) {
     ReconTestFixture f;
-    f.setup(20, 1, UPWIND1);
+    f.setup(20, UPWIND1);
     f.fillConstant(5.0);
 
     reconstruct(&f.recon, &f.config, &f.mesh, &f.state);
@@ -120,7 +120,7 @@ TEST(Reconstruction, UPWIND1_ConstantField) {
 
 TEST(Reconstruction, WENO5_LinearField) {
     ReconTestFixture f;
-    f.setup(20, 3, WENO5);
+    f.setup(20, WENO5);
     f.fillLinear(1.0, 2.0);  /* rho = 1 + 2*x */
 
     reconstruct(&f.recon, &f.config, &f.mesh, &f.state);
@@ -141,7 +141,7 @@ TEST(Reconstruction, WENO5_LinearField) {
 
 TEST(Reconstruction, UPWIND5_LinearField) {
     ReconTestFixture f;
-    f.setup(20, 3, UPWIND5);
+    f.setup(20, UPWIND5);
     f.fillLinear(1.0, 2.0);
 
     reconstruct(&f.recon, &f.config, &f.mesh, &f.state);
@@ -161,7 +161,7 @@ TEST(Reconstruction, UPWIND5_LinearField) {
 
 TEST(Reconstruction, UPWIND3_LinearField) {
     ReconTestFixture f;
-    f.setup(20, 2, UPWIND3);
+    f.setup(20, UPWIND3);
     f.fillLinear(1.0, 2.0);
 
     reconstruct(&f.recon, &f.config, &f.mesh, &f.state);

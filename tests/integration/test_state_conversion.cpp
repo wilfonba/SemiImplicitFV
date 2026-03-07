@@ -9,8 +9,8 @@
 TEST(StateConversion, ConsToPrimRoundTrip_1D) {
     SimulationConfig config = config_defaults();
     config.dim = 1;
-    config.nGhost = 3;
     config.RKOrder = 1;
+    config_validate(&config);
 
     RectilinearMesh mesh;
     mesh_init_uniform(&mesh, &config, 16, 0.0, 1.0, 1, 0.0, 1.0, 1, 0.0, 1.0);
@@ -61,8 +61,8 @@ TEST(StateConversion, ConsToPrimRoundTrip_1D) {
 TEST(StateConversion, ConsToPrimRoundTrip_2D) {
     SimulationConfig config = config_defaults();
     config.dim = 2;
-    config.nGhost = 3;
     config.RKOrder = 1;
+    config_validate(&config);
 
     RectilinearMesh mesh;
     mesh_init_uniform(&mesh, &config, 8, 0.0, 1.0, 8, 0.0, 1.0, 1, 0.0, 1.0);

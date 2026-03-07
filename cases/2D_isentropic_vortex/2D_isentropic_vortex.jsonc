@@ -7,7 +7,6 @@
     // pInf = 2/(gamma*Mach^2) = 142.857142857143
     "config": {
         "dim": 2,
-        "nGhost": 3,
         "RKOrder": 3,
         "reconOrder": "WENO3",
         "semiImplicit": true,

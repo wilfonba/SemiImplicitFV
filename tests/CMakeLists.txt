@@ -30,6 +30,7 @@ add_executable(test_unit
     unit/test_reconstruction.cpp
     unit/test_mixture_eos.cpp
     unit/test_igr.cpp
+    unit/test_mthinc.cpp
 )
 target_link_libraries(test_unit PRIVATE test_main gtest SemiImplicitFV MPI::MPI_CXX)
 set_target_properties(test_unit PROPERTIES CROSSCOMPILING_EMULATOR "${MPI_WRAPPER}")
@@ -45,6 +46,7 @@ add_executable(test_integration
     integration/test_state_conversion.cpp
     integration/test_explicit_rhs.cpp
     integration/test_pressure_solver.cpp
+    integration/test_mthinc.cpp
 )
 target_link_libraries(test_integration PRIVATE test_main gtest SemiImplicitFV MPI::MPI_CXX)
 set_target_properties(test_integration PROPERTIES CROSSCOMPILING_EMULATOR "${MPI_WRAPPER}")

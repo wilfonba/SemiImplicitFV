@@ -13,10 +13,10 @@
 TEST(ExplicitRHS, SingleStep_RunsWithoutNaN) {
     SimulationConfig config = config_defaults();
     config.dim = 1;
-    config.nGhost = 2;
     config.RKOrder = 1;
     config.reconOrder = UPWIND3;
     config.explicitParams.cfl = 0.5;
+    config_validate(&config);
 
     Runtime rt;
     memset(&rt, 0, sizeof(rt));
@@ -76,10 +76,10 @@ TEST(ExplicitRHS, SingleStep_RunsWithoutNaN) {
 TEST(ExplicitRHS, SingleStep_ConservesMass) {
     SimulationConfig config = config_defaults();
     config.dim = 1;
-    config.nGhost = 2;
     config.RKOrder = 1;
     config.reconOrder = UPWIND3;
     config.explicitParams.cfl = 0.5;
+    config_validate(&config);
 
     Runtime rt;
     memset(&rt, 0, sizeof(rt));

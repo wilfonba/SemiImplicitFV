@@ -65,6 +65,11 @@ struct SurfaceTensionParams {
     double epsGradAlpha;
 };
 
+struct MTHINCParams {
+    int enabled;
+    double beta;
+};
+
 struct SimulationConfig {
     int dim;
     int nGhost;
@@ -83,10 +88,11 @@ struct SimulationConfig {
     struct BodyForceParams bodyForceParams;
     struct ViscousParams viscousParams;
     struct SurfaceTensionParams surfaceTensionParams;
+    struct MTHINCParams mthincParams;
 };
 
 SimulationConfig config_defaults(void);
-void config_validate(const SimulationConfig* cfg);
+void config_validate(SimulationConfig* cfg);
 int config_is_multi_phase(const SimulationConfig* cfg);
 int config_has_viscosity(const SimulationConfig* cfg);
 int config_has_surface_tension(const SimulationConfig* cfg);

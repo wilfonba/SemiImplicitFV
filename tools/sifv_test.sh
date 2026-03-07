@@ -24,6 +24,8 @@ Options:
   --generate              Regenerate regression reference data; use with -o to target
                           a specific test (e.g. -o TaylorGreenVortex3D --generate)
   --build-only            Only build test executables, do not run
+  --petsc                 Enable PETSc pressure solver (saved across runs)
+  --no-petsc              Disable PETSc pressure solver (saved across runs)
   -h, --help              Show this help
 
 Examples:
@@ -42,11 +44,14 @@ EOF
 }
 
 cmd_test() {
+    load_toggles
+
     local CLEAN=false
     local BUILD_ONLY=false
     local GENERATE_REFS=false
     local LIST_TESTS=false
     local TEST_PATTERN=""
+    local ENABLE_PETSC=$TOGGLE_PETSC
     local JOBS
     JOBS="$(default_jobs)"
     local TIERS=()
@@ -89,6 +94,14 @@ cmd_test() {
                 JOBS="${1#-j}"
                 shift
                 ;;
+            --petsc)
+                ENABLE_PETSC=true
+                shift
+                ;;
+            --no-petsc)
+                ENABLE_PETSC=false
+                shift
+                ;;
             -h|--help)
                 test_usage 0
                 ;;
@@ -126,18 +139,32 @@ cmd_test() {
         esac
     done
 
+    # Save toggles if they changed
+    if [[ "$ENABLE_PETSC" != "$TOGGLE_PETSC" ]]; then
+        TOGGLE_PETSC=$ENABLE_PETSC
+        save_toggles
+    fi
+
+    print_toggles
+
     # --- Clean if requested ---
     $CLEAN && clean_build
+
+    # --- Resolve cmake option values ---
+    local PETSC_OPT="OFF"
+    $ENABLE_PETSC && PETSC_OPT="ON"
 
     # --- Configure with tests enabled ---
     if needs_configure \
         "CMAKE_BUILD_TYPE:STRING=${BUILD_TYPE}" \
-        "BUILD_TESTS:BOOL=ON"; then
-        echo "Configuring (${BUILD_TYPE}, tests enabled)..."
+        "BUILD_TESTS:BOOL=ON" \
+        "ENABLE_PETSC:BOOL=${PETSC_OPT}"; then
+        echo "Configuring (${BUILD_TYPE}, tests enabled, PETSC=${PETSC_OPT})..."
         cmake -S "$ROOT_DIR" -B "$BUILD_DIR" \
             -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
             -DBUILD_TESTS=ON \
-            -DBUILD_DRIVER=ON
+            -DBUILD_DRIVER=ON \
+            -DENABLE_PETSC="$PETSC_OPT"
     fi
 
     # --- Build ---

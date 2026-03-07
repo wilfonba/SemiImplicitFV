@@ -4,7 +4,6 @@
     // Analytical steady state: u(y) = (rho*G)/(2*mu) * y*(H-y) = 0.125 m/s
     "config": {
         "dim": 2,
-        "nGhost": 3,
         "RKOrder": 3,
         "reconOrder": "WENO5",
         "semiImplicit": false,

@@ -35,7 +35,6 @@ int main(int argc, char** argv) {
 
     SimulationConfig config = config_defaults();
     config.dim = 1;
-    config.nGhost = 3;
     config.RKOrder = 3;
     config.semiImplicit = 0;
     config.reconOrder = WENO5;

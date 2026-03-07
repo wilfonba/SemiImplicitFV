@@ -7,7 +7,6 @@
     //   Q3 (lower-left)  | Q4 (lower-right)
     "config": {
         "dim": 2,
-        "nGhost": 4,
         "RKOrder": 3,
         "reconOrder": "WENO5",
         "wenoEps": 1e-16,

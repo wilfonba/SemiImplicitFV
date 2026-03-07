@@ -4,9 +4,11 @@
 
 run_usage() {
     cat <<EOF
-Usage: ./sifv.sh run [options] <case_name> [-- program args...]
+Usage: ./sifv.sh run [options] <case> [-- program args...]
 
-Run a simulation case from cases/.
+Run a simulation case. <case> can be:
+  - A case name:       looks up cases/<name>/<name>.jsonc (or .json / .cpp)
+  - A path to a file:  any .jsonc or .json file (absolute or relative)
 
 Each case can have:
   - A JSON input file:  cases/<name>/<name>.jsonc  (run via sifv generic driver)
@@ -21,7 +23,8 @@ Each case runs in its own directory under cases/<case_name>/, where all output
 Options:
   -c, --clean             Clean rebuild (remove build directory first)
   -d, --debug             Build in Debug mode
-  -n <N>                  Number of MPI ranks (default: 1)
+  -N <nodes>              Number of nodes (default: 1)
+  -n <ppn>                MPI ranks per node (default: 1)
   --build-only            Only build, do not run
   --compiled              Force using the compiled C++ source instead of JSON
   --case-optimization     Generate and compile a custom C++ main() from the
@@ -34,14 +37,30 @@ Options:
   -o, --output-dir <dir>  Override the run directory (default: cases/<case_name>)
   -h, --help              Show this help
 
+Batch options (submit a job to a scheduler instead of running interactively):
+  --batch                 Submit as a batch job instead of running interactively
+  -a <account>            Scheduler account/project (required for --batch)
+  -w <walltime>           Wall time limit, e.g. 01:00:00 (required for --batch)
+  -p <partition>          Partition / queue name (optional)
+  -q <qos>               QOS or queue (optional)
+  -# <name>              Job name (default: case name); also used for .out/.err files
+  --template <name>       Job template name from tools/templates/ (default: auto-detect)
+
 Examples:
   ./sifv.sh run 1D_sod_shocktube                      # JSON case via sifv driver
+  ./sifv.sh run /path/to/my_input.jsonc                # Run an arbitrary JSON file
+  ./sifv.sh run ../other_dir/input.jsonc -o out/       # Arbitrary file, custom output dir
   ./sifv.sh run --case-optimization 1D_sod_shocktube   # JSON case via codegen
   ./sifv.sh run --compiled 1D_sod_shocktube            # compiled C++ source
-  ./sifv.sh run -n 4 2D_rising_bubble
+  ./sifv.sh run -N 2 -n 4 2D_rising_bubble --srun     # 2 nodes, 4 ranks/node
+  ./sifv.sh run -n 4 2D_rising_bubble                  # 1 node, 4 ranks
   ./sifv.sh run -d 1D_sod_shocktube
   ./sifv.sh run --petsc 2D_rising_bubble
   ./sifv.sh run --nsys 2D_rising_bubble
+
+  # Batch submission (Slurm)
+  ./sifv.sh run --batch -N 2 -n 24 -a MY_ACCOUNT -w 02:00:00 2D_rising_bubble
+  ./sifv.sh run --batch -N 1 -n 4 -a MY_ACCOUNT -w 00:30:00 -p debug 1D_sod_shocktube
 EOF
     exit "${1:-0}"
 }
@@ -56,12 +75,23 @@ cmd_run() {
     local USE_SRUN=false
     local CASE_OPTIMIZATION=false
     local FORCE_COMPILED=false
-    local MPI_RANKS=1
+    local NODES=1
+    local PPN=1
     local JOBS
     JOBS="$(default_jobs)"
     local CASE_NAME=""
     local OUTPUT_DIR=""
     local PROGRAM_ARGS=()
+
+    # Batch-specific
+    local BATCH=false
+    local BATCH_ACCOUNT=""
+    local BATCH_WALLTIME=""
+    local BATCH_PARTITION=""
+    local BATCH_QOS=""
+    local BATCH_JOB_NAME=""
+    local BATCH_TEMPLATE=""
+
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -c|--clean)
@@ -72,12 +102,20 @@ cmd_run() {
                 BUILD_TYPE="Debug"
                 shift
                 ;;
+            -N)
+                NODES="$2"
+                shift 2
+                ;;
+            -N*)
+                NODES="${1#-N}"
+                shift
+                ;;
             -n)
-                MPI_RANKS="$2"
+                PPN="$2"
                 shift 2
                 ;;
             -n*)
-                MPI_RANKS="${1#-n}"
+                PPN="${1#-n}"
                 shift
                 ;;
             --build-only)
@@ -107,6 +145,34 @@ cmd_run() {
             --srun)
                 USE_SRUN=true
                 shift
+                ;;
+            --batch)
+                BATCH=true
+                shift
+                ;;
+            -a)
+                BATCH_ACCOUNT="$2"
+                shift 2
+                ;;
+            -w)
+                BATCH_WALLTIME="$2"
+                shift 2
+                ;;
+            -p)
+                BATCH_PARTITION="$2"
+                shift 2
+                ;;
+            -q)
+                BATCH_QOS="$2"
+                shift 2
+                ;;
+            '-#')
+                BATCH_JOB_NAME="$2"
+                shift 2
+                ;;
+            --template)
+                BATCH_TEMPLATE="$2"
+                shift 2
                 ;;
             -j)
                 JOBS="$2"
@@ -143,6 +209,21 @@ cmd_run() {
         esac
     done
 
+    # Compute total MPI ranks
+    local MPI_RANKS=$((NODES * PPN))
+
+    # Validate batch options
+    if $BATCH; then
+        if [[ -z "$BATCH_ACCOUNT" ]]; then
+            echo "Error: --batch requires -a <account>" >&2
+            exit 1
+        fi
+        if [[ -z "$BATCH_WALLTIME" ]]; then
+            echo "Error: --batch requires -w <walltime>" >&2
+            exit 1
+        fi
+    fi
+
     # Save toggles if they changed
     if [[ "$ENABLE_PETSC" != "$TOGGLE_PETSC" ]]; then
         TOGGLE_PETSC=$ENABLE_PETSC
@@ -160,29 +241,44 @@ cmd_run() {
     # --- Determine case type ---
     local JSON_FILE=""
     local COMPILED_DIR=""
+    local BARE_NAME=""
 
-    local BARE_NAME="${CASE_NAME%.jsonc}"
-    BARE_NAME="${BARE_NAME%.json}"
-
-    for ext in jsonc json; do
-        if [[ -f "$CASES_DIR/$BARE_NAME/$BARE_NAME.$ext" ]]; then
-            JSON_FILE="$CASES_DIR/$BARE_NAME/$BARE_NAME.$ext"
-            break
+    # Check if CASE_NAME is a path to an existing file
+    if [[ -f "$CASE_NAME" && ("$CASE_NAME" == *.jsonc || "$CASE_NAME" == *.json) ]]; then
+        # Direct file path provided
+        JSON_FILE="$(cd "$(dirname "$CASE_NAME")" && pwd)/$(basename "$CASE_NAME")"
+        BARE_NAME="$(basename "$CASE_NAME")"
+        BARE_NAME="${BARE_NAME%.jsonc}"
+        BARE_NAME="${BARE_NAME%.json}"
+        # Default output directory to the file's parent directory
+        if [[ -z "$OUTPUT_DIR" ]]; then
+            OUTPUT_DIR="$(cd "$(dirname "$CASE_NAME")" && pwd)"
         fi
-    done
+    else
+        # Treat as a case name — look up in cases/
+        BARE_NAME="${CASE_NAME%.jsonc}"
+        BARE_NAME="${BARE_NAME%.json}"
 
-    if [[ -d "$CASES_DIR/$BARE_NAME" ]]; then
-        if compgen -G "$CASES_DIR/$BARE_NAME"/*.cpp > /dev/null 2>&1; then
-            COMPILED_DIR="$CASES_DIR/$BARE_NAME"
+        for ext in jsonc json; do
+            if [[ -f "$CASES_DIR/$BARE_NAME/$BARE_NAME.$ext" ]]; then
+                JSON_FILE="$CASES_DIR/$BARE_NAME/$BARE_NAME.$ext"
+                break
+            fi
+        done
+
+        if [[ -d "$CASES_DIR/$BARE_NAME" ]]; then
+            if compgen -G "$CASES_DIR/$BARE_NAME"/*.cpp > /dev/null 2>&1; then
+                COMPILED_DIR="$CASES_DIR/$BARE_NAME"
+            fi
         fi
-    fi
 
-    if [[ -z "$JSON_FILE" && -z "$COMPILED_DIR" ]]; then
-        echo "Error: case '$CASE_NAME' not found." >&2
-        echo "  Looked for: cases/$BARE_NAME/$BARE_NAME.jsonc, cases/$BARE_NAME/$BARE_NAME.json, cases/$BARE_NAME/*.cpp" >&2
-        echo ""
-        list_cases
-        exit 1
+        if [[ -z "$JSON_FILE" && -z "$COMPILED_DIR" ]]; then
+            echo "Error: case '$CASE_NAME' not found." >&2
+            echo "  Looked for: cases/$BARE_NAME/$BARE_NAME.jsonc, cases/$BARE_NAME/$BARE_NAME.json, cases/$BARE_NAME/*.cpp" >&2
+            echo ""
+            list_cases
+            exit 1
+        fi
     fi
 
     local USE_JSON
@@ -205,10 +301,12 @@ cmd_run() {
     fi
 
     # --- Set up run directory ---
+    # (OUTPUT_DIR may already be set by direct file path or -o flag)
     if [[ -z "$OUTPUT_DIR" ]]; then
         OUTPUT_DIR="$CASES_DIR/$BARE_NAME"
     fi
     mkdir -p "$OUTPUT_DIR"
+    OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
 
     # --- Clean if requested ---
     $CLEAN && clean_build
@@ -239,9 +337,52 @@ cmd_run() {
             -DENABLE_NVTX="$NVTX_OPT"
     fi
 
-    # --- Nsight Systems wrapper ---
+    # --- Build (always, for both interactive and batch) ---
+    local EXECUTABLE=""
+    local EXEC_ARGS=""
+
+    if $USE_JSON; then
+        if $CASE_OPTIMIZATION; then
+            _build_codegen "$BARE_NAME" "$JSON_FILE" "$JOBS" "$ENABLE_PETSC"
+            EXECUTABLE="$BUILD_DIR/codegen_${BARE_NAME}"
+            EXEC_ARGS="${PROGRAM_ARGS[*]+"${PROGRAM_ARGS[*]}"}"
+        else
+            echo "Building sifv driver..."
+            cmake --build "$BUILD_DIR" --target sifv -j "$JOBS"
+            EXECUTABLE="$BUILD_DIR/sifv"
+            EXEC_ARGS="$JSON_FILE${PROGRAM_ARGS[*]+ ${PROGRAM_ARGS[*]}}"
+        fi
+    else
+        local TARGET_NAME="$BARE_NAME"
+        echo "Building $TARGET_NAME..."
+        cmake --build "$BUILD_DIR" --target "$TARGET_NAME" -j "$JOBS"
+        EXECUTABLE="$BUILD_DIR/$TARGET_NAME"
+        EXEC_ARGS="${PROGRAM_ARGS[*]+"${PROGRAM_ARGS[*]}"}"
+    fi
+
+    if [[ "$BUILD_ONLY" == true ]]; then return 0; fi
+
+    # --- Batch or interactive? ---
+    if $BATCH; then
+        local JOB_NAME="${BATCH_JOB_NAME:-$BARE_NAME}"
+        _submit_batch "$JOB_NAME" "$NODES" "$PPN" "$MPI_RANKS" \
+            "$BATCH_ACCOUNT" "$BATCH_WALLTIME" "$BATCH_PARTITION" "$BATCH_QOS" \
+            "$BATCH_TEMPLATE" "$OUTPUT_DIR" "$EXECUTABLE $EXEC_ARGS"
+    else
+        _run_interactive "$BARE_NAME" "$OUTPUT_DIR" "$MPI_RANKS" "$NODES" "$PPN" \
+            "$USE_SRUN" "$ENABLE_NSYS" "$EXECUTABLE" "$EXEC_ARGS"
+    fi
+}
+
+# --- Internal helpers ---
+
+_run_interactive() {
+    local BARE_NAME="$1" OUTPUT_DIR="$2" MPI_RANKS="$3" NODES="$4" PPN="$5"
+    local USE_SRUN="$6" ENABLE_NSYS="$7" EXECUTABLE="$8" EXEC_ARGS="$9"
+
+    # Nsight Systems wrapper
     local NSYS_PREFIX=()
-    if $ENABLE_NSYS; then
+    if [[ "$ENABLE_NSYS" == true ]]; then
         if ! command -v nsys &>/dev/null; then
             echo "Error: nsys not found in PATH. Install NVIDIA Nsight Systems." >&2
             exit 1
@@ -249,58 +390,26 @@ cmd_run() {
         NSYS_PREFIX=(nsys profile --trace=mpi,nvtx --output="${OUTPUT_DIR}/${BARE_NAME}.nsys-rep" --force-overwrite=true)
     fi
 
-    # --- MPI launcher ---
+    # MPI launcher
     local MPI_LAUNCHER
-    if $USE_SRUN; then
-        MPI_LAUNCHER=(srun -n "$MPI_RANKS")
+    if [[ "$USE_SRUN" == true ]]; then
+        MPI_LAUNCHER=(srun -N "$NODES" --ntasks-per-node="$PPN")
     else
         MPI_LAUNCHER=(mpirun -np "$MPI_RANKS")
     fi
 
-    # --- Build and run ---
-    if $USE_JSON; then
-        if $CASE_OPTIMIZATION; then
-            _run_codegen "$BARE_NAME" "$JSON_FILE" "$OUTPUT_DIR" "$JOBS" "$BUILD_ONLY" \
-                "$ENABLE_PETSC" "$MPI_RANKS" \
-                NSYS_PREFIX MPI_LAUNCHER PROGRAM_ARGS
-        else
-            _run_json_driver "$BARE_NAME" "$JSON_FILE" "$OUTPUT_DIR" "$JOBS" "$BUILD_ONLY" \
-                "$MPI_RANKS" \
-                NSYS_PREFIX MPI_LAUNCHER PROGRAM_ARGS
-        fi
-    else
-        _run_compiled "$BARE_NAME" "$OUTPUT_DIR" "$JOBS" "$BUILD_ONLY" "$MPI_RANKS" \
-            NSYS_PREFIX MPI_LAUNCHER PROGRAM_ARGS
-    fi
-}
-
-# --- Internal helpers ---
-
-_run_json_driver() {
-    local BARE_NAME="$1" JSON_FILE="$2" OUTPUT_DIR="$3" JOBS="$4" BUILD_ONLY="$5"
-    local MPI_RANKS="$6"
-    # Array arguments passed by name
-    local -n _NSYS_PREFIX="$7" _MPI_LAUNCHER="$8" _PROGRAM_ARGS="$9"
-
-    echo "Building sifv driver..."
-    cmake --build "$BUILD_DIR" --target sifv -j "$JOBS"
-
-    if [[ "$BUILD_ONLY" == true ]]; then return 0; fi
-
     echo ""
-    echo "=== Running $BARE_NAME via sifv driver with $MPI_RANKS MPI rank(s) ==="
+    echo "=== Running $BARE_NAME with $MPI_RANKS MPI rank(s) ($NODES node(s) x $PPN ppn) ==="
     echo "=== Output directory: $OUTPUT_DIR ==="
     echo ""
     cd "$OUTPUT_DIR"
-    "${_NSYS_PREFIX[@]+"${_NSYS_PREFIX[@]}"}" \
-        "${_MPI_LAUNCHER[@]}" "$BUILD_DIR/sifv" "$JSON_FILE" \
-        "${_PROGRAM_ARGS[@]+"${_PROGRAM_ARGS[@]}"}"
+    # shellcheck disable=SC2086
+    "${NSYS_PREFIX[@]+"${NSYS_PREFIX[@]}"}" \
+        "${MPI_LAUNCHER[@]}" "$EXECUTABLE" $EXEC_ARGS
 }
 
-_run_codegen() {
-    local BARE_NAME="$1" JSON_FILE="$2" OUTPUT_DIR="$3" JOBS="$4" BUILD_ONLY="$5"
-    local ENABLE_PETSC="$6" MPI_RANKS="$7"
-    local -n _NSYS_PREFIX="$8" _MPI_LAUNCHER="$9" _PROGRAM_ARGS="${10}"
+_build_codegen() {
+    local BARE_NAME="$1" JSON_FILE="$2" JOBS="$3" ENABLE_PETSC="$4"
 
     local CODEGEN_DIR="$BUILD_DIR/codegen"
     mkdir -p "$CODEGEN_DIR"
@@ -331,6 +440,7 @@ _run_codegen() {
         PETSC_LDFLAGS="-L$PETSC_INSTALL/lib -lpetsc -lf2clapack -lf2cblas -lm -ldl"
     fi
 
+    # shellcheck disable=SC2086
     "$COMPILE_CMD" -std=c++17 -O3 -march=native \
         $INCLUDE_FLAGS \
         $PETSC_CFLAGS \
@@ -342,36 +452,4 @@ _run_codegen() {
         -o "$BUILD_DIR/$GEN_TARGET" \
         2>&1
     cd "$ROOT_DIR"
-
-    if [[ "$BUILD_ONLY" == true ]]; then return 0; fi
-
-    echo ""
-    echo "=== Running $BARE_NAME (codegen optimized) with $MPI_RANKS MPI rank(s) ==="
-    echo "=== Output directory: $OUTPUT_DIR ==="
-    echo ""
-    cd "$OUTPUT_DIR"
-    "${_NSYS_PREFIX[@]+"${_NSYS_PREFIX[@]}"}" \
-        "${_MPI_LAUNCHER[@]}" "$BUILD_DIR/$GEN_TARGET" \
-        "${_PROGRAM_ARGS[@]+"${_PROGRAM_ARGS[@]}"}"
-}
-
-_run_compiled() {
-    local BARE_NAME="$1" OUTPUT_DIR="$2" JOBS="$3" BUILD_ONLY="$4" MPI_RANKS="$5"
-    local -n _NSYS_PREFIX="$6" _MPI_LAUNCHER="$7" _PROGRAM_ARGS="$8"
-
-    local TARGET_NAME="$BARE_NAME"
-
-    echo "Building $TARGET_NAME..."
-    cmake --build "$BUILD_DIR" --target "$TARGET_NAME" -j "$JOBS"
-
-    if [[ "$BUILD_ONLY" == true ]]; then return 0; fi
-
-    echo ""
-    echo "=== Running $TARGET_NAME with $MPI_RANKS MPI rank(s) ==="
-    echo "=== Output directory: $OUTPUT_DIR ==="
-    echo ""
-    cd "$OUTPUT_DIR"
-    "${_NSYS_PREFIX[@]+"${_NSYS_PREFIX[@]}"}" \
-        "${_MPI_LAUNCHER[@]}" "$BUILD_DIR/$TARGET_NAME" \
-        "${_PROGRAM_ARGS[@]+"${_PROGRAM_ARGS[@]}"}"
 }

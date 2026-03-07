@@ -3,7 +3,6 @@
     // Matches examples/1D_advection
     "config": {
         "dim": 1,
-        "nGhost": 3,
         "RKOrder": 3,
         "reconOrder": "WENO5",
         "semiImplicit": true,

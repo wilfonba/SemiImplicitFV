@@ -9,7 +9,7 @@ SimulationConfig config_defaults(void) {
     memset(&cfg, 0, sizeof(cfg));
 
     cfg.dim = 3;
-    cfg.nGhost = 2;
+    cfg.nGhost = 0; /* computed by config_validate() */
     cfg.RKOrder = 1;
     cfg.useIGR = 0;
     cfg.semiImplicit = 0;
@@ -49,6 +49,9 @@ SimulationConfig config_defaults(void) {
     cfg.surfaceTensionParams.sigma = 0.0;
     cfg.surfaceTensionParams.epsGradAlpha = 1e-8;
 
+    cfg.mthincParams.enabled = 0;
+    cfg.mthincParams.beta = 2.3;
+
     return cfg;
 }
 
@@ -72,21 +75,29 @@ int config_has_body_force(const SimulationConfig* cfg) {
 }
 
 int config_required_ghost_cells(const SimulationConfig* cfg) {
+    int ng = 1;
     switch (cfg->reconOrder) {
         case WENO1:
         case UPWIND1:
-            return 1;
+            ng = 1; break;
         case WENO3:
         case UPWIND3:
-            return 2;
+            ng = 2; break;
         case WENO5:
         case UPWIND5:
-            return 3;
+            ng = 3; break;
     }
-    return 1;
+    /* MTHINC processes one layer of ghost cells, each needing a gradient
+     * stencil (i-1, i+1), so nGhost >= 2 is required for MTHINC. */
+    if (cfg->mthincParams.enabled && ng < 2)
+        ng = 2;
+    return ng;
 }
 
-void config_validate(const SimulationConfig* cfg) {
+void config_validate(SimulationConfig* cfg) {
+    /* Auto-compute nGhost from enabled features (must run on all ranks) */
+    cfg->nGhost = config_required_ghost_cells(cfg);
+
     int mpiInitialized = 0;
     MPI_Initialized(&mpiInitialized);
     if (mpiInitialized) {
@@ -100,11 +111,6 @@ void config_validate(const SimulationConfig* cfg) {
 
     if (cfg->RKOrder < 1 || cfg->RKOrder > 3)
         throw std::invalid_argument("RKOrder must be 1, 2, or 3 (got " + std::to_string(cfg->RKOrder) + ")");
-
-    int reqGhost = config_required_ghost_cells(cfg);
-    if (cfg->nGhost < reqGhost)
-        throw std::invalid_argument("nGhost=" + std::to_string(cfg->nGhost)
-            + " is too small for chosen reconOrder (need >= " + std::to_string(reqGhost) + ")");
 
     if (cfg->semiImplicit) {
         const SemiImplicitParams* p = &cfg->semiImplicitParams;
@@ -170,4 +176,11 @@ void config_validate(const SimulationConfig* cfg) {
         throw std::invalid_argument("surfaceTensionParams.sigma must be >= 0");
     if (cfg->surfaceTensionParams.epsGradAlpha <= 0.0)
         throw std::invalid_argument("surfaceTensionParams.epsGradAlpha must be > 0");
+
+    if (cfg->mthincParams.enabled) {
+        if (!config_is_multi_phase(cfg))
+            throw std::invalid_argument("MTHINC requires multi-phase (nPhases >= 2)");
+        if (cfg->mthincParams.beta <= 0.0)
+            throw std::invalid_argument("mthincParams.beta must be > 0");
+    }
 }
