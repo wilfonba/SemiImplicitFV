@@ -847,8 +847,21 @@ static void mthinc_apply(struct ReconstructorData* r,
                     any_modified = 1;
                 } /* end phase loop */
 
-                /* Recompute effective EOS at all faces touched by this cell */
+                /* Recompute effective EOS and sharpen phasic densities at
+                 * all faces touched by this cell.  Pure-phase densities are
+                 * extracted from cell averages (rho_k = alphaRho_k / alpha_k)
+                 * and used to recompute face rho = sum(rho_k * alpha_face_k)
+                 * so the mixture density is consistent with the MTHINC-
+                 * sharpened volume fractions (Xie & Xiao, JCP 2017). */
                 if (any_modified) {
+                    double rho_pure[MAX_PHASES];
+                    for (int ph = 0; ph < nPhases; ++ph) {
+                        double a_cell = state->alpha[ph * tc + idx];
+                        rho_pure[ph] = (a_cell > 1e-14)
+                            ? state->alphaRho[ph * tc + idx] / a_cell
+                            : 0.0;
+                    }
+
                     int jInY = (j >= 0 && j < ny);
                     int kInZ = (k >= 0 && k < nz);
                     int iInX = (i >= 0 && i < nx);
@@ -856,37 +869,67 @@ static void mthinc_apply(struct ReconstructorData* r,
                     if (jInY && kInZ) {
                         if (i + 1 >= 0 && i + 1 <= nx) {
                             size_t fR = x_face_index(r, i + 1, j, k);
-                            effective_gamma_and_pi_inf(r->xLeft[fR].alpha, nPhases, mp,
-                                &r->xLeft[fR].gammaEff, &r->xLeft[fR].piInfEff);
+                            PrimitiveState* f = &r->xLeft[fR];
+                            effective_gamma_and_pi_inf(f->alpha, nPhases, mp,
+                                &f->gammaEff, &f->piInfEff);
+                            double rhoNew = 0.0;
+                            for (int ph = 0; ph < nPhases; ++ph)
+                                rhoNew += rho_pure[ph] * f->alpha[ph];
+                            f->rho = rhoNew;
                         }
                         if (i >= 0 && i <= nx) {
                             size_t fL = x_face_index(r, i, j, k);
-                            effective_gamma_and_pi_inf(r->xRight[fL].alpha, nPhases, mp,
-                                &r->xRight[fL].gammaEff, &r->xRight[fL].piInfEff);
+                            PrimitiveState* f = &r->xRight[fL];
+                            effective_gamma_and_pi_inf(f->alpha, nPhases, mp,
+                                &f->gammaEff, &f->piInfEff);
+                            double rhoNew = 0.0;
+                            for (int ph = 0; ph < nPhases; ++ph)
+                                rhoNew += rho_pure[ph] * f->alpha[ph];
+                            f->rho = rhoNew;
                         }
                     }
                     if (dim >= 2 && iInX && kInZ) {
                         if (j + 1 >= 0 && j + 1 <= ny) {
                             size_t fR = y_face_index(r, i, j + 1, k);
-                            effective_gamma_and_pi_inf(r->yLeft[fR].alpha, nPhases, mp,
-                                &r->yLeft[fR].gammaEff, &r->yLeft[fR].piInfEff);
+                            PrimitiveState* f = &r->yLeft[fR];
+                            effective_gamma_and_pi_inf(f->alpha, nPhases, mp,
+                                &f->gammaEff, &f->piInfEff);
+                            double rhoNew = 0.0;
+                            for (int ph = 0; ph < nPhases; ++ph)
+                                rhoNew += rho_pure[ph] * f->alpha[ph];
+                            f->rho = rhoNew;
                         }
                         if (j >= 0 && j <= ny) {
                             size_t fL = y_face_index(r, i, j, k);
-                            effective_gamma_and_pi_inf(r->yRight[fL].alpha, nPhases, mp,
-                                &r->yRight[fL].gammaEff, &r->yRight[fL].piInfEff);
+                            PrimitiveState* f = &r->yRight[fL];
+                            effective_gamma_and_pi_inf(f->alpha, nPhases, mp,
+                                &f->gammaEff, &f->piInfEff);
+                            double rhoNew = 0.0;
+                            for (int ph = 0; ph < nPhases; ++ph)
+                                rhoNew += rho_pure[ph] * f->alpha[ph];
+                            f->rho = rhoNew;
                         }
                     }
                     if (dim >= 3 && iInX && jInY) {
                         if (k + 1 >= 0 && k + 1 <= nz) {
                             size_t fR = z_face_index(r, i, j, k + 1);
-                            effective_gamma_and_pi_inf(r->zLeft[fR].alpha, nPhases, mp,
-                                &r->zLeft[fR].gammaEff, &r->zLeft[fR].piInfEff);
+                            PrimitiveState* f = &r->zLeft[fR];
+                            effective_gamma_and_pi_inf(f->alpha, nPhases, mp,
+                                &f->gammaEff, &f->piInfEff);
+                            double rhoNew = 0.0;
+                            for (int ph = 0; ph < nPhases; ++ph)
+                                rhoNew += rho_pure[ph] * f->alpha[ph];
+                            f->rho = rhoNew;
                         }
                         if (k >= 0 && k <= nz) {
                             size_t fL = z_face_index(r, i, j, k);
-                            effective_gamma_and_pi_inf(r->zRight[fL].alpha, nPhases, mp,
-                                &r->zRight[fL].gammaEff, &r->zRight[fL].piInfEff);
+                            PrimitiveState* f = &r->zRight[fL];
+                            effective_gamma_and_pi_inf(f->alpha, nPhases, mp,
+                                &f->gammaEff, &f->piInfEff);
+                            double rhoNew = 0.0;
+                            for (int ph = 0; ph < nPhases; ++ph)
+                                rhoNew += rho_pure[ph] * f->alpha[ph];
+                            f->rho = rhoNew;
                         }
                     }
                 }
