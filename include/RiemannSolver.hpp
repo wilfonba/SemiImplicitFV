@@ -24,6 +24,7 @@ struct RiemannFlux {
     double faceVelocity;
 };
 
+#pragma omp declare target
 static inline double normalVelocity(const PrimitiveState* W, const double* n, int dim) {
     double vn = 0.0;
     for (int d = 0; d < dim; ++d)
@@ -59,5 +60,6 @@ static inline RiemannFlux computeFluxDirect(enum RiemannSolverType type,
     }
     return computeLFFlux(left, right, normal, fc);
 }
+#pragma omp end declare target
 
 #endif /* RIEMANN_SOLVER_HPP */

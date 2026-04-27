@@ -69,12 +69,14 @@ void solution_state_init(struct SolutionState* s, size_t totalCells,
 void solution_state_free(struct SolutionState* s);
 
 /* Gather / scatter state bundles */
+#pragma omp declare target
 ConservativeState state_get_conservative(const struct SolutionState* s, size_t idx);
 void state_set_conservative(struct SolutionState* s, size_t idx,
                             const ConservativeState* U);
 PrimitiveState state_get_primitive(const struct SolutionState* s, size_t idx);
 void state_set_primitive(struct SolutionState* s, size_t idx,
                          const PrimitiveState* W);
+#pragma omp end declare target
 
 /* Copy cell data between flat indices with velocity sign multipliers */
 void state_copy_cell(struct SolutionState* s, size_t dst, size_t src,
@@ -94,6 +96,23 @@ void state_cons_to_prim(struct SolutionState* s,
 void state_prim_to_cons(struct SolutionState* s,
                         const struct RectilinearMesh* mesh,
                         const struct EOSData* eos);
+
+/* Bulk host <-> device synchronisation.
+ *
+ * solution_state_update_to_device():  push every non-null field to the GPU.
+ *   Called once after ICs + smoothing are applied on the host.
+ *
+ * solution_state_update_prim_from_device():  pull rho/rhoU/rhoV/rhoW/rhoE
+ *   plus primitives (velU/velV/velW/pres/sigma) and multi-phase alpha/
+ *   alphaRho back to the host.  Called before BCs, VTK writes and
+ *   checkpoint saves so host-side code sees current values.
+ *
+ * solution_state_update_prim_to_device():  symmetric push of the same
+ *   fields back to the GPU after host-side BCs adjust ghost cells.
+ */
+void solution_state_update_to_device(struct SolutionState* s);
+void solution_state_update_prim_from_device(struct SolutionState* s);
+void solution_state_update_prim_to_device(struct SolutionState* s);
 
 /* Smooth all fields using explicit heat equation iterations */
 void state_smooth(struct SolutionState* s,

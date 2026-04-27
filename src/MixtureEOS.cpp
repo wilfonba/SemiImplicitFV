@@ -4,6 +4,7 @@
 #include <cmath>
 #include <algorithm>
 
+#pragma omp declare target
 double effective_gamma(const double* alphas, int nPhases,
                        const MultiPhaseParams* mp) {
     double sumInvGm1 = 0.0;
@@ -68,6 +69,7 @@ double mixture_total_energy(double /*rho*/, double p,
     }
     return result;
 }
+#pragma omp end declare target
 
 void mixture_cons_to_prim(const RectilinearMesh* mesh,
                           SolutionState* state,
@@ -111,6 +113,70 @@ void mixture_cons_to_prim(const RectilinearMesh* mesh,
                 /* Pressure */
                 double p = mixture_pressure(rhoE_internal, alphas, nPhases, mp->phases);
                 state->pres[idx] = p;
+            }
+        }
+    }
+}
+
+void mixture_cons_to_prim_device(const RectilinearMesh* mesh,
+                                 SolutionState* state,
+                                 const MultiPhaseParams* mp)
+{
+    const int nx = mesh->nx, ny = mesh->ny, nz = mesh->nz;
+    const int ngx = mesh->ngx, ngy = mesh->ngy, ngz = mesh->ngz;
+    const int nxTot = nx + 2 * ngx;
+    const int nyTot = ny + 2 * ngy;
+    const int dim = state->dim;
+    const int nPhases = mp->nPhases;
+    const size_t tc = state->totalCells;
+    double* rho   = state->rho;
+    double* rhoU  = state->rhoU;
+    double* rhoV  = state->rhoV;
+    double* rhoW  = state->rhoW;
+    double* rhoE  = state->rhoE;
+    double* velU  = state->velU;
+    double* velV  = state->velV;
+    double* velW  = state->velW;
+    double* pres  = state->pres;
+    double* alpha = state->alpha;
+    double* alphaRho = state->alphaRho;
+
+    double phaseGamma[MAX_PHASES], phasePinf[MAX_PHASES];
+    for (int ph = 0; ph < MAX_PHASES; ++ph) { phaseGamma[ph] = 0.0; phasePinf[ph] = 0.0; }
+    for (int ph = 0; ph < nPhases; ++ph) {
+        phaseGamma[ph] = mp->phases[ph].gamma;
+        phasePinf[ph]  = mp->phases[ph].pInf;
+    }
+
+    #pragma omp target teams distribute parallel for collapse(3) \
+        map(to: phaseGamma[0:MAX_PHASES], phasePinf[0:MAX_PHASES])
+    for (int k = 0; k < nz; ++k) {
+        for (int j = 0; j < ny; ++j) {
+            for (int i = 0; i < nx; ++i) {
+                size_t idx = (size_t)((i + ngx) + nxTot * ((j + ngy) + nyTot * (k + ngz)));
+
+                /* rho = sum(alphaRho[ph]) */
+                double rhoSum = 0.0;
+                for (int ph = 0; ph < nPhases; ++ph)
+                    rhoSum += alphaRho[(size_t)ph * tc + idx];
+                if (rhoSum < 1e-14) rhoSum = 1e-14;
+                rho[idx] = rhoSum;
+
+                double u = rhoU[idx] / rhoSum;
+                double v = (dim >= 2) ? rhoV[idx] / rhoSum : 0.0;
+                double w = (dim >= 3) ? rhoW[idx] / rhoSum : 0.0;
+                velU[idx] = u;
+                if (dim >= 2) velV[idx] = v;
+                if (dim >= 3) velW[idx] = w;
+
+                double ke = 0.5 * rhoSum * (u * u + v * v + w * w);
+                double rhoE_internal = rhoE[idx] - ke;
+
+                double alphas[MAX_PHASES];
+                for (int ph = 0; ph < nPhases; ++ph)
+                    alphas[ph] = alpha[(size_t)ph * tc + idx];
+                pres[idx] = mixture_pressure_arr(rhoE_internal, alphas, nPhases,
+                                                 phaseGamma, phasePinf);
             }
         }
     }

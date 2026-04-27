@@ -31,7 +31,10 @@ Options:
                           JSON input for maximum performance (codegen path)
   --petsc                 Enable PETSc pressure solver (saved across runs)
   --no-petsc              Disable PETSc pressure solver (saved across runs)
-  --nsys                  Profile with Nsight Systems (enables NVTX ranges)
+  --nsys                  Profile with Nsight Systems and print a post-run
+                          summary (CUDA kernels with %-of-total, host<->device
+                          memory transfers, and nested NVTX ranges).  Traces
+                          cuda,nvtx,openmp,mpi,osrt with CUDA memory usage on.
   --srun                  Use srun instead of mpirun (for Slurm-managed systems)
   -j <N>                  Parallel build jobs (default: number of cores)
   -o, --output-dir <dir>  Override the run directory (default: cases/<case_name>)
@@ -382,12 +385,22 @@ _run_interactive() {
 
     # Nsight Systems wrapper
     local NSYS_PREFIX=()
+    local NSYS_REPORT=""
     if [[ "$ENABLE_NSYS" == true ]]; then
         if ! command -v nsys &>/dev/null; then
             echo "Error: nsys not found in PATH. Install NVIDIA Nsight Systems." >&2
             exit 1
         fi
-        NSYS_PREFIX=(nsys profile --trace=mpi,nvtx --output="${OUTPUT_DIR}/${BARE_NAME}.nsys-rep" --force-overwrite=true)
+        NSYS_REPORT="${OUTPUT_DIR}/${BARE_NAME}.nsys-rep"
+        # Trace CUDA kernels + OpenMP target offload + NVTX + MPI so the
+        # report includes per-kernel timing, host-device transfers, and
+        # the nested NVTX ranges in the solver.
+        NSYS_PREFIX=(nsys profile
+            --trace=cuda,nvtx,openmp,mpi,osrt
+            --cuda-memory-usage=true
+            --gpu-metrics-devices=none
+            --output="$NSYS_REPORT"
+            --force-overwrite=true)
     fi
 
     # MPI launcher
@@ -406,6 +419,27 @@ _run_interactive() {
     # shellcheck disable=SC2086
     "${NSYS_PREFIX[@]+"${NSYS_PREFIX[@]}"}" \
         "${MPI_LAUNCHER[@]}" "$EXECUTABLE" $EXEC_ARGS
+    local RUN_RC=$?
+
+    if [[ "$ENABLE_NSYS" == true && -f "$NSYS_REPORT" ]]; then
+        echo ""
+        echo "=== Nsight Systems summary: $NSYS_REPORT ==="
+        # cuda_gpu_kern_sum: per-kernel time with % of total kernel time.
+        # cuda_gpu_mem_time_sum: host<->device memory transfer breakdown.
+        # nvtx_sum: nested NVTX range timings (shows Reconstruction / etc.).
+        nsys stats \
+            --force-export=true \
+            --report cuda_gpu_kern_sum \
+            --report cuda_gpu_mem_time_sum \
+            --report nvtx_sum \
+            --format table \
+            "$NSYS_REPORT" || true
+        echo ""
+        echo "Open in GUI:    nsys-ui $NSYS_REPORT"
+        echo "More reports:   nsys stats --help-reports"
+    fi
+
+    return $RUN_RC
 }
 
 _build_codegen() {
@@ -427,10 +461,37 @@ _build_codegen() {
     COMPILE_CMD="$(grep -m1 'CXX_COMPILER' CMakeCache.txt | cut -d= -f2)"
     COMPILE_CMD="${COMPILE_CMD:-c++}"
     local INCLUDE_FLAGS="-I$ROOT_DIR/include"
-    local MPI_CFLAGS
-    MPI_CFLAGS="$(pkg-config --cflags ompi 2>/dev/null || mpiCC --showme:compile 2>/dev/null || true)"
-    local MPI_LDFLAGS
-    MPI_LDFLAGS="$(pkg-config --libs ompi 2>/dev/null || mpiCC --showme:link 2>/dev/null || echo "-lmpi")"
+
+    # Probe MPI wrappers in the order they actually exist on most systems.
+    # NVHPC's bundled OpenMPI ships mpicxx/mpic++/mpicc but not mpiCC, so the
+    # old `mpiCC --showme:` chain silently fell through to `-lmpi` which
+    # nvc++'s own ld can't resolve.
+    local MPI_CFLAGS=""
+    local MPI_LDFLAGS=""
+    for _wrap in mpicxx mpic++ mpiCC; do
+        if command -v "$_wrap" >/dev/null 2>&1; then
+            MPI_CFLAGS="$($_wrap --showme:compile 2>/dev/null || true)"
+            MPI_LDFLAGS="$($_wrap --showme:link 2>/dev/null || true)"
+            if [[ -n "$MPI_LDFLAGS" ]]; then break; fi
+        fi
+    done
+    if [[ -z "$MPI_LDFLAGS" ]]; then
+        MPI_CFLAGS="$(pkg-config --cflags ompi 2>/dev/null || true)"
+        MPI_LDFLAGS="$(pkg-config --libs   ompi 2>/dev/null || echo "-lmpi")"
+    fi
+
+    # Pick up the OpenMP target-offload runtime when CMake is configured for
+    # GPU offload — the codegen binary calls into the SemiImplicitFV library
+    # which contains target regions and needs the matching -mp link.
+    local GPU_FLAGS=""
+    if [[ "$(grep -m1 ENABLE_GPU_OFFLOAD CMakeCache.txt | cut -d= -f2)" == "ON" ]]; then
+        GPU_FLAGS="-mp=gpu"
+        local _gpu_cc
+        _gpu_cc="$(grep -m1 GPU_OFFLOAD_CC CMakeCache.txt | cut -d= -f2)"
+        if [[ -n "$_gpu_cc" ]]; then
+            GPU_FLAGS="$GPU_FLAGS -gpu=$_gpu_cc"
+        fi
+    fi
 
     local PETSC_CFLAGS=""
     local PETSC_LDFLAGS=""
@@ -442,6 +503,7 @@ _build_codegen() {
 
     # shellcheck disable=SC2086
     "$COMPILE_CMD" -std=c++17 -O3 -march=native \
+        $GPU_FLAGS \
         $INCLUDE_FLAGS \
         $PETSC_CFLAGS \
         $MPI_CFLAGS \

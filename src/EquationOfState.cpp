@@ -25,6 +25,7 @@ EOSData eos_create_stiffened_gas(double gamma, double pInf, double R, int dim) {
     return eos;
 }
 
+#pragma omp declare target
 double eos_pressure(const EOSData* eos, const ConservativeState* U) {
     double rho = std::max(U->rho, 1e-14);
     double ke = 0.0;
@@ -74,7 +75,6 @@ PrimitiveState eos_to_primitive(const EOSData* eos, const ConservativeState* U) 
     double e = U->rhoE - ke;
 
     W.p = (eos->gamma - 1.0) * e - eos->gamma * eos->pInf;
-    W.T = (W.p + eos->pInf) / (W.rho * eos->R);
 
     return W;
 }
@@ -97,3 +97,4 @@ ConservativeState eos_to_conservative(const EOSData* eos, const PrimitiveState* 
 
     return U;
 }
+#pragma omp end declare target

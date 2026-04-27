@@ -377,7 +377,6 @@ def generate_ic_loop(data, dim):
     # Set state
     lines.append("        PrimitiveState W = {};")
     lines.append("        W.rho = rho; W.u[0] = u; W.u[1] = v; W.u[2] = w; W.p = p;")
-    lines.append("        W.T = eos_temperature(&eos, &W);")
     lines.append("        state_set_primitive(&state, idx, &W);")
 
     if is_multi:

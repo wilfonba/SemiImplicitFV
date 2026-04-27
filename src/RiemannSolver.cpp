@@ -3,14 +3,17 @@
 #include <algorithm>
 #include <cstring>
 
+#pragma omp declare target
 RiemannFlux computeLFFlux(
     const PrimitiveState* left,
     const PrimitiveState* right,
     const double* normal,
     const FluxConfig* fc)
 {
+    /* No memset on `flux`: every field consumed by the caller in the active
+     * dim / nPhases / useIGR path is explicitly written below.  The unused
+     * tail (momentumFlux[dim..2], alphaFlux[nPhases..]) is never read. */
     RiemannFlux flux;
-    memset(&flux, 0, sizeof(flux));
     const int dim = fc->dim;
     const int includePressure = fc->includePressure;
 
@@ -75,7 +78,6 @@ RiemannFlux computeRusanovFlux(
     const FluxConfig* fc)
 {
     RiemannFlux flux;
-    memset(&flux, 0, sizeof(flux));
     const int dim = fc->dim;
     const int includePressure = fc->includePressure;
 
@@ -141,12 +143,27 @@ RiemannFlux computeHLLCFlux(
     const FluxConfig* fc)
 {
     RiemannFlux flux;
-    memset(&flux, 0, sizeof(flux));
     const int dim = fc->dim;
     const int includePressure = fc->includePressure;
 
-    double uL = normalVelocity(left, normal, dim);
-    double uR = normalVelocity(right, normal, dim);
+    /* Hoist all per-side scalar reads into locals so the compiler keeps them
+     * in registers instead of issuing repeated global-memory loads through
+     * the `left` / `right` pointers across the conditional branches below. */
+    const double rhoL = left->rho;
+    const double rhoR = right->rho;
+    const double pL = left->p;
+    const double pR = right->p;
+    const double uL_x = left->u[0];
+    const double uL_y = left->u[1];
+    const double uL_z = left->u[2];
+    const double uR_x = right->u[0];
+    const double uR_y = right->u[1];
+    const double uR_z = right->u[2];
+
+    double uL = uL_x * normal[0];
+    double uR = uR_x * normal[0];
+    if (dim >= 2) { uL += uL_y * normal[1]; uR += uR_y * normal[1]; }
+    if (dim >= 3) { uL += uL_z * normal[2]; uR += uR_z * normal[2]; }
 
     double rhoEL = rhoEFromState(left);
     double rhoER = rhoEFromState(right);
@@ -158,77 +175,81 @@ RiemannFlux computeHLLCFlux(
         double cR = soundSpeedDirect(right);
         sL = std::min(uL - cL, uR - cR);
         sR = std::max(uL + cL, uR + cR);
-        sStar = (right->p - left->p
-                 + left->rho * uL * (sL - uL)
-                 - right->rho * uR * (sR - uR))
-              / (left->rho * (sL - uL) - right->rho * (sR - uR));
+        sStar = (pR - pL
+                 + rhoL * uL * (sL - uL)
+                 - rhoR * uR * (sR - uR))
+              / (rhoL * (sL - uL) - rhoR * (sR - uR));
     } else {
         sL = std::min(uL, uR);
         sR = std::max(uL, uR);
         sStar = 0.5 * (uL + uR);
     }
 
+    /* Bundle the dim-3 velocity arrays for the loops below. */
+    const double uLv[3] = {uL_x, uL_y, uL_z};
+    const double uRv[3] = {uR_x, uR_y, uR_z};
+
     if (sL >= 0) {
-        flux.massFlux = left->rho * uL;
+        flux.massFlux = rhoL * uL;
         for (int i = 0; i < dim; ++i)
-            flux.momentumFlux[i] = left->rho * left->u[i] * uL;
+            flux.momentumFlux[i] = rhoL * uLv[i] * uL;
         flux.energyFlux = rhoEL * uL;
         if (includePressure) {
             for (int i = 0; i < dim; ++i)
-                flux.momentumFlux[i] += left->p * normal[i];
-            flux.energyFlux += left->p * uL;
+                flux.momentumFlux[i] += pL * normal[i];
+            flux.energyFlux += pL * uL;
         }
     } else if (sR <= 0) {
-        flux.massFlux = right->rho * uR;
+        flux.massFlux = rhoR * uR;
         for (int i = 0; i < dim; ++i)
-            flux.momentumFlux[i] = right->rho * right->u[i] * uR;
+            flux.momentumFlux[i] = rhoR * uRv[i] * uR;
         flux.energyFlux = rhoER * uR;
         if (includePressure) {
             for (int i = 0; i < dim; ++i)
-                flux.momentumFlux[i] += right->p * normal[i];
-            flux.energyFlux += right->p * uR;
+                flux.momentumFlux[i] += pR * normal[i];
+            flux.energyFlux += pR * uR;
         }
     } else if (sStar >= 0) {
-        double rhoStarL = left->rho * (sL - uL) / (sL - sStar);
-        flux.massFlux = left->rho * uL + sL * (rhoStarL - left->rho);
+        double rhoStarL = rhoL * (sL - uL) / (sL - sStar);
+        flux.massFlux = rhoL * uL + sL * (rhoStarL - rhoL);
         if (includePressure) {
             for (int i = 0; i < dim; ++i) {
-                double rhoUStarL = rhoStarL * (left->u[i] + (sStar - uL) * normal[i]);
-                flux.momentumFlux[i] = left->rho * left->u[i] * uL + left->p * normal[i]
-                    + sL * (rhoUStarL - left->rho * left->u[i]);
+                double rhoUStarL = rhoStarL * (uLv[i] + (sStar - uL) * normal[i]);
+                flux.momentumFlux[i] = rhoL * uLv[i] * uL + pL * normal[i]
+                    + sL * (rhoUStarL - rhoL * uLv[i]);
             }
-            double eL = rhoEL / left->rho;
-            double EStarL = rhoStarL * (eL + (sStar - uL) * (sStar + left->p / (left->rho * (sL - uL))));
-            flux.energyFlux = (rhoEL + left->p) * uL + sL * (EStarL - rhoEL);
+            double eL = rhoEL / rhoL;
+            double EStarL = rhoStarL * (eL + (sStar - uL) * (sStar + pL / (rhoL * (sL - uL))));
+            flux.energyFlux = (rhoEL + pL) * uL + sL * (EStarL - rhoEL);
         } else {
             for (int i = 0; i < dim; ++i) {
-                double rhoUStarL = rhoStarL * (left->u[i] + (sStar - uL) * normal[i]);
-                flux.momentumFlux[i] = left->rho * left->u[i] * uL
-                    + sL * (rhoUStarL - left->rho * left->u[i]);
+                double rhoUStarL = rhoStarL * (uLv[i] + (sStar - uL) * normal[i]);
+                flux.momentumFlux[i] = rhoL * uLv[i] * uL
+                    + sL * (rhoUStarL - rhoL * uLv[i]);
             }
-            double eL = rhoEL / left->rho;
+            double eL = rhoEL / rhoL;
             double EStarL = rhoStarL * (eL + (sStar - uL) * sStar);
             flux.energyFlux = rhoEL * uL + sL * (EStarL - rhoEL);
         }
     } else {
-        double rhoStarR = right->rho * (sR - uR) / (sR - sStar);
-        flux.massFlux = right->rho * uR + sR * (rhoStarR - right->rho);
+        double rhoStarR = rhoR * (sR - uR) / (sR - sStar);
+        flux.massFlux = rhoR * uR + sR * (rhoStarR - rhoR);
         if (includePressure) {
             for (int i = 0; i < dim; ++i) {
-                double rhoUStarR = rhoStarR * (right->u[i] + (sStar - uR) * normal[i]);
-                flux.momentumFlux[i] = right->rho * right->u[i] * uR + right->p * normal[i]
-                    + sR * (rhoUStarR - right->rho * right->u[i]);
+                double rhoUStarR = rhoStarR * (uRv[i] + (sStar - uR) * normal[i]);
+                flux.momentumFlux[i] = rhoR * uRv[i] * uR + pR * normal[i]
+                    + sR * (rhoUStarR - rhoR * uRv[i]);
             }
-            double eR = rhoER / right->rho;
-            double EStarR = rhoStarR * (eR + (sStar - uR) * (sStar + right->p / (right->rho * (sR - uR))));
-            flux.energyFlux = (rhoER + right->p) * uR + sR * (EStarR - rhoER);
+            double eR = rhoER / rhoR;
+            double EStarR = rhoStarR * (eR + (sStar - uR) * (sStar + pR / (rhoR * (sR - uR))));
+            flux.energyFlux = (rhoER + pR) * uR + sR * (EStarR - rhoER);
         } else {
             for (int i = 0; i < dim; ++i) {
-                double rhoUStarR = rhoStarR * (right->u[i] + (sStar - uR) * normal[i]);
-                flux.momentumFlux[i] = right->rho * right->u[i] * uR
-                    + sR * (rhoUStarR - right->rho * right->u[i]);
+                double rhoUStarR = rhoStarR * (uRv[i] + (sStar - uR) * normal[i]);
+                flux.momentumFlux[i] = rhoR * uRv[i] * uR
+                    + sR * (rhoUStarR - rhoR * uRv[i]);
             }
-            double eR = rhoER / right->rho;
+            double eR = rhoER / rhoR;
             double EStarR = rhoStarR * (eR + (sStar - uR) * sStar);
             flux.energyFlux = rhoER * uR + sR * (EStarR - rhoER);
         }
@@ -236,22 +257,22 @@ RiemannFlux computeHLLCFlux(
 
     if (sL >= 0) {
         flux.faceVelocity = uL;
-        flux.pressureFlux = left->p * uL;
+        flux.pressureFlux = pL * uL;
         for (int ph = 0; ph < fc->nPhases; ++ph)
             flux.alphaFlux[ph] = left->alpha[ph] * uL;
     } else if (sR <= 0) {
         flux.faceVelocity = uR;
-        flux.pressureFlux = right->p * uR;
+        flux.pressureFlux = pR * uR;
         for (int ph = 0; ph < fc->nPhases; ++ph)
             flux.alphaFlux[ph] = right->alpha[ph] * uR;
     } else {
         flux.faceVelocity = sStar;
         if (sStar >= 0) {
-            flux.pressureFlux = left->p * sStar;
+            flux.pressureFlux = pL * sStar;
             for (int ph = 0; ph < fc->nPhases; ++ph)
                 flux.alphaFlux[ph] = left->alpha[ph] * sStar;
         } else {
-            flux.pressureFlux = right->p * sStar;
+            flux.pressureFlux = pR * sStar;
             for (int ph = 0; ph < fc->nPhases; ++ph)
                 flux.alphaFlux[ph] = right->alpha[ph] * sStar;
         }
@@ -259,3 +280,4 @@ RiemannFlux computeHLLCFlux(
 
     return flux;
 }
+#pragma omp end declare target

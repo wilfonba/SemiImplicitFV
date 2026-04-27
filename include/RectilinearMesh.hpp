@@ -60,6 +60,7 @@ void mesh_set_bc(struct RectilinearMesh* m, int face, enum BoundaryCondition bc)
    Inline geometry accessors
    --------------------------------------------------------------------------- */
 
+#pragma omp declare target
 static inline int mesh_nxTotal(const struct RectilinearMesh* m) {
     return m->nx + 2 * m->ngx;
 }
@@ -121,6 +122,7 @@ static inline double mesh_faceAreaZ(const struct RectilinearMesh* m,
                                     int i, int j) {
     return mesh_dx(m, i) * mesh_dy(m, j);
 }
+#pragma omp end declare target
 
 /* ---------------------------------------------------------------------------
    Ghost fill functions
@@ -137,6 +139,18 @@ void mesh_apply_bcs_mpi(const struct RectilinearMesh* m,
                         enum VarSet varSet,
                         struct HaloExchange* halo);
 
+/* GPU-offload variant of mesh_apply_bcs_mpi.  Assumes SolutionState fields
+ * are device-resident and fresh on device; issues halo pack/unpack and
+ * physical BC fills as omp target kernels.  MPI exchange still goes through
+ * the host, but only the packed send/recv buffers (~ one face slab) cross
+ * PCIe — the rest of the state never leaves the GPU.
+ *
+ * Supports VARSET_PRIM and VARSET_CONS at any nPhases on device. */
+void mesh_apply_bcs_mpi_device(const struct RectilinearMesh* m,
+                               struct SolutionState* state,
+                               enum VarSet varSet,
+                               struct HaloExchange* halo);
+
 /* Fill ghost cells for a single scalar field (size totalCells). */
 void mesh_fill_scalar_ghosts(const struct RectilinearMesh* m,
                              double* field);
@@ -145,5 +159,12 @@ void mesh_fill_scalar_ghosts(const struct RectilinearMesh* m,
 void mesh_fill_scalar_ghosts_mpi(const struct RectilinearMesh* m,
                                  double* field,
                                  struct HaloExchange* halo);
+
+/* GPU-offload variant of mesh_fill_scalar_ghosts_mpi.  `field` must be a
+ * device-resident pointer.  Halo exchange and ghost copies run as omp
+ * target kernels; only packed face slabs cross PCIe. */
+void mesh_fill_scalar_ghosts_mpi_device(const struct RectilinearMesh* m,
+                                        double* field,
+                                        struct HaloExchange* halo);
 
 #endif /* RECTILINEAR_MESH_HPP */

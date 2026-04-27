@@ -10,17 +10,21 @@ TOGGLES_FILE="$ROOT_DIR/.sifv_toggles"
 
 # ---- Persistent toggles ----
 
-# Load stored toggles (sets TOGGLE_PETSC).
-# Defaults to false if the file doesn't exist or a key is missing.
+# Load stored toggles (sets TOGGLE_PETSC, TOGGLE_GPU, TOGGLE_GPU_CC).
+# Defaults to false / empty if the file doesn't exist or a key is missing.
 load_toggles() {
     TOGGLE_PETSC=false
+    TOGGLE_GPU=false
+    TOGGLE_GPU_CC=""
     if [[ -f "$TOGGLES_FILE" ]]; then
         local key val
         while IFS='=' read -r key val || [[ -n "$key" ]]; do
             key="${key// /}"
             val="${val// /}"
             case "$key" in
-                petsc) if [[ "$val" == "true" ]]; then TOGGLE_PETSC=true; fi ;;
+                petsc)  if [[ "$val" == "true" ]]; then TOGGLE_PETSC=true; fi ;;
+                gpu)    if [[ "$val" == "true" ]]; then TOGGLE_GPU=true; fi ;;
+                gpu_cc) TOGGLE_GPU_CC="$val" ;;
             esac
         done < "$TOGGLES_FILE"
     fi
@@ -30,6 +34,8 @@ load_toggles() {
 save_toggles() {
     cat > "$TOGGLES_FILE" <<EOF
 petsc=$TOGGLE_PETSC
+gpu=$TOGGLE_GPU
+gpu_cc=$TOGGLE_GPU_CC
 EOF
 }
 
@@ -37,6 +43,13 @@ EOF
 print_toggles() {
     local parts=()
     $TOGGLE_PETSC && parts+=("petsc")
+    if $TOGGLE_GPU; then
+        if [[ -n "$TOGGLE_GPU_CC" ]]; then
+            parts+=("gpu/${TOGGLE_GPU_CC}")
+        else
+            parts+=("gpu")
+        fi
+    fi
     if [[ ${#parts[@]} -gt 0 ]]; then
         echo "[toggles: ${parts[*]}]"
     fi

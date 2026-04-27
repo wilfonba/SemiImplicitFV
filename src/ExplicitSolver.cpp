@@ -11,6 +11,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -58,11 +59,78 @@ void explicit_solver_init(ExplicitSolverWork* w,
 
     if (igrSolver) {
         w->gradU = (GradientTensor*)std::calloc(n, sizeof(GradientTensor));
+        double* g = (double*)w->gradU;
+        size_t gn = n * 9;
+        #pragma omp target enter data map(alloc: g[0:gn])
+    }
+
+    /* Device-side RHS scratch buffers — written by the flux kernel, consumed
+     * by the RK update kernel.  No host copy needed. */
+    double* rRho  = w->rhsRho;
+    double* rRhoU = w->rhsRhoU;
+    double* rRhoE = w->rhsRhoE;
+    #pragma omp target enter data map(alloc: rRho[0:n], rRhoU[0:n], rRhoE[0:n])
+    if (dim >= 2) {
+        double* rRhoV = w->rhsRhoV;
+        #pragma omp target enter data map(alloc: rRhoV[0:n])
+    }
+    if (dim >= 3) {
+        double* rRhoW = w->rhsRhoW;
+        #pragma omp target enter data map(alloc: rRhoW[0:n])
+    }
+    if (w->nPhases > 0) {
+        double* rAR = w->rhsAlphaRho;
+        double* rA  = w->rhsAlpha;
+        double* dU  = w->divU;
+        size_t mp = (size_t)w->nPhases * n;
+        #pragma omp target enter data map(alloc: rAR[0:mp], rA[0:mp], dU[0:n])
+    }
+
+    /* GPU warmup: the first target launch and the first MPI_Allreduce-after-
+     * device-sync each pay a multi-second JIT/context-init cost (showed up as
+     * a 3.8 s outlier in the dt NVTX range).  Fire a trivial reduction kernel
+     * here so the JIT and CUDA context are hot before the time loop starts. */
+    {
+        double warmup = 0.0;
+        double* rRhoEW = w->rhsRhoE;
+        #pragma omp target teams distribute parallel for reduction(+:warmup)
+        for (size_t ii = 0; ii < n; ++ii) {
+            warmup += rRhoEW[ii];
+        }
+        (void)warmup;
     }
 }
 
 void explicit_solver_free(ExplicitSolverWork* w)
 {
+    size_t n = w->totalCells;
+    double* rRho  = w->rhsRho;
+    double* rRhoU = w->rhsRhoU;
+    double* rRhoE = w->rhsRhoE;
+    if (rRho) {
+        #pragma omp target exit data map(delete: rRho[0:n], rRhoU[0:n], rRhoE[0:n])
+    }
+    if (w->dim >= 2 && w->rhsRhoV) {
+        double* rRhoV = w->rhsRhoV;
+        #pragma omp target exit data map(delete: rRhoV[0:n])
+    }
+    if (w->dim >= 3 && w->rhsRhoW) {
+        double* rRhoW = w->rhsRhoW;
+        #pragma omp target exit data map(delete: rRhoW[0:n])
+    }
+    if (w->nPhases > 0 && w->rhsAlphaRho) {
+        double* rAR = w->rhsAlphaRho;
+        double* rA  = w->rhsAlpha;
+        double* dU  = w->divU;
+        size_t mp = (size_t)w->nPhases * n;
+        #pragma omp target exit data map(delete: rAR[0:mp], rA[0:mp], dU[0:n])
+    }
+    if (w->gradU) {
+        double* g = (double*)w->gradU;
+        size_t gn = n * 9;
+        #pragma omp target exit data map(delete: g[0:gn])
+    }
+
     std::free(w->rhsRho);  w->rhsRho = NULL;
     std::free(w->rhsRhoU); w->rhsRhoU = NULL;
     std::free(w->rhsRhoV); w->rhsRhoV = NULL;
@@ -138,19 +206,31 @@ static void explicit_compute_velocity_gradients(ExplicitSolverWork* w,
     }
 }
 
-/* Internal: solve IGR */
-static void explicit_solve_igr(ExplicitSolverWork* w,
+/* Internal: solve IGR on device */
+static void explicit_solve_igr_device(ExplicitSolverWork* w,
     const SimulationConfig* config, const RectilinearMesh* mesh, SolutionState* state)
 {
     if (!w->igrSolver) return;
     NVTX_PUSH("Explicit::solveIGR");
-    explicit_compute_velocity_gradients(w, config, mesh, state);
-    igr_solve_entropic_pressure_mpi(config, &config->igrParams, mesh, state,
-                                    w->gradU, w->halo);
+    igr_compute_velocity_gradients_device(config, mesh, state, (double*)w->gradU);
+    igr_solve_entropic_pressure_mpi_device(config, &config->igrParams, mesh, state,
+                                           w->gradU, w->halo);
     NVTX_POP();
 }
 
-/* Internal: compute RHS */
+/* Internal: compute RHS
+ *
+ * GPU-offload layout.  Each direction's flux application is a cell-based
+ * kernel: every cell computes the Riemann flux at its left and right faces
+ * in parallel.  Interior faces are therefore computed twice (once per
+ * neighbour cell), which is the standard GPU trade-off — it eliminates the
+ * read-modify-write race that a face-parallel pattern would introduce and
+ * avoids atomics.
+ *
+ * Only single-phase, no-body-force, no-viscous, no-surface-tension,
+ * no-IGR configurations are ported in Phase 1.  Other features fall back
+ * to the host path if ENABLE_GPU_OFFLOAD is off, and are explicitly
+ * rejected when offload is enabled (see explicit_compute_rhs entry). */
 static void explicit_compute_rhs(ExplicitSolverWork* w,
     const SimulationConfig* config, const RectilinearMesh* mesh, SolutionState* state)
 {
@@ -163,221 +243,215 @@ static void explicit_compute_rhs(ExplicitSolverWork* w,
     size_t n = w->totalCells;
     size_t tc = state->totalCells;
 
-    /* Zero RHS */
-    std::memset(w->rhsRho,  0, n * sizeof(double));
-    std::memset(w->rhsRhoU, 0, n * sizeof(double));
-    if (dim >= 2) std::memset(w->rhsRhoV, 0, n * sizeof(double));
-    if (dim >= 3) std::memset(w->rhsRhoW, 0, n * sizeof(double));
-    std::memset(w->rhsRhoE, 0, n * sizeof(double));
-
-    if (multiPhase) {
-        std::memset(w->rhsAlphaRho, 0, (size_t)nPhases * n * sizeof(double));
-        std::memset(w->rhsAlpha,    0, (size_t)nPhases * n * sizeof(double));
-        std::memset(w->divU, 0, n * sizeof(double));
-    }
-
     ReconstructorData* rec = &w->reconstructor;
     FluxConfig fc = w->fluxConfig;
 
-    /* --- X-direction fluxes --- */
-    for (int k = 0; k < mesh->nz; ++k) {
-        for (int j = 0; j < mesh->ny; ++j) {
-            for (int i = 0; i <= mesh->nx; ++i) {
-                size_t f = x_face_index(rec, i, j, k);
-                const PrimitiveState* left  = x_face_left(rec, f);
-                const PrimitiveState* right = x_face_right(rec, f);
+    const int nx = mesh->nx, ny = mesh->ny, nz = mesh->nz;
+    const int ngx = mesh->ngx, ngy = mesh->ngy, ngz = mesh->ngz;
+    const int nxTot = nx + 2 * ngx;
+    const int nyTot = ny + 2 * ngy;
+    const int recNx = rec->nx, recNy = rec->ny;
+    const RiemannSolverType solver = w->solverType;
+
+    double* rhsRho  = w->rhsRho;
+    double* rhsRhoU = w->rhsRhoU;
+    double* rhsRhoV = w->rhsRhoV;
+    double* rhsRhoW = w->rhsRhoW;
+    double* rhsRhoE = w->rhsRhoE;
+    double* rhsAlphaRho = w->rhsAlphaRho;
+    double* rhsAlpha    = w->rhsAlpha;
+    double* divU        = w->divU;
+    double* alphaArr    = state->alpha;
+    double* alphaRhoArr = state->alphaRho;
+    const PrimitiveState* xL = rec->xLeft;
+    const PrimitiveState* xR = rec->xRight;
+    const PrimitiveState* yL = rec->yLeft;
+    const PrimitiveState* yR = rec->yRight;
+    const PrimitiveState* zL = rec->zLeft;
+    const PrimitiveState* zR = rec->zRight;
+    const double* xExt = mesh->xNodesExt;
+    const double* yExt = mesh->yNodesExt;
+    const double* zExt = mesh->zNodesExt;
+
+    /* RHS init lives inside the X-direction flux kernel — Flux::X *assigns*
+     * (=) into rhsRho/U/V/W/E (and, when multi-phase, rhsAlpha/rhsAlphaRho
+     * /divU) for every interior cell, then Y/Z and the source terms
+     * accumulate (+=).  This eliminates a full n-cell zero kernel pass per
+     * RHS call. */
+
+    /* Per-dimension cell widths from the extended node arrays.  Stored as
+     * small device-resident arrays (already mapped via mesh_init).  */
+
+    /* --- X-direction flux: cell-based, each cell computes both of its
+     *      X-faces in parallel.  Interior faces are computed twice. --- */
+    NVTX_PUSH("Flux::X");
+    #pragma omp target teams distribute parallel for collapse(3)
+    for (int k = 0; k < nz; ++k) {
+        for (int j = 0; j < ny; ++j) {
+            for (int i = 0; i < nx; ++i) {
+                size_t idx = (size_t)((i + ngx) + nxTot * ((j + ngy) + nyTot * (k + ngz)));
+                size_t fL = (size_t)(i     + (recNx + 1) * (j + recNy * k));
+                size_t fR = (size_t)(i + 1 + (recNx + 1) * (j + recNy * k));
+
+                double dx = xExt[i + ngx + 1] - xExt[i + ngx];
+                double dy = yExt[j + ngy + 1] - yExt[j + ngy];
+                double dz = zExt[k + ngz + 1] - zExt[k + ngz];
+                double area = dy * dz;
+                double coeff = area / (dx * dy * dz);
 
                 double normal[3] = {1.0, 0.0, 0.0};
-                RiemannFlux flux = computeFluxDirect(w->solverType, left, right, normal, &fc);
+                RiemannFlux fluxL = computeFluxDirect(solver, &xL[fL], &xR[fL], normal, &fc);
+                RiemannFlux fluxR = computeFluxDirect(solver, &xL[fR], &xR[fR], normal, &fc);
 
-                double area = mesh_faceAreaX(mesh, j, k);
+                /* `=` not `+=`: this kernel initialises every interior cell's
+                 * RHS slot for this RK stage; downstream Y/Z/source-term
+                 * passes accumulate into it. */
+                rhsRho[idx]  = coeff * (fluxL.massFlux        - fluxR.massFlux);
+                rhsRhoU[idx] = coeff * (fluxL.momentumFlux[0] - fluxR.momentumFlux[0]);
+                if (dim >= 2) rhsRhoV[idx] = coeff * (fluxL.momentumFlux[1] - fluxR.momentumFlux[1]);
+                if (dim >= 3) rhsRhoW[idx] = coeff * (fluxL.momentumFlux[2] - fluxR.momentumFlux[2]);
+                rhsRhoE[idx] = coeff * (fluxL.energyFlux      - fluxR.energyFlux);
 
-                size_t upwindIdx = 0;
-                if (multiPhase)
-                    upwindIdx = (flux.massFlux >= 0) ? mesh_index(mesh, i - 1, j, k) : mesh_index(mesh, i, j, k);
-
-                if (i >= 1) {
-                    size_t idxL = mesh_index(mesh, i - 1, j, k);
-                    double coeff = area / mesh_cell_volume(mesh, i - 1, j, k);
-                    w->rhsRho[idxL]  -= coeff * flux.massFlux;
-                    w->rhsRhoU[idxL] -= coeff * flux.momentumFlux[0];
-                    if (dim >= 2) w->rhsRhoV[idxL] -= coeff * flux.momentumFlux[1];
-                    if (dim >= 3) w->rhsRhoW[idxL] -= coeff * flux.momentumFlux[2];
-                    w->rhsRhoE[idxL] -= coeff * flux.energyFlux;
-
-                    if (multiPhase) {
-                        for (int ph = 0; ph < nPhases; ++ph) {
-                            double aUpw = std::max(state->alpha[ph * tc + upwindIdx], 1e-14);
-                            double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / aUpw) * flux.alphaFlux[ph];
-                            w->rhsAlphaRho[ph * n + idxL] -= coeff * alphaRhoFlux;
-                        }
-                        for (int ph = 0; ph < nPhases; ++ph)
-                            w->rhsAlpha[ph * n + idxL] -= coeff * flux.alphaFlux[ph];
-                        w->divU[idxL] += coeff * flux.faceVelocity;
+                if (multiPhase) {
+                    /* Upwind cell index for alphaRho flux:
+                     *  - Left face  (i face):    i-1 if massFlux >= 0, else i.
+                     *  - Right face (i+1 face):  i   if massFlux >= 0, else i+1.
+                     * In linear index space (X-direction stride = 1):
+                     *    upwindL = (fluxL.massFlux >= 0) ? idx - 1 : idx
+                     *    upwindR = (fluxR.massFlux >= 0) ? idx     : idx + 1 */
+                    size_t upL = (fluxL.massFlux >= 0.0) ? (idx - 1) : idx;
+                    size_t upR = (fluxR.massFlux >= 0.0) ?  idx      : (idx + 1);
+                    for (int ph = 0; ph < nPhases; ++ph) {
+                        size_t off = (size_t)ph * tc;
+                        double aL = alphaArr[off + upL]; if (aL < 1e-14) aL = 1e-14;
+                        double aR = alphaArr[off + upR]; if (aR < 1e-14) aR = 1e-14;
+                        double arFluxL = (alphaRhoArr[off + upL] / aL) * fluxL.alphaFlux[ph];
+                        double arFluxR = (alphaRhoArr[off + upR] / aR) * fluxR.alphaFlux[ph];
+                        rhsAlphaRho[(size_t)ph * n + idx] = coeff * (arFluxL - arFluxR);
+                        rhsAlpha   [(size_t)ph * n + idx] = coeff * (fluxL.alphaFlux[ph] - fluxR.alphaFlux[ph]);
                     }
-                }
-
-                if (i < mesh->nx) {
-                    size_t idxR = mesh_index(mesh, i, j, k);
-                    double coeff = area / mesh_cell_volume(mesh, i, j, k);
-                    w->rhsRho[idxR]  += coeff * flux.massFlux;
-                    w->rhsRhoU[idxR] += coeff * flux.momentumFlux[0];
-                    if (dim >= 2) w->rhsRhoV[idxR] += coeff * flux.momentumFlux[1];
-                    if (dim >= 3) w->rhsRhoW[idxR] += coeff * flux.momentumFlux[2];
-                    w->rhsRhoE[idxR] += coeff * flux.energyFlux;
-
-                    if (multiPhase) {
-                        for (int ph = 0; ph < nPhases; ++ph) {
-                            double aUpw = std::max(state->alpha[ph * tc + upwindIdx], 1e-14);
-                            double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / aUpw) * flux.alphaFlux[ph];
-                            w->rhsAlphaRho[ph * n + idxR] += coeff * alphaRhoFlux;
-                        }
-                        for (int ph = 0; ph < nPhases; ++ph)
-                            w->rhsAlpha[ph * n + idxR] += coeff * flux.alphaFlux[ph];
-                        w->divU[idxR] -= coeff * flux.faceVelocity;
-                    }
+                    divU[idx] = coeff * (fluxR.faceVelocity - fluxL.faceVelocity);
                 }
             }
         }
     }
+    NVTX_POP();
 
-    /* --- Y-direction fluxes --- */
+    /* --- Y-direction flux --- */
     if (dim >= 2) {
-        for (int k = 0; k < mesh->nz; ++k) {
-            for (int j = 0; j <= mesh->ny; ++j) {
-                for (int i = 0; i < mesh->nx; ++i) {
-                    size_t f = y_face_index(rec, i, j, k);
-                    const PrimitiveState* left  = y_face_left(rec, f);
-                    const PrimitiveState* right = y_face_right(rec, f);
+        NVTX_PUSH("Flux::Y");
+        #pragma omp target teams distribute parallel for collapse(3)
+        for (int k = 0; k < nz; ++k) {
+            for (int j = 0; j < ny; ++j) {
+                for (int i = 0; i < nx; ++i) {
+                    size_t idx = (size_t)((i + ngx) + nxTot * ((j + ngy) + nyTot * (k + ngz)));
+                    size_t fL = (size_t)(i + recNx * (j     + (recNy + 1) * k));
+                    size_t fR = (size_t)(i + recNx * (j + 1 + (recNy + 1) * k));
+
+                    double dx = xExt[i + ngx + 1] - xExt[i + ngx];
+                    double dy = yExt[j + ngy + 1] - yExt[j + ngy];
+                    double dz = zExt[k + ngz + 1] - zExt[k + ngz];
+                    double area = dx * dz;
+                    double coeff = area / (dx * dy * dz);
 
                     double normal[3] = {0.0, 1.0, 0.0};
-                    RiemannFlux flux = computeFluxDirect(w->solverType, left, right, normal, &fc);
+                    RiemannFlux fluxL = computeFluxDirect(solver, &yL[fL], &yR[fL], normal, &fc);
+                    RiemannFlux fluxR = computeFluxDirect(solver, &yL[fR], &yR[fR], normal, &fc);
 
-                    double area = mesh_faceAreaY(mesh, i, k);
+                    rhsRho[idx]  += coeff * (fluxL.massFlux        - fluxR.massFlux);
+                    rhsRhoU[idx] += coeff * (fluxL.momentumFlux[0] - fluxR.momentumFlux[0]);
+                    rhsRhoV[idx] += coeff * (fluxL.momentumFlux[1] - fluxR.momentumFlux[1]);
+                    if (dim >= 3) rhsRhoW[idx] += coeff * (fluxL.momentumFlux[2] - fluxR.momentumFlux[2]);
+                    rhsRhoE[idx] += coeff * (fluxL.energyFlux      - fluxR.energyFlux);
 
-                    size_t upwindIdx = 0;
-                    if (multiPhase)
-                        upwindIdx = (flux.massFlux >= 0) ? mesh_index(mesh, i, j - 1, k) : mesh_index(mesh, i, j, k);
-
-                    if (j >= 1) {
-                        size_t idxL = mesh_index(mesh, i, j - 1, k);
-                        double coeff = area / mesh_cell_volume(mesh, i, j - 1, k);
-                        w->rhsRho[idxL]  -= coeff * flux.massFlux;
-                        w->rhsRhoU[idxL] -= coeff * flux.momentumFlux[0];
-                        w->rhsRhoV[idxL] -= coeff * flux.momentumFlux[1];
-                        if (dim >= 3) w->rhsRhoW[idxL] -= coeff * flux.momentumFlux[2];
-                        w->rhsRhoE[idxL] -= coeff * flux.energyFlux;
-
-                        if (multiPhase) {
-                            for (int ph = 0; ph < nPhases; ++ph) {
-                                double aUpw = std::max(state->alpha[ph * tc + upwindIdx], 1e-14);
-                                double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / aUpw) * flux.alphaFlux[ph];
-                                w->rhsAlphaRho[ph * n + idxL] -= coeff * alphaRhoFlux;
-                            }
-                            for (int ph = 0; ph < nPhases; ++ph)
-                                w->rhsAlpha[ph * n + idxL] -= coeff * flux.alphaFlux[ph];
-                            w->divU[idxL] += coeff * flux.faceVelocity;
+                    if (multiPhase) {
+                        /* Y-direction stride in linear index = nxTot. */
+                        size_t upL = (fluxL.massFlux >= 0.0) ? (idx - (size_t)nxTot) : idx;
+                        size_t upR = (fluxR.massFlux >= 0.0) ?  idx                   : (idx + (size_t)nxTot);
+                        for (int ph = 0; ph < nPhases; ++ph) {
+                            size_t off = (size_t)ph * tc;
+                            double aL = alphaArr[off + upL]; if (aL < 1e-14) aL = 1e-14;
+                            double aR = alphaArr[off + upR]; if (aR < 1e-14) aR = 1e-14;
+                            double arFluxL = (alphaRhoArr[off + upL] / aL) * fluxL.alphaFlux[ph];
+                            double arFluxR = (alphaRhoArr[off + upR] / aR) * fluxR.alphaFlux[ph];
+                            rhsAlphaRho[(size_t)ph * n + idx] += coeff * (arFluxL - arFluxR);
+                            rhsAlpha   [(size_t)ph * n + idx] += coeff * (fluxL.alphaFlux[ph] - fluxR.alphaFlux[ph]);
                         }
-                    }
-
-                    if (j < mesh->ny) {
-                        size_t idxR = mesh_index(mesh, i, j, k);
-                        double coeff = area / mesh_cell_volume(mesh, i, j, k);
-                        w->rhsRho[idxR]  += coeff * flux.massFlux;
-                        w->rhsRhoU[idxR] += coeff * flux.momentumFlux[0];
-                        w->rhsRhoV[idxR] += coeff * flux.momentumFlux[1];
-                        if (dim >= 3) w->rhsRhoW[idxR] += coeff * flux.momentumFlux[2];
-                        w->rhsRhoE[idxR] += coeff * flux.energyFlux;
-
-                        if (multiPhase) {
-                            for (int ph = 0; ph < nPhases; ++ph) {
-                                double aUpw = std::max(state->alpha[ph * tc + upwindIdx], 1e-14);
-                                double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / aUpw) * flux.alphaFlux[ph];
-                                w->rhsAlphaRho[ph * n + idxR] += coeff * alphaRhoFlux;
-                            }
-                            for (int ph = 0; ph < nPhases; ++ph)
-                                w->rhsAlpha[ph * n + idxR] += coeff * flux.alphaFlux[ph];
-                            w->divU[idxR] -= coeff * flux.faceVelocity;
-                        }
+                        divU[idx] += coeff * (fluxR.faceVelocity - fluxL.faceVelocity);
                     }
                 }
             }
         }
+        NVTX_POP();
     }
 
-    /* --- Z-direction fluxes --- */
+    /* --- Z-direction flux --- */
     if (dim >= 3) {
-        for (int k = 0; k <= mesh->nz; ++k) {
-            for (int j = 0; j < mesh->ny; ++j) {
-                for (int i = 0; i < mesh->nx; ++i) {
-                    size_t f = z_face_index(rec, i, j, k);
-                    const PrimitiveState* left  = z_face_left(rec, f);
-                    const PrimitiveState* right = z_face_right(rec, f);
+        NVTX_PUSH("Flux::Z");
+        #pragma omp target teams distribute parallel for collapse(3)
+        for (int k = 0; k < nz; ++k) {
+            for (int j = 0; j < ny; ++j) {
+                for (int i = 0; i < nx; ++i) {
+                    size_t idx = (size_t)((i + ngx) + nxTot * ((j + ngy) + nyTot * (k + ngz)));
+                    size_t fL = (size_t)(i + recNx * (j + recNy * k));
+                    size_t fR = (size_t)(i + recNx * (j + recNy * (k + 1)));
+
+                    double dx = xExt[i + ngx + 1] - xExt[i + ngx];
+                    double dy = yExt[j + ngy + 1] - yExt[j + ngy];
+                    double dz = zExt[k + ngz + 1] - zExt[k + ngz];
+                    double area = dx * dy;
+                    double coeff = area / (dx * dy * dz);
 
                     double normal[3] = {0.0, 0.0, 1.0};
-                    RiemannFlux flux = computeFluxDirect(w->solverType, left, right, normal, &fc);
+                    RiemannFlux fluxL = computeFluxDirect(solver, &zL[fL], &zR[fL], normal, &fc);
+                    RiemannFlux fluxR = computeFluxDirect(solver, &zL[fR], &zR[fR], normal, &fc);
 
-                    double area = mesh_faceAreaZ(mesh, i, j);
+                    rhsRho[idx]  += coeff * (fluxL.massFlux        - fluxR.massFlux);
+                    rhsRhoU[idx] += coeff * (fluxL.momentumFlux[0] - fluxR.momentumFlux[0]);
+                    rhsRhoV[idx] += coeff * (fluxL.momentumFlux[1] - fluxR.momentumFlux[1]);
+                    rhsRhoW[idx] += coeff * (fluxL.momentumFlux[2] - fluxR.momentumFlux[2]);
+                    rhsRhoE[idx] += coeff * (fluxL.energyFlux      - fluxR.energyFlux);
 
-                    size_t upwindIdx = 0;
-                    if (multiPhase)
-                        upwindIdx = (flux.massFlux >= 0) ? mesh_index(mesh, i, j, k - 1) : mesh_index(mesh, i, j, k);
-
-                    if (k >= 1) {
-                        size_t idxL = mesh_index(mesh, i, j, k - 1);
-                        double coeff = area / mesh_cell_volume(mesh, i, j, k - 1);
-                        w->rhsRho[idxL]  -= coeff * flux.massFlux;
-                        w->rhsRhoU[idxL] -= coeff * flux.momentumFlux[0];
-                        w->rhsRhoV[idxL] -= coeff * flux.momentumFlux[1];
-                        w->rhsRhoW[idxL] -= coeff * flux.momentumFlux[2];
-                        w->rhsRhoE[idxL] -= coeff * flux.energyFlux;
-
-                        if (multiPhase) {
-                            for (int ph = 0; ph < nPhases; ++ph) {
-                                double aUpw = std::max(state->alpha[ph * tc + upwindIdx], 1e-14);
-                                double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / aUpw) * flux.alphaFlux[ph];
-                                w->rhsAlphaRho[ph * n + idxL] -= coeff * alphaRhoFlux;
-                            }
-                            for (int ph = 0; ph < nPhases; ++ph)
-                                w->rhsAlpha[ph * n + idxL] -= coeff * flux.alphaFlux[ph];
-                            w->divU[idxL] += coeff * flux.faceVelocity;
+                    if (multiPhase) {
+                        size_t zStride = (size_t)nxTot * (size_t)nyTot;
+                        size_t upL = (fluxL.massFlux >= 0.0) ? (idx - zStride) : idx;
+                        size_t upR = (fluxR.massFlux >= 0.0) ?  idx             : (idx + zStride);
+                        for (int ph = 0; ph < nPhases; ++ph) {
+                            size_t off = (size_t)ph * tc;
+                            double aL = alphaArr[off + upL]; if (aL < 1e-14) aL = 1e-14;
+                            double aR = alphaArr[off + upR]; if (aR < 1e-14) aR = 1e-14;
+                            double arFluxL = (alphaRhoArr[off + upL] / aL) * fluxL.alphaFlux[ph];
+                            double arFluxR = (alphaRhoArr[off + upR] / aR) * fluxR.alphaFlux[ph];
+                            rhsAlphaRho[(size_t)ph * n + idx] += coeff * (arFluxL - arFluxR);
+                            rhsAlpha   [(size_t)ph * n + idx] += coeff * (fluxL.alphaFlux[ph] - fluxR.alphaFlux[ph]);
                         }
-                    }
-
-                    if (k < mesh->nz) {
-                        size_t idxR = mesh_index(mesh, i, j, k);
-                        double coeff = area / mesh_cell_volume(mesh, i, j, k);
-                        w->rhsRho[idxR]  += coeff * flux.massFlux;
-                        w->rhsRhoU[idxR] += coeff * flux.momentumFlux[0];
-                        w->rhsRhoV[idxR] += coeff * flux.momentumFlux[1];
-                        w->rhsRhoW[idxR] += coeff * flux.momentumFlux[2];
-                        w->rhsRhoE[idxR] += coeff * flux.energyFlux;
-
-                        if (multiPhase) {
-                            for (int ph = 0; ph < nPhases; ++ph) {
-                                double aUpw = std::max(state->alpha[ph * tc + upwindIdx], 1e-14);
-                                double alphaRhoFlux = (state->alphaRho[ph * tc + upwindIdx] / aUpw) * flux.alphaFlux[ph];
-                                w->rhsAlphaRho[ph * n + idxR] += coeff * alphaRhoFlux;
-                            }
-                            for (int ph = 0; ph < nPhases; ++ph)
-                                w->rhsAlpha[ph * n + idxR] += coeff * flux.alphaFlux[ph];
-                            w->divU[idxR] -= coeff * flux.faceVelocity;
-                        }
+                        divU[idx] += coeff * (fluxR.faceVelocity - fluxL.faceVelocity);
                     }
                 }
             }
         }
+        NVTX_POP();
     }
 
-    /* --- Alpha source term --- */
+    /* --- Alpha source term: rhsAlpha[ph] += alpha[ph] * divU --- */
     if (multiPhase) {
-        for (int k = 0; k < mesh->nz; ++k)
-            for (int j = 0; j < mesh->ny; ++j)
-                for (int i = 0; i < mesh->nx; ++i) {
-                    size_t idx = mesh_index(mesh, i, j, k);
-                    for (int ph = 0; ph < nPhases; ++ph)
-                        w->rhsAlpha[ph * n + idx] += state->alpha[ph * tc + idx] * w->divU[idx];
+        NVTX_PUSH("AlphaSource");
+        const int nP = nPhases;
+        const size_t tcL = tc;
+        const size_t nL = n;
+        #pragma omp target teams distribute parallel for collapse(3)
+        for (int k = 0; k < nz; ++k) {
+            for (int j = 0; j < ny; ++j) {
+                for (int i = 0; i < nx; ++i) {
+                    size_t idx = (size_t)((i + ngx) + nxTot * ((j + ngy) + nyTot * (k + ngz)));
+                    double dU = divU[idx];
+                    for (int ph = 0; ph < nP; ++ph) {
+                        rhsAlpha[(size_t)ph * nL + idx] += alphaArr[(size_t)ph * tcL + idx] * dU;
+                    }
                 }
+            }
+        }
+        NVTX_POP();
     }
 
     /* --- Body force --- */
@@ -403,14 +477,19 @@ static void explicit_compute_rhs(ExplicitSolverWork* w,
 
     /* --- Viscous stress --- */
     if (config_has_viscosity(config)) {
-        add_viscous_fluxes(config, mesh, state, w->rhsRhoU, w->rhsRhoV, w->rhsRhoW, w->rhsRhoE);
+        NVTX_PUSH("Viscous");
+        add_viscous_fluxes_device(config, mesh, state,
+            w->rhsRhoU, w->rhsRhoV, w->rhsRhoW, w->rhsRhoE);
+        NVTX_POP();
     }
 
     /* --- Surface tension --- */
     if (config_has_surface_tension(config)) {
+        NVTX_PUSH("SurfaceTension");
         add_surface_tension_fluxes(config, mesh, state,
             config->surfaceTensionParams.sigma,
             w->rhsRhoU, w->rhsRhoV, w->rhsRhoW, w->rhsRhoE);
+        NVTX_POP();
     }
 
     NVTX_POP();
@@ -424,15 +503,30 @@ double explicit_step(ExplicitSolverWork* w,
 {
     NVTX_PUSH("Explicit::step");
 
+    /* One-shot warmup: the first MPI_Allreduce that consumes a value just
+     * produced by a target reduction triggers CUDA-aware MPI handshake
+     * (~1-3 s).  Drive a dummy Allreduce now so the first real dt call
+     * doesn't pay it on the timing path. */
+    if (!w->firstStepDone) {
+        w->firstStepDone = 1;
+        if (w->halo) {
+            double dummy = 0.0, gDummy;
+            MPI_Allreduce(&dummy, &gDummy, 1, MPI_DOUBLE, MPI_MIN,
+                          w->halo->mpi->cartComm);
+            (void)gDummy;
+        }
+    }
+
     double dt;
     if (w->params.constDt > 0) {
         dt = w->params.constDt;
     } else {
-        dt = computeAcousticTimeStep_config_mpi(
+        NVTX_PUSH("Explicit::dt");
+        dt = computeAcousticTimeStep_config_mpi_device(
             mesh, state, &w->eos, config, w->params.cfl, w->params.maxDt,
             w->halo->mpi->cartComm);
         if (config_has_viscosity(config)) {
-            dt = std::min(dt, computeViscousDt_config_mpi(mesh, state,
+            dt = std::min(dt, computeViscousDt_config_mpi_device(mesh, state,
                 config, w->params.cfl, w->params.maxDt, w->halo->mpi->cartComm));
         }
         if (config_has_surface_tension(config)) {
@@ -440,6 +534,7 @@ double explicit_step(ExplicitSolverWork* w,
                 config->surfaceTensionParams.sigma, w->params.cfl, w->params.maxDt,
                 w->halo->mpi->cartComm));
         }
+        NVTX_POP();
     }
 
     if (targetDt > 0) dt = std::min(dt, targetDt);
@@ -460,86 +555,166 @@ double explicit_step(ExplicitSolverWork* w,
     int multiPhase = config_is_multi_phase(config);
     int nPhases = multiPhase ? config->multiPhaseParams.nPhases : 0;
     double alphaMin = multiPhase ? config->multiPhaseParams.alphaMin : 0.0;
+
+    /* Surface tension / body force flux contributions are still host-only.
+     * Everything else (multi-phase reconstruct + RHS, IGR, viscous) runs on
+     * device. */
+    if (config_has_surface_tension(config) || config_has_body_force(config))
+    {
+        fprintf(stderr,
+            "explicit_step (GPU): surface-tension / body-force terms are\n"
+            "                     not yet ported to GPU.\n");
+        std::abort();
+    }
+
     size_t n = w->totalCells;
     size_t tc = state->totalCells;
+    const int nx = mesh->nx, ny = mesh->ny, nz = mesh->nz;
+    const int ngx = mesh->ngx, ngy = mesh->ngy, ngz = mesh->ngz;
+    const int nxTot = nx + 2 * ngx;
+    const int nyTot = ny + 2 * ngy;
+    const int dimLocal = config->dim;
+    const int RKOrder = config->RKOrder;
 
-    for (int s = 0; s < config->RKOrder; ++s) {
+    double* rho  = state->rho;
+    double* rhoU = state->rhoU;
+    double* rhoV = state->rhoV;
+    double* rhoW = state->rhoW;
+    double* rhoE = state->rhoE;
+    double* rho0  = state->rho0;
+    double* rhoU0 = state->rhoU0;
+    double* rhoV0 = state->rhoV0;
+    double* rhoW0 = state->rhoW0;
+    double* rhoE0 = state->rhoE0;
+    double* rhsRho  = w->rhsRho;
+    double* rhsRhoU = w->rhsRhoU;
+    double* rhsRhoV = w->rhsRhoV;
+    double* rhsRhoW = w->rhsRhoW;
+    double* rhsRhoE = w->rhsRhoE;
+    double* alphaArr    = state->alpha;
+    double* alphaRhoArr = state->alphaRho;
+    double* alpha0Arr    = state->alpha0;
+    double* alphaRho0Arr = state->alphaRho0;
+    double* rhsAlphaArr    = w->rhsAlpha;
+    double* rhsAlphaRhoArr = w->rhsAlphaRho;
+
+    for (int s = 0; s < RKOrder; ++s) {
+        NVTX_PUSH("Explicit::cons2prim");
         if (multiPhase)
-            mixture_cons_to_prim(mesh, state, &config->multiPhaseParams);
+            mixture_cons_to_prim_device(mesh, state, &config->multiPhaseParams);
         else
             state_cons_to_prim(state, mesh, &w->eos);
-        mesh_apply_bcs_mpi(mesh, state, VARSET_PRIM, w->halo);
+        NVTX_POP();
+        NVTX_PUSH("Explicit::BCs");
+        mesh_apply_bcs_mpi_device(mesh, state, VARSET_PRIM, w->halo);
+        NVTX_POP();
 
-        if (config->useIGR && w->igrSolver) explicit_solve_igr(w, config, mesh, state);
+        if (config->useIGR && w->igrSolver)
+            explicit_solve_igr_device(w, config, mesh, state);
 
         explicit_compute_rhs(w, config, mesh, state);
 
         double c1 = rk_coef[s][0], c2 = rk_coef[s][1];
         double c3 = rk_coef[s][2], c4 = rk_coef[s][3];
+        int saveBackup = (s == 0 && RKOrder > 1);
+        const int nP = nPhases;
+        const int isMulti = multiPhase;
+        const double aMin = alphaMin;
 
-        for (int k = 0; k < mesh->nz; ++k) {
-            for (int j = 0; j < mesh->ny; ++j) {
-                for (int i = 0; i < mesh->nx; ++i) {
-                    size_t idx = mesh_index(mesh, i, j, k);
-
-                    if (s == 0 && config->RKOrder > 1) {
-                        state_save_conservative_cell(state, idx);
+        NVTX_PUSH("Explicit::RKupdate");
+        #pragma omp target teams distribute parallel for collapse(3)
+        for (int k = 0; k < nz; ++k) {
+            for (int j = 0; j < ny; ++j) {
+                for (int i = 0; i < nx; ++i) {
+                    size_t idx = (size_t)((i + ngx) + nxTot * ((j + ngy) + nyTot * (k + ngz)));
+                    if (saveBackup) {
+                        rho0[idx]  = rho[idx];
+                        rhoU0[idx] = rhoU[idx];
+                        if (dimLocal >= 2) rhoV0[idx] = rhoV[idx];
+                        if (dimLocal >= 3) rhoW0[idx] = rhoW[idx];
+                        rhoE0[idx] = rhoE[idx];
+                        if (isMulti) {
+                            for (int ph = 0; ph < nP; ++ph) {
+                                size_t off = (size_t)ph * tc;
+                                alphaRho0Arr[off + idx] = alphaRhoArr[off + idx];
+                                alpha0Arr[off + idx]    = alphaArr[off + idx];
+                            }
+                        }
                     }
-
-                    if (config->RKOrder == 1) {
-                        state->rho[idx]  += dt * w->rhsRho[idx];
-                        state->rhoU[idx] += dt * w->rhsRhoU[idx];
-                        if (config->dim >= 2) state->rhoV[idx] += dt * w->rhsRhoV[idx];
-                        if (config->dim >= 3) state->rhoW[idx] += dt * w->rhsRhoW[idx];
-                        state->rhoE[idx] += dt * w->rhsRhoE[idx];
-                        if (multiPhase) {
-                            for (int ph = 0; ph < nPhases; ++ph)
-                                state->alphaRho[ph * tc + idx] += dt * w->rhsAlphaRho[ph * n + idx];
-                            for (int ph = 0; ph < nPhases; ++ph)
-                                state->alpha[ph * tc + idx] += dt * w->rhsAlpha[ph * n + idx];
+                    if (RKOrder == 1) {
+                        rho[idx]  += dt * rhsRho[idx];
+                        rhoU[idx] += dt * rhsRhoU[idx];
+                        if (dimLocal >= 2) rhoV[idx] += dt * rhsRhoV[idx];
+                        if (dimLocal >= 3) rhoW[idx] += dt * rhsRhoW[idx];
+                        rhoE[idx] += dt * rhsRhoE[idx];
+                        if (isMulti) {
+                            for (int ph = 0; ph < nP; ++ph) {
+                                size_t offN = (size_t)ph * n;
+                                size_t offT = (size_t)ph * tc;
+                                alphaRhoArr[offT + idx] += dt * rhsAlphaRhoArr[offN + idx];
+                                alphaArr   [offT + idx] += dt * rhsAlphaArr   [offN + idx];
+                            }
                         }
                     } else {
-                        state->rho[idx]  = (c1 * state->rho[idx]  + c2 * state->rho0[idx]  + c3 * dt * w->rhsRho[idx])  / c4;
-                        state->rhoU[idx] = (c1 * state->rhoU[idx] + c2 * state->rhoU0[idx] + c3 * dt * w->rhsRhoU[idx]) / c4;
-                        if (config->dim >= 2)
-                            state->rhoV[idx] = (c1 * state->rhoV[idx] + c2 * state->rhoV0[idx] + c3 * dt * w->rhsRhoV[idx]) / c4;
-                        if (config->dim >= 3)
-                            state->rhoW[idx] = (c1 * state->rhoW[idx] + c2 * state->rhoW0[idx] + c3 * dt * w->rhsRhoW[idx]) / c4;
-                        state->rhoE[idx] = (c1 * state->rhoE[idx] + c2 * state->rhoE0[idx] + c3 * dt * w->rhsRhoE[idx]) / c4;
-                        if (multiPhase) {
-                            for (int ph = 0; ph < nPhases; ++ph)
-                                state->alphaRho[ph * tc + idx] = (c1 * state->alphaRho[ph * tc + idx] + c2 * state->alphaRho0[ph * tc + idx] + c3 * dt * w->rhsAlphaRho[ph * n + idx]) / c4;
-                            for (int ph = 0; ph < nPhases; ++ph)
-                                state->alpha[ph * tc + idx] = (c1 * state->alpha[ph * tc + idx] + c2 * state->alpha0[ph * tc + idx] + c3 * dt * w->rhsAlpha[ph * n + idx]) / c4;
+                        rho[idx]  = (c1 * rho[idx]  + c2 * rho0[idx]  + c3 * dt * rhsRho[idx])  / c4;
+                        rhoU[idx] = (c1 * rhoU[idx] + c2 * rhoU0[idx] + c3 * dt * rhsRhoU[idx]) / c4;
+                        if (dimLocal >= 2)
+                            rhoV[idx] = (c1 * rhoV[idx] + c2 * rhoV0[idx] + c3 * dt * rhsRhoV[idx]) / c4;
+                        if (dimLocal >= 3)
+                            rhoW[idx] = (c1 * rhoW[idx] + c2 * rhoW0[idx] + c3 * dt * rhsRhoW[idx]) / c4;
+                        rhoE[idx] = (c1 * rhoE[idx] + c2 * rhoE0[idx] + c3 * dt * rhsRhoE[idx]) / c4;
+                        if (isMulti) {
+                            for (int ph = 0; ph < nP; ++ph) {
+                                size_t offN = (size_t)ph * n;
+                                size_t offT = (size_t)ph * tc;
+                                alphaRhoArr[offT + idx] = (c1 * alphaRhoArr[offT + idx]
+                                                         + c2 * alphaRho0Arr[offT + idx]
+                                                         + c3 * dt * rhsAlphaRhoArr[offN + idx]) / c4;
+                                alphaArr   [offT + idx] = (c1 * alphaArr   [offT + idx]
+                                                         + c2 * alpha0Arr   [offT + idx]
+                                                         + c3 * dt * rhsAlphaArr   [offN + idx]) / c4;
+                            }
                         }
                     }
 
-                    if (multiPhase) {
+                    /* Multi-phase positivity / sum-to-one renormalization. */
+                    if (isMulti) {
                         double rhoSum = 0.0;
-                        for (int ph = 0; ph < nPhases; ++ph) {
-                            state->alphaRho[ph * tc + idx] = std::max(state->alphaRho[ph * tc + idx], 1e-14);
-                            rhoSum += state->alphaRho[ph * tc + idx];
+                        for (int ph = 0; ph < nP; ++ph) {
+                            size_t offT = (size_t)ph * tc;
+                            double v = alphaRhoArr[offT + idx];
+                            if (v < 1e-14) v = 1e-14;
+                            alphaRhoArr[offT + idx] = v;
+                            rhoSum += v;
                         }
-                        state->rho[idx] = rhoSum;
-                        for (int ph = 0; ph < nPhases; ++ph)
-                            state->alpha[ph * tc + idx] = std::max(state->alpha[ph * tc + idx], alphaMin);
-                        double alphaSum = 0.0;
-                        for (int ph = 0; ph < nPhases; ++ph)
-                            alphaSum += state->alpha[ph * tc + idx];
-                        for (int ph = 0; ph < nPhases; ++ph)
-                            state->alpha[ph * tc + idx] /= alphaSum;
+                        rho[idx] = rhoSum;
+                        double aSum = 0.0;
+                        for (int ph = 0; ph < nP; ++ph) {
+                            size_t offT = (size_t)ph * tc;
+                            double a = alphaArr[offT + idx];
+                            if (a < aMin) a = aMin;
+                            alphaArr[offT + idx] = a;
+                            aSum += a;
+                        }
+                        for (int ph = 0; ph < nP; ++ph) {
+                            size_t offT = (size_t)ph * tc;
+                            alphaArr[offT + idx] /= aSum;
+                        }
                     }
                 }
             }
         }
+        NVTX_POP();
     }
 
-    /* Finalize */
+    /* Finalize on device only.  The next step's dt computation also runs on
+     * device; state is pulled back to the host just before I/O events (see
+     * run_time_loop). */
     if (multiPhase)
-        mixture_cons_to_prim(mesh, state, &config->multiPhaseParams);
+        mixture_cons_to_prim_device(mesh, state, &config->multiPhaseParams);
     else
         state_cons_to_prim(state, mesh, &w->eos);
-    mesh_apply_bcs_mpi(mesh, state, VARSET_PRIM, w->halo);
+    mesh_apply_bcs_mpi_device(mesh, state, VARSET_PRIM, w->halo);
 
     NVTX_POP();
     return dt;

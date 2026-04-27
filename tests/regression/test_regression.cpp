@@ -329,6 +329,14 @@ static std::vector<CellData> runCase(const char* jsonFile,
                                      input.smoothingParams.iterations, config);
     }
 
+    /* Push ICs + smoothed state to device only for the explicit solver —
+     * that is the GPU-enabled path.  The semi-implicit solver still runs
+     * on the host, so uploading to device here and downloading afterwards
+     * would clobber host state with a stale device snapshot. */
+    if (!config->semiImplicit) {
+        solution_state_update_to_device(&state);
+    }
+
     /* Run time loop */
     TimeLoopParams tlp = time_loop_params_defaults();
     tlp.endTime = input.timeLoopParams.endTime;
@@ -349,6 +357,12 @@ static std::vector<CellData> runCase(const char* jsonFile,
 
     run_time_loop(&rt, config, &mesh, &state, NULL,
                   step_callback, &stepCtx, &tlp);
+
+    /* Explicit solver leaves state on device between steps; pull it back
+     * before gatherLocalCells reads host pointers. */
+    if (!config->semiImplicit) {
+        solution_state_update_prim_from_device(&state);
+    }
 
     int nPhases = config->multiPhaseParams.nPhases;
     if (nPhasesOut) *nPhasesOut = nPhases;

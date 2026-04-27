@@ -19,7 +19,7 @@
         "RKOrder": 3,
         "reconOrder": "WENO5",
         "semiImplicit": false,
-        "explicitParams": { "cfl": 0.5, "maxDt": 1e-2 },
+        "explicitParams": { "cfl": 0.5, "maxDt": 1e-3 },
         //"explicitParams": { "cfl": 0.5, "maxDt": 1e-2 }
         "semiImplicitParams": {
             "cfl": 0.5,
@@ -28,23 +28,23 @@
             "pressureTol": 1e-12,
             "maxPressureIters": 50,
             "singlePressureSolve": false
-        },
-        "viscousParams": { "mu": 0.000625 }
+        }
+        //"viscousParams": { "mu": 0.000625 }
     },
     "eos": { "type": "IdealGas", "gamma": 1.4, "R": 1.0 },
     "riemannSolver": "HLLC",
     "pressureSolver": "PETSc",
     "mesh": {
-        "nx": 512, "xMin": 0.0, "xMax": 6.283185307179586,
-        "ny": 512, "yMin": 0.0, "yMax": 6.283185307179586,
-        "nz": 512, "zMin": 0.0, "zMax": 6.283185307179586
+        "nx": 200, "xMin": 0.0, "xMax": 6.283185307179586,
+        "ny": 200, "yMin": 0.0, "yMax": 6.283185307179586,
+        "nz": 200, "zMin": 0.0, "zMax": 6.283185307179586
     },
     "boundaryConditions": {
         "xLow": "Periodic", "xHigh": "Periodic",
         "yLow": "Periodic", "yHigh": "Periodic",
         "zLow": "Periodic", "zHigh": "Periodic"
     },
-    "timeLoop": { "endTime": 20, "outputInterval": 2e-1, "printInterval": 1 },
+    "timeLoop": { "endTime": 0.010, "outputInterval": 2e-1, "printInterval": 1 },
     "restart": {
         "checkpoint": true
         //"file": "Checkpoint/checkpoint.{rank}.bin"

@@ -9,31 +9,20 @@
 #include <cmath>
 #include <algorithm>
 
-/* No using declarations needed - all functions are free functions */
+/* Device-safe mesh index: same computation as mesh_index(), but takes the
+ * mesh geometry as loose scalars so the expression can be used from inside
+ * an `omp target` region without dereferencing the host mesh struct. */
+#define CELL_IDX(ii, jj, kk) \
+    ((size_t)(((ii) + ngx) + nxTot * (((jj) + ngy) + nyTot * ((kk) + ngz))))
 
-/* ---- Reconstruction function pointer type ---- */
-typedef double (*ReconFn)(const double*, double);
+/* ---- WENO / Upwind stencil functions and dispatcher ----
+ * All helpers and the `reconstructScalar` dispatcher are inside an
+ * `omp declare target` region so they can be called from the reconstruction
+ * kernels running on the GPU.  The dispatcher replaces the original function
+ * pointer (ReconFn) scheme with an enum-switch, since function pointers are
+ * not portable to device code. */
 
-static void reconstructScalar(
-    const double* field,
-    const size_t* cells,
-    int stencilSize,
-    ReconFn leftFn,
-    ReconFn rightFn,
-    double eps,
-    double* outLeft,
-    double* outRight)
-{
-    double vL[5], vR[5];
-    for (int s = 0; s < stencilSize; ++s) {
-        vL[s] = field[cells[s]];
-        vR[s] = field[cells[s + 1]];
-    }
-    *outLeft  = leftFn(vL, eps);
-    *outRight = rightFn(vR, eps);
-}
-
-/* ---- WENO / Upwind stencil functions ---- */
+#pragma omp declare target
 
 static double weno3Left(const double* v, double eps) {
     double p0 = -0.5 * v[0] + 1.5 * v[1];
@@ -143,10 +132,45 @@ static double upwind5Right(const double* v, double /*eps*/) {
     return (1.0/10.0) * p0 + (6.0/10.0) * p1 + (3.0/10.0) * p2;
 }
 
-/* ---- Helper to zero-initialize a PrimitiveState ---- */
-static void zero_primitive(PrimitiveState* s) {
-    memset(s, 0, sizeof(PrimitiveState));
+static inline void reconstructScalar(
+    const double* field,
+    const size_t* cells,
+    int stencilSize,
+    enum ReconstructionOrder order,
+    double eps,
+    double* outLeft,
+    double* outRight)
+{
+    double vL[5], vR[5];
+    for (int s = 0; s < stencilSize; ++s) {
+        vL[s] = field[cells[s]];
+        vR[s] = field[cells[s + 1]];
+    }
+    switch (order) {
+        case WENO3:
+            *outLeft  = weno3Left(vL, eps);
+            *outRight = weno3Right(vR, eps);
+            break;
+        case UPWIND3:
+            *outLeft  = upwind3Left(vL, eps);
+            *outRight = upwind3Right(vR, eps);
+            break;
+        case WENO5:
+            *outLeft  = weno5Left(vL, eps);
+            *outRight = weno5Right(vR, eps);
+            break;
+        case UPWIND5:
+            *outLeft  = upwind5Left(vL, eps);
+            *outRight = upwind5Right(vR, eps);
+            break;
+        default:
+            *outLeft  = vL[stencilSize / 2];
+            *outRight = vR[stencilSize / 2];
+            break;
+    }
 }
+
+#pragma omp end declare target
 
 /* ---- Direction-specific reconstruction sweeps ---- */
 
@@ -158,113 +182,149 @@ static void reconstructX(struct ReconstructorData* r,
     const int nx = mesh->nx;
     const int ny = mesh->ny;
     const int nz = mesh->nz;
+    const int ngx = mesh->ngx, ngy = mesh->ngy, ngz = mesh->ngz;
+    const int nxTot = nx + 2 * ngx;
+    const int nyTot = ny + 2 * ngy;
+    const int recNx = r->nx, recNy = r->ny;
+    const int rdim = r->dim;
+    const enum ReconstructionOrder order = r->order;
+    const double wenoEps = r->wenoEps;
+    const double rGamma = r->gamma;
+    const double rPInf  = r->pInf;
 
     const double* rho  = state->rho;
     const double* velU = state->velU;
     const double* pres = state->pres;
     const double* sig  = state->sigma;
-    const double* velV = (r->dim >= 2) ? state->velV : NULL;
-    const double* velW = (r->dim >= 3) ? state->velW : NULL;
+    const double* velV = (rdim >= 2) ? state->velV : state->velU;  /* unused if rdim < 2 */
+    const double* velW = (rdim >= 3) ? state->velW : state->velU;  /* unused if rdim < 3 */
+    PrimitiveState* xLeftA  = r->xLeft;
+    PrimitiveState* xRightA = r->xRight;
 
     const int multiPhase = config_is_multi_phase(config);
     const int nAlphas = multiPhase ? config->multiPhaseParams.nPhases : 0;
-    const MultiPhaseParams* mp = &config->multiPhaseParams;
+    const int useIGR = config->useIGR;
     const size_t totalCells = state->totalCells;
+    const double* alphaPtr = state->alpha;  /* NULL for single-phase, fine */
 
+    /* Per-phase EOS coeffs as flat arrays so the kernel doesn't need to
+     * dereference MultiPhaseParams::phases (a host struct) on device. */
+    double phaseGamma[MAX_PHASES], phasePinf[MAX_PHASES];
+    for (int ph = 0; ph < MAX_PHASES; ++ph) { phaseGamma[ph] = 0.0; phasePinf[ph] = 0.0; }
+    if (multiPhase) {
+        for (int ph = 0; ph < nAlphas; ++ph) {
+            phaseGamma[ph] = config->multiPhaseParams.phases[ph].gamma;
+            phasePinf[ph]  = config->multiPhaseParams.phases[ph].pInf;
+        }
+    }
+
+    /* GPU kernel: every (i, j, k) face is independent (each writes to its
+     * own xLeft[f] / xRight[f]).  Note i ranges 0..nx inclusive — the face
+     * count in X is (nx+1) * ny * nz.  `useIGR` is uniform per launch — the
+     * sigma load + reconstruct + store is skipped entirely when IGR is off,
+     * since HLLC/Rusanov/LF only read sigma in their useIGR branch. */
+    #pragma omp target teams distribute parallel for collapse(3) \
+        map(to: phaseGamma[0:MAX_PHASES], phasePinf[0:MAX_PHASES])
     for (int k = 0; k < nz; ++k) {
         for (int j = 0; j < ny; ++j) {
             for (int i = 0; i <= nx; ++i) {
-                size_t fIdx = x_face_index(r, i, j, k);
-                PrimitiveState* left  = &r->xLeft[fIdx];
-                PrimitiveState* right = &r->xRight[fIdx];
-                zero_primitive(left);
-                zero_primitive(right);
+                size_t fIdx = (size_t)(i + (recNx + 1) * (j + recNy * k));
+                PrimitiveState* left  = &xLeftA[fIdx];
+                PrimitiveState* right = &xRightA[fIdx];
 
-                if (r->order == WENO1 || r->order == UPWIND1) {
-                    size_t idxL = mesh_index(mesh,i - 1, j, k);
-                    size_t idxR = mesh_index(mesh,i, j, k);
+                if (order == WENO1 || order == UPWIND1) {
+                    size_t idxL = CELL_IDX(i - 1, j, k);
+                    size_t idxR = CELL_IDX(i,     j, k);
                     left->rho   = rho[idxL];
                     left->u[0]  = velU[idxL];
                     left->p     = pres[idxL];
-                    left->sigma = sig[idxL];
                     right->rho   = rho[idxR];
                     right->u[0]  = velU[idxR];
                     right->p     = pres[idxR];
-                    right->sigma = sig[idxR];
-                    if (r->dim >= 2) {
+                    if (useIGR) {
+                        left->sigma  = sig[idxL];
+                        right->sigma = sig[idxR];
+                    }
+                    if (rdim >= 2) {
                         left->u[1]  = velV[idxL];
                         right->u[1] = velV[idxR];
                     }
-                    if (r->dim >= 3) {
+                    if (rdim >= 3) {
                         left->u[2]  = velW[idxL];
                         right->u[2] = velW[idxR];
                     }
                     if (multiPhase) {
                         for (int ph = 0; ph < nAlphas; ++ph) {
-                            left->alpha[ph] = state->alpha[ph * totalCells + idxL];
-                            right->alpha[ph] = state->alpha[ph * totalCells + idxR];
+                            left->alpha[ph]  = alphaPtr[(size_t)ph * totalCells + idxL];
+                            right->alpha[ph] = alphaPtr[(size_t)ph * totalCells + idxR];
                         }
-                        effective_gamma_and_pi_inf(left->alpha, nAlphas, mp, &left->gammaEff, &left->piInfEff);
-                        effective_gamma_and_pi_inf(right->alpha, nAlphas, mp, &right->gammaEff, &right->piInfEff);
+                        effective_gamma_and_pi_inf_arr(left->alpha,  nAlphas,
+                            phaseGamma, phasePinf, &left->gammaEff,  &left->piInfEff);
+                        effective_gamma_and_pi_inf_arr(right->alpha, nAlphas,
+                            phaseGamma, phasePinf, &right->gammaEff, &right->piInfEff);
                     } else {
-                        left->gammaEff = r->gamma;   left->piInfEff = r->pInf;
-                        right->gammaEff = r->gamma;  right->piInfEff = r->pInf;
+                        left->gammaEff = rGamma;   left->piInfEff = rPInf;
+                        right->gammaEff = rGamma;  right->piInfEff = rPInf;
                     }
                 }
-                else if (r->order == WENO3 || r->order == UPWIND3) {
+                else if (order == WENO3 || order == UPWIND3) {
                     size_t c[4];
-                    c[0] = mesh_index(mesh,i - 2, j, k);
-                    c[1] = mesh_index(mesh,i - 1, j, k);
-                    c[2] = mesh_index(mesh,i,     j, k);
-                    c[3] = mesh_index(mesh,i + 1, j, k);
+                    c[0] = CELL_IDX(i - 2, j, k);
+                    c[1] = CELL_IDX(i - 1, j, k);
+                    c[2] = CELL_IDX(i,     j, k);
+                    c[3] = CELL_IDX(i + 1, j, k);
 
-                    ReconFn lFn = (r->order == WENO3) ? weno3Left  : upwind3Left;
-                    ReconFn rFn = (r->order == WENO3) ? weno3Right : upwind3Right;
-                    reconstructScalar(rho,  c, 3, lFn, rFn, r->wenoEps, &left->rho,  &right->rho);
-                    reconstructScalar(velU, c, 3, lFn, rFn, r->wenoEps, &left->u[0], &right->u[0]);
-                    reconstructScalar(pres, c, 3, lFn, rFn, r->wenoEps, &left->p,    &right->p);
-                    reconstructScalar(sig,  c, 3, lFn, rFn, r->wenoEps, &left->sigma, &right->sigma);
-                    if (r->dim >= 2)
-                        reconstructScalar(velV, c, 3, lFn, rFn, r->wenoEps, &left->u[1], &right->u[1]);
-                    if (r->dim >= 3)
-                        reconstructScalar(velW, c, 3, lFn, rFn, r->wenoEps, &left->u[2], &right->u[2]);
+                    reconstructScalar(rho,  c, 3, order, wenoEps, &left->rho,   &right->rho);
+                    reconstructScalar(velU, c, 3, order, wenoEps, &left->u[0],  &right->u[0]);
+                    reconstructScalar(pres, c, 3, order, wenoEps, &left->p,     &right->p);
+                    if (useIGR)
+                        reconstructScalar(sig,  c, 3, order, wenoEps, &left->sigma, &right->sigma);
+                    if (rdim >= 2)
+                        reconstructScalar(velV, c, 3, order, wenoEps, &left->u[1], &right->u[1]);
+                    if (rdim >= 3)
+                        reconstructScalar(velW, c, 3, order, wenoEps, &left->u[2], &right->u[2]);
                     if (multiPhase) {
                         for (int ph = 0; ph < nAlphas; ++ph)
-                            reconstructScalar(state->alpha + ph * totalCells, c, 3, lFn, rFn, r->wenoEps, &left->alpha[ph], &right->alpha[ph]);
-                        effective_gamma_and_pi_inf(left->alpha, nAlphas, mp, &left->gammaEff, &left->piInfEff);
-                        effective_gamma_and_pi_inf(right->alpha, nAlphas, mp, &right->gammaEff, &right->piInfEff);
+                            reconstructScalar(alphaPtr + (size_t)ph * totalCells, c, 3, order,
+                                              wenoEps, &left->alpha[ph], &right->alpha[ph]);
+                        effective_gamma_and_pi_inf_arr(left->alpha,  nAlphas,
+                            phaseGamma, phasePinf, &left->gammaEff,  &left->piInfEff);
+                        effective_gamma_and_pi_inf_arr(right->alpha, nAlphas,
+                            phaseGamma, phasePinf, &right->gammaEff, &right->piInfEff);
                     } else {
-                        left->gammaEff = r->gamma;   left->piInfEff = r->pInf;
-                        right->gammaEff = r->gamma;  right->piInfEff = r->pInf;
+                        left->gammaEff = rGamma;   left->piInfEff = rPInf;
+                        right->gammaEff = rGamma;  right->piInfEff = rPInf;
                     }
                 }
                 else { /* WENO5 or UPWIND5 */
                     size_t c[6];
-                    c[0] = mesh_index(mesh,i - 3, j, k);
-                    c[1] = mesh_index(mesh,i - 2, j, k);
-                    c[2] = mesh_index(mesh,i - 1, j, k);
-                    c[3] = mesh_index(mesh,i,     j, k);
-                    c[4] = mesh_index(mesh,i + 1, j, k);
-                    c[5] = mesh_index(mesh,i + 2, j, k);
+                    c[0] = CELL_IDX(i - 3, j, k);
+                    c[1] = CELL_IDX(i - 2, j, k);
+                    c[2] = CELL_IDX(i - 1, j, k);
+                    c[3] = CELL_IDX(i,     j, k);
+                    c[4] = CELL_IDX(i + 1, j, k);
+                    c[5] = CELL_IDX(i + 2, j, k);
 
-                    ReconFn lFn = (r->order == WENO5) ? weno5Left  : upwind5Left;
-                    ReconFn rFn = (r->order == WENO5) ? weno5Right : upwind5Right;
-                    reconstructScalar(rho,  c, 5, lFn, rFn, r->wenoEps, &left->rho,  &right->rho);
-                    reconstructScalar(velU, c, 5, lFn, rFn, r->wenoEps, &left->u[0], &right->u[0]);
-                    reconstructScalar(pres, c, 5, lFn, rFn, r->wenoEps, &left->p,    &right->p);
-                    reconstructScalar(sig,  c, 5, lFn, rFn, r->wenoEps, &left->sigma, &right->sigma);
-                    if (r->dim >= 2)
-                        reconstructScalar(velV, c, 5, lFn, rFn, r->wenoEps, &left->u[1], &right->u[1]);
-                    if (r->dim >= 3)
-                        reconstructScalar(velW, c, 5, lFn, rFn, r->wenoEps, &left->u[2], &right->u[2]);
+                    reconstructScalar(rho,  c, 5, order, wenoEps, &left->rho,   &right->rho);
+                    reconstructScalar(velU, c, 5, order, wenoEps, &left->u[0],  &right->u[0]);
+                    reconstructScalar(pres, c, 5, order, wenoEps, &left->p,     &right->p);
+                    if (useIGR)
+                        reconstructScalar(sig,  c, 5, order, wenoEps, &left->sigma, &right->sigma);
+                    if (rdim >= 2)
+                        reconstructScalar(velV, c, 5, order, wenoEps, &left->u[1], &right->u[1]);
+                    if (rdim >= 3)
+                        reconstructScalar(velW, c, 5, order, wenoEps, &left->u[2], &right->u[2]);
                     if (multiPhase) {
                         for (int ph = 0; ph < nAlphas; ++ph)
-                            reconstructScalar(state->alpha + ph * totalCells, c, 5, lFn, rFn, r->wenoEps, &left->alpha[ph], &right->alpha[ph]);
-                        effective_gamma_and_pi_inf(left->alpha, nAlphas, mp, &left->gammaEff, &left->piInfEff);
-                        effective_gamma_and_pi_inf(right->alpha, nAlphas, mp, &right->gammaEff, &right->piInfEff);
+                            reconstructScalar(alphaPtr + (size_t)ph * totalCells, c, 5, order,
+                                              wenoEps, &left->alpha[ph], &right->alpha[ph]);
+                        effective_gamma_and_pi_inf_arr(left->alpha,  nAlphas,
+                            phaseGamma, phasePinf, &left->gammaEff,  &left->piInfEff);
+                        effective_gamma_and_pi_inf_arr(right->alpha, nAlphas,
+                            phaseGamma, phasePinf, &right->gammaEff, &right->piInfEff);
                     } else {
-                        left->gammaEff = r->gamma;   left->piInfEff = r->pInf;
-                        right->gammaEff = r->gamma;  right->piInfEff = r->pInf;
+                        left->gammaEff = rGamma;   left->piInfEff = rPInf;
+                        right->gammaEff = rGamma;  right->piInfEff = rPInf;
                     }
                 }
             }
@@ -280,109 +340,136 @@ static void reconstructY(struct ReconstructorData* r,
     const int nx = mesh->nx;
     const int ny = mesh->ny;
     const int nz = mesh->nz;
+    const int ngx = mesh->ngx, ngy = mesh->ngy, ngz = mesh->ngz;
+    const int nxTot = nx + 2 * ngx;
+    const int nyTot = ny + 2 * ngy;
+    const int recNx = r->nx, recNy = r->ny;
+    const int rdim = r->dim;
+    const enum ReconstructionOrder order = r->order;
+    const double wenoEps = r->wenoEps;
+    const double rGamma = r->gamma, rPInf = r->pInf;
 
     const double* rho  = state->rho;
     const double* velU = state->velU;
     const double* velV = state->velV;
     const double* pres = state->pres;
     const double* sig  = state->sigma;
-    const double* velW = (r->dim >= 3) ? state->velW : NULL;
-
+    const double* velW = (rdim >= 3) ? state->velW : state->velU;
+    const int useIGR = config->useIGR;
     const int multiPhase = config_is_multi_phase(config);
     const int nAlphas = multiPhase ? config->multiPhaseParams.nPhases : 0;
-    const MultiPhaseParams* mp = &config->multiPhaseParams;
     const size_t totalCells = state->totalCells;
+    const double* alphaPtr = state->alpha;
+    PrimitiveState* yLeftA  = r->yLeft;
+    PrimitiveState* yRightA = r->yRight;
 
+    double phaseGamma[MAX_PHASES], phasePinf[MAX_PHASES];
+    for (int ph = 0; ph < MAX_PHASES; ++ph) { phaseGamma[ph] = 0.0; phasePinf[ph] = 0.0; }
+    if (multiPhase) {
+        for (int ph = 0; ph < nAlphas; ++ph) {
+            phaseGamma[ph] = config->multiPhaseParams.phases[ph].gamma;
+            phasePinf[ph]  = config->multiPhaseParams.phases[ph].pInf;
+        }
+    }
+
+    #pragma omp target teams distribute parallel for collapse(3) \
+        map(to: phaseGamma[0:MAX_PHASES], phasePinf[0:MAX_PHASES])
     for (int k = 0; k < nz; ++k) {
         for (int j = 0; j <= ny; ++j) {
             for (int i = 0; i < nx; ++i) {
-                size_t fIdx = y_face_index(r, i, j, k);
-                PrimitiveState* left  = &r->yLeft[fIdx];
-                PrimitiveState* right = &r->yRight[fIdx];
-                zero_primitive(left);
-                zero_primitive(right);
+                size_t fIdx = (size_t)(i + recNx * (j + (recNy + 1) * k));
+                PrimitiveState* left  = &yLeftA[fIdx];
+                PrimitiveState* right = &yRightA[fIdx];
 
-                if (r->order == WENO1 || r->order == UPWIND1) {
-                    size_t idxL = mesh_index(mesh,i, j - 1, k);
-                    size_t idxR = mesh_index(mesh,i, j, k);
+                if (order == WENO1 || order == UPWIND1) {
+                    size_t idxL = CELL_IDX(i, j - 1, k);
+                    size_t idxR = CELL_IDX(i, j,     k);
                     left->rho   = rho[idxL];
                     left->u[0]  = velU[idxL];
                     left->u[1]  = velV[idxL];
                     left->p     = pres[idxL];
-                    left->sigma = sig[idxL];
                     right->rho   = rho[idxR];
                     right->u[0]  = velU[idxR];
                     right->u[1]  = velV[idxR];
                     right->p     = pres[idxR];
-                    right->sigma = sig[idxR];
-                    if (r->dim >= 3) {
+                    if (useIGR) {
+                        left->sigma  = sig[idxL];
+                        right->sigma = sig[idxR];
+                    }
+                    if (rdim >= 3) {
                         left->u[2]  = velW[idxL];
                         right->u[2] = velW[idxR];
                     }
                     if (multiPhase) {
                         for (int ph = 0; ph < nAlphas; ++ph) {
-                            left->alpha[ph] = state->alpha[ph * totalCells + idxL];
-                            right->alpha[ph] = state->alpha[ph * totalCells + idxR];
+                            left->alpha[ph]  = alphaPtr[(size_t)ph * totalCells + idxL];
+                            right->alpha[ph] = alphaPtr[(size_t)ph * totalCells + idxR];
                         }
-                        effective_gamma_and_pi_inf(left->alpha, nAlphas, mp, &left->gammaEff, &left->piInfEff);
-                        effective_gamma_and_pi_inf(right->alpha, nAlphas, mp, &right->gammaEff, &right->piInfEff);
+                        effective_gamma_and_pi_inf_arr(left->alpha,  nAlphas,
+                            phaseGamma, phasePinf, &left->gammaEff,  &left->piInfEff);
+                        effective_gamma_and_pi_inf_arr(right->alpha, nAlphas,
+                            phaseGamma, phasePinf, &right->gammaEff, &right->piInfEff);
                     } else {
-                        left->gammaEff = r->gamma;   left->piInfEff = r->pInf;
-                        right->gammaEff = r->gamma;  right->piInfEff = r->pInf;
+                        left->gammaEff = rGamma;   left->piInfEff = rPInf;
+                        right->gammaEff = rGamma;  right->piInfEff = rPInf;
                     }
                 }
-                else if (r->order == WENO3 || r->order == UPWIND3) {
+                else if (order == WENO3 || order == UPWIND3) {
                     size_t c[4];
-                    c[0] = mesh_index(mesh,i, j - 2, k);
-                    c[1] = mesh_index(mesh,i, j - 1, k);
-                    c[2] = mesh_index(mesh,i, j,     k);
-                    c[3] = mesh_index(mesh,i, j + 1, k);
+                    c[0] = CELL_IDX(i, j - 2, k);
+                    c[1] = CELL_IDX(i, j - 1, k);
+                    c[2] = CELL_IDX(i, j,     k);
+                    c[3] = CELL_IDX(i, j + 1, k);
 
-                    ReconFn lFn = (r->order == WENO3) ? weno3Left  : upwind3Left;
-                    ReconFn rFn = (r->order == WENO3) ? weno3Right : upwind3Right;
-                    reconstructScalar(rho,  c, 3, lFn, rFn, r->wenoEps, &left->rho,  &right->rho);
-                    reconstructScalar(velU, c, 3, lFn, rFn, r->wenoEps, &left->u[0], &right->u[0]);
-                    reconstructScalar(velV, c, 3, lFn, rFn, r->wenoEps, &left->u[1], &right->u[1]);
-                    reconstructScalar(pres, c, 3, lFn, rFn, r->wenoEps, &left->p,    &right->p);
-                    reconstructScalar(sig,  c, 3, lFn, rFn, r->wenoEps, &left->sigma, &right->sigma);
-                    if (r->dim >= 3)
-                        reconstructScalar(velW, c, 3, lFn, rFn, r->wenoEps, &left->u[2], &right->u[2]);
+                    reconstructScalar(rho,  c, 3, order, wenoEps, &left->rho,   &right->rho);
+                    reconstructScalar(velU, c, 3, order, wenoEps, &left->u[0],  &right->u[0]);
+                    reconstructScalar(velV, c, 3, order, wenoEps, &left->u[1],  &right->u[1]);
+                    reconstructScalar(pres, c, 3, order, wenoEps, &left->p,     &right->p);
+                    if (useIGR)
+                        reconstructScalar(sig,  c, 3, order, wenoEps, &left->sigma, &right->sigma);
+                    if (rdim >= 3)
+                        reconstructScalar(velW, c, 3, order, wenoEps, &left->u[2], &right->u[2]);
                     if (multiPhase) {
                         for (int ph = 0; ph < nAlphas; ++ph)
-                            reconstructScalar(state->alpha + ph * totalCells, c, 3, lFn, rFn, r->wenoEps, &left->alpha[ph], &right->alpha[ph]);
-                        effective_gamma_and_pi_inf(left->alpha, nAlphas, mp, &left->gammaEff, &left->piInfEff);
-                        effective_gamma_and_pi_inf(right->alpha, nAlphas, mp, &right->gammaEff, &right->piInfEff);
+                            reconstructScalar(alphaPtr + (size_t)ph * totalCells, c, 3, order,
+                                              wenoEps, &left->alpha[ph], &right->alpha[ph]);
+                        effective_gamma_and_pi_inf_arr(left->alpha,  nAlphas,
+                            phaseGamma, phasePinf, &left->gammaEff,  &left->piInfEff);
+                        effective_gamma_and_pi_inf_arr(right->alpha, nAlphas,
+                            phaseGamma, phasePinf, &right->gammaEff, &right->piInfEff);
                     } else {
-                        left->gammaEff = r->gamma;   left->piInfEff = r->pInf;
-                        right->gammaEff = r->gamma;  right->piInfEff = r->pInf;
+                        left->gammaEff = rGamma;   left->piInfEff = rPInf;
+                        right->gammaEff = rGamma;  right->piInfEff = rPInf;
                     }
                 }
                 else { /* WENO5 or UPWIND5 */
                     size_t c[6];
-                    c[0] = mesh_index(mesh,i, j - 3, k);
-                    c[1] = mesh_index(mesh,i, j - 2, k);
-                    c[2] = mesh_index(mesh,i, j - 1, k);
-                    c[3] = mesh_index(mesh,i, j,     k);
-                    c[4] = mesh_index(mesh,i, j + 1, k);
-                    c[5] = mesh_index(mesh,i, j + 2, k);
+                    c[0] = CELL_IDX(i, j - 3, k);
+                    c[1] = CELL_IDX(i, j - 2, k);
+                    c[2] = CELL_IDX(i, j - 1, k);
+                    c[3] = CELL_IDX(i, j,     k);
+                    c[4] = CELL_IDX(i, j + 1, k);
+                    c[5] = CELL_IDX(i, j + 2, k);
 
-                    ReconFn lFn = (r->order == WENO5) ? weno5Left  : upwind5Left;
-                    ReconFn rFn = (r->order == WENO5) ? weno5Right : upwind5Right;
-                    reconstructScalar(rho,  c, 5, lFn, rFn, r->wenoEps, &left->rho,  &right->rho);
-                    reconstructScalar(velU, c, 5, lFn, rFn, r->wenoEps, &left->u[0], &right->u[0]);
-                    reconstructScalar(velV, c, 5, lFn, rFn, r->wenoEps, &left->u[1], &right->u[1]);
-                    reconstructScalar(pres, c, 5, lFn, rFn, r->wenoEps, &left->p,    &right->p);
-                    reconstructScalar(sig,  c, 5, lFn, rFn, r->wenoEps, &left->sigma, &right->sigma);
-                    if (r->dim >= 3)
-                        reconstructScalar(velW, c, 5, lFn, rFn, r->wenoEps, &left->u[2], &right->u[2]);
+                    reconstructScalar(rho,  c, 5, order, wenoEps, &left->rho,   &right->rho);
+                    reconstructScalar(velU, c, 5, order, wenoEps, &left->u[0],  &right->u[0]);
+                    reconstructScalar(velV, c, 5, order, wenoEps, &left->u[1],  &right->u[1]);
+                    reconstructScalar(pres, c, 5, order, wenoEps, &left->p,     &right->p);
+                    if (useIGR)
+                        reconstructScalar(sig,  c, 5, order, wenoEps, &left->sigma, &right->sigma);
+                    if (rdim >= 3)
+                        reconstructScalar(velW, c, 5, order, wenoEps, &left->u[2], &right->u[2]);
                     if (multiPhase) {
                         for (int ph = 0; ph < nAlphas; ++ph)
-                            reconstructScalar(state->alpha + ph * totalCells, c, 5, lFn, rFn, r->wenoEps, &left->alpha[ph], &right->alpha[ph]);
-                        effective_gamma_and_pi_inf(left->alpha, nAlphas, mp, &left->gammaEff, &left->piInfEff);
-                        effective_gamma_and_pi_inf(right->alpha, nAlphas, mp, &right->gammaEff, &right->piInfEff);
+                            reconstructScalar(alphaPtr + (size_t)ph * totalCells, c, 5, order,
+                                              wenoEps, &left->alpha[ph], &right->alpha[ph]);
+                        effective_gamma_and_pi_inf_arr(left->alpha,  nAlphas,
+                            phaseGamma, phasePinf, &left->gammaEff,  &left->piInfEff);
+                        effective_gamma_and_pi_inf_arr(right->alpha, nAlphas,
+                            phaseGamma, phasePinf, &right->gammaEff, &right->piInfEff);
                     } else {
-                        left->gammaEff = r->gamma;   left->piInfEff = r->pInf;
-                        right->gammaEff = r->gamma;  right->piInfEff = r->pInf;
+                        left->gammaEff = rGamma;   left->piInfEff = rPInf;
+                        right->gammaEff = rGamma;  right->piInfEff = rPInf;
                     }
                 }
             }
@@ -398,6 +485,13 @@ static void reconstructZ(struct ReconstructorData* r,
     const int nx = mesh->nx;
     const int ny = mesh->ny;
     const int nz = mesh->nz;
+    const int ngx = mesh->ngx, ngy = mesh->ngy, ngz = mesh->ngz;
+    const int nxTot = nx + 2 * ngx;
+    const int nyTot = ny + 2 * ngy;
+    const int recNx = r->nx, recNy = r->ny;
+    const enum ReconstructionOrder order = r->order;
+    const double wenoEps = r->wenoEps;
+    const double rGamma = r->gamma, rPInf = r->pInf;
 
     const double* rho  = state->rho;
     const double* velU = state->velU;
@@ -405,98 +499,117 @@ static void reconstructZ(struct ReconstructorData* r,
     const double* velW = state->velW;
     const double* pres = state->pres;
     const double* sig  = state->sigma;
-
+    const int useIGR = config->useIGR;
     const int multiPhase = config_is_multi_phase(config);
     const int nAlphas = multiPhase ? config->multiPhaseParams.nPhases : 0;
-    const MultiPhaseParams* mp = &config->multiPhaseParams;
     const size_t totalCells = state->totalCells;
+    const double* alphaPtr = state->alpha;
+    PrimitiveState* zLeftA  = r->zLeft;
+    PrimitiveState* zRightA = r->zRight;
 
+    double phaseGamma[MAX_PHASES], phasePinf[MAX_PHASES];
+    for (int ph = 0; ph < MAX_PHASES; ++ph) { phaseGamma[ph] = 0.0; phasePinf[ph] = 0.0; }
+    if (multiPhase) {
+        for (int ph = 0; ph < nAlphas; ++ph) {
+            phaseGamma[ph] = config->multiPhaseParams.phases[ph].gamma;
+            phasePinf[ph]  = config->multiPhaseParams.phases[ph].pInf;
+        }
+    }
+
+    #pragma omp target teams distribute parallel for collapse(3) \
+        map(to: phaseGamma[0:MAX_PHASES], phasePinf[0:MAX_PHASES])
     for (int k = 0; k <= nz; ++k) {
         for (int j = 0; j < ny; ++j) {
             for (int i = 0; i < nx; ++i) {
-                size_t fIdx = z_face_index(r, i, j, k);
-                PrimitiveState* left  = &r->zLeft[fIdx];
-                PrimitiveState* right = &r->zRight[fIdx];
-                zero_primitive(left);
-                zero_primitive(right);
+                size_t fIdx = (size_t)(i + recNx * (j + recNy * k));
+                PrimitiveState* left  = &zLeftA[fIdx];
+                PrimitiveState* right = &zRightA[fIdx];
 
-                if (r->order == WENO1 || r->order == UPWIND1) {
-                    size_t idxL = mesh_index(mesh,i, j, k - 1);
-                    size_t idxR = mesh_index(mesh,i, j, k);
+                if (order == WENO1 || order == UPWIND1) {
+                    size_t idxL = CELL_IDX(i, j, k - 1);
+                    size_t idxR = CELL_IDX(i, j, k);
                     left->rho   = rho[idxL];
                     left->u[0]  = velU[idxL];
                     left->u[1]  = velV[idxL];
                     left->u[2]  = velW[idxL];
                     left->p     = pres[idxL];
-                    left->sigma = sig[idxL];
                     right->rho   = rho[idxR];
                     right->u[0]  = velU[idxR];
                     right->u[1]  = velV[idxR];
                     right->u[2]  = velW[idxR];
                     right->p     = pres[idxR];
-                    right->sigma = sig[idxR];
+                    if (useIGR) {
+                        left->sigma  = sig[idxL];
+                        right->sigma = sig[idxR];
+                    }
                     if (multiPhase) {
                         for (int ph = 0; ph < nAlphas; ++ph) {
-                            left->alpha[ph] = state->alpha[ph * totalCells + idxL];
-                            right->alpha[ph] = state->alpha[ph * totalCells + idxR];
+                            left->alpha[ph]  = alphaPtr[(size_t)ph * totalCells + idxL];
+                            right->alpha[ph] = alphaPtr[(size_t)ph * totalCells + idxR];
                         }
-                        effective_gamma_and_pi_inf(left->alpha, nAlphas, mp, &left->gammaEff, &left->piInfEff);
-                        effective_gamma_and_pi_inf(right->alpha, nAlphas, mp, &right->gammaEff, &right->piInfEff);
+                        effective_gamma_and_pi_inf_arr(left->alpha,  nAlphas,
+                            phaseGamma, phasePinf, &left->gammaEff,  &left->piInfEff);
+                        effective_gamma_and_pi_inf_arr(right->alpha, nAlphas,
+                            phaseGamma, phasePinf, &right->gammaEff, &right->piInfEff);
                     } else {
-                        left->gammaEff = r->gamma;   left->piInfEff = r->pInf;
-                        right->gammaEff = r->gamma;  right->piInfEff = r->pInf;
+                        left->gammaEff = rGamma;   left->piInfEff = rPInf;
+                        right->gammaEff = rGamma;  right->piInfEff = rPInf;
                     }
                 }
-                else if (r->order == WENO3 || r->order == UPWIND3) {
+                else if (order == WENO3 || order == UPWIND3) {
                     size_t c[4];
-                    c[0] = mesh_index(mesh,i, j, k - 2);
-                    c[1] = mesh_index(mesh,i, j, k - 1);
-                    c[2] = mesh_index(mesh,i, j, k);
-                    c[3] = mesh_index(mesh,i, j, k + 1);
+                    c[0] = CELL_IDX(i, j, k - 2);
+                    c[1] = CELL_IDX(i, j, k - 1);
+                    c[2] = CELL_IDX(i, j, k);
+                    c[3] = CELL_IDX(i, j, k + 1);
 
-                    ReconFn lFn = (r->order == WENO3) ? weno3Left  : upwind3Left;
-                    ReconFn rFn = (r->order == WENO3) ? weno3Right : upwind3Right;
-                    reconstructScalar(rho,  c, 3, lFn, rFn, r->wenoEps, &left->rho,  &right->rho);
-                    reconstructScalar(velU, c, 3, lFn, rFn, r->wenoEps, &left->u[0], &right->u[0]);
-                    reconstructScalar(velV, c, 3, lFn, rFn, r->wenoEps, &left->u[1], &right->u[1]);
-                    reconstructScalar(velW, c, 3, lFn, rFn, r->wenoEps, &left->u[2], &right->u[2]);
-                    reconstructScalar(pres, c, 3, lFn, rFn, r->wenoEps, &left->p,    &right->p);
-                    reconstructScalar(sig,  c, 3, lFn, rFn, r->wenoEps, &left->sigma, &right->sigma);
+                    reconstructScalar(rho,  c, 3, order, wenoEps, &left->rho,   &right->rho);
+                    reconstructScalar(velU, c, 3, order, wenoEps, &left->u[0],  &right->u[0]);
+                    reconstructScalar(velV, c, 3, order, wenoEps, &left->u[1],  &right->u[1]);
+                    reconstructScalar(velW, c, 3, order, wenoEps, &left->u[2],  &right->u[2]);
+                    reconstructScalar(pres, c, 3, order, wenoEps, &left->p,     &right->p);
+                    if (useIGR)
+                        reconstructScalar(sig,  c, 3, order, wenoEps, &left->sigma, &right->sigma);
                     if (multiPhase) {
                         for (int ph = 0; ph < nAlphas; ++ph)
-                            reconstructScalar(state->alpha + ph * totalCells, c, 3, lFn, rFn, r->wenoEps, &left->alpha[ph], &right->alpha[ph]);
-                        effective_gamma_and_pi_inf(left->alpha, nAlphas, mp, &left->gammaEff, &left->piInfEff);
-                        effective_gamma_and_pi_inf(right->alpha, nAlphas, mp, &right->gammaEff, &right->piInfEff);
+                            reconstructScalar(alphaPtr + (size_t)ph * totalCells, c, 3, order,
+                                              wenoEps, &left->alpha[ph], &right->alpha[ph]);
+                        effective_gamma_and_pi_inf_arr(left->alpha,  nAlphas,
+                            phaseGamma, phasePinf, &left->gammaEff,  &left->piInfEff);
+                        effective_gamma_and_pi_inf_arr(right->alpha, nAlphas,
+                            phaseGamma, phasePinf, &right->gammaEff, &right->piInfEff);
                     } else {
-                        left->gammaEff = r->gamma;   left->piInfEff = r->pInf;
-                        right->gammaEff = r->gamma;  right->piInfEff = r->pInf;
+                        left->gammaEff = rGamma;   left->piInfEff = rPInf;
+                        right->gammaEff = rGamma;  right->piInfEff = rPInf;
                     }
                 }
                 else { /* WENO5 or UPWIND5 */
                     size_t c[6];
-                    c[0] = mesh_index(mesh,i, j, k - 3);
-                    c[1] = mesh_index(mesh,i, j, k - 2);
-                    c[2] = mesh_index(mesh,i, j, k - 1);
-                    c[3] = mesh_index(mesh,i, j, k);
-                    c[4] = mesh_index(mesh,i, j, k + 1);
-                    c[5] = mesh_index(mesh,i, j, k + 2);
+                    c[0] = CELL_IDX(i, j, k - 3);
+                    c[1] = CELL_IDX(i, j, k - 2);
+                    c[2] = CELL_IDX(i, j, k - 1);
+                    c[3] = CELL_IDX(i, j, k);
+                    c[4] = CELL_IDX(i, j, k + 1);
+                    c[5] = CELL_IDX(i, j, k + 2);
 
-                    ReconFn lFn = (r->order == WENO5) ? weno5Left  : upwind5Left;
-                    ReconFn rFn = (r->order == WENO5) ? weno5Right : upwind5Right;
-                    reconstructScalar(rho,  c, 5, lFn, rFn, r->wenoEps, &left->rho,  &right->rho);
-                    reconstructScalar(velU, c, 5, lFn, rFn, r->wenoEps, &left->u[0], &right->u[0]);
-                    reconstructScalar(velV, c, 5, lFn, rFn, r->wenoEps, &left->u[1], &right->u[1]);
-                    reconstructScalar(velW, c, 5, lFn, rFn, r->wenoEps, &left->u[2], &right->u[2]);
-                    reconstructScalar(pres, c, 5, lFn, rFn, r->wenoEps, &left->p,    &right->p);
-                    reconstructScalar(sig,  c, 5, lFn, rFn, r->wenoEps, &left->sigma, &right->sigma);
+                    reconstructScalar(rho,  c, 5, order, wenoEps, &left->rho,   &right->rho);
+                    reconstructScalar(velU, c, 5, order, wenoEps, &left->u[0],  &right->u[0]);
+                    reconstructScalar(velV, c, 5, order, wenoEps, &left->u[1],  &right->u[1]);
+                    reconstructScalar(velW, c, 5, order, wenoEps, &left->u[2],  &right->u[2]);
+                    reconstructScalar(pres, c, 5, order, wenoEps, &left->p,     &right->p);
+                    if (useIGR)
+                        reconstructScalar(sig,  c, 5, order, wenoEps, &left->sigma, &right->sigma);
                     if (multiPhase) {
                         for (int ph = 0; ph < nAlphas; ++ph)
-                            reconstructScalar(state->alpha + ph * totalCells, c, 5, lFn, rFn, r->wenoEps, &left->alpha[ph], &right->alpha[ph]);
-                        effective_gamma_and_pi_inf(left->alpha, nAlphas, mp, &left->gammaEff, &left->piInfEff);
-                        effective_gamma_and_pi_inf(right->alpha, nAlphas, mp, &right->gammaEff, &right->piInfEff);
+                            reconstructScalar(alphaPtr + (size_t)ph * totalCells, c, 5, order,
+                                              wenoEps, &left->alpha[ph], &right->alpha[ph]);
+                        effective_gamma_and_pi_inf_arr(left->alpha,  nAlphas,
+                            phaseGamma, phasePinf, &left->gammaEff,  &left->piInfEff);
+                        effective_gamma_and_pi_inf_arr(right->alpha, nAlphas,
+                            phaseGamma, phasePinf, &right->gammaEff, &right->piInfEff);
                     } else {
-                        left->gammaEff = r->gamma;   left->piInfEff = r->pInf;
-                        right->gammaEff = r->gamma;  right->piInfEff = r->pInf;
+                        left->gammaEff = rGamma;   left->piInfEff = rPInf;
+                        right->gammaEff = rGamma;  right->piInfEff = rPInf;
                     }
                 }
             }
@@ -931,9 +1044,42 @@ void reconstructor_allocate(struct ReconstructorData* r,
         r->zLeft  = (PrimitiveState*)calloc(r->numZFaces, sizeof(PrimitiveState));
         r->zRight = (PrimitiveState*)calloc(r->numZFaces, sizeof(PrimitiveState));
     }
+
+    /* Device-side face arrays.  These are scratch buffers — filled each step
+     * by the reconstruction kernels and consumed by the Riemann flux loop —
+     * so `map(alloc:...)` is sufficient (no host copy needed). */
+    PrimitiveState* xL = r->xLeft;  PrimitiveState* xR = r->xRight;
+    size_t nxF = r->numXFaces;
+    #pragma omp target enter data map(alloc: xL[0:nxF], xR[0:nxF])
+    if (r->dim >= 2) {
+        PrimitiveState* yL = r->yLeft;  PrimitiveState* yR = r->yRight;
+        size_t nyF = r->numYFaces;
+        #pragma omp target enter data map(alloc: yL[0:nyF], yR[0:nyF])
+    }
+    if (r->dim >= 3) {
+        PrimitiveState* zL = r->zLeft;  PrimitiveState* zR = r->zRight;
+        size_t nzF = r->numZFaces;
+        #pragma omp target enter data map(alloc: zL[0:nzF], zR[0:nzF])
+    }
 }
 
 void reconstructor_free(struct ReconstructorData* r) {
+    PrimitiveState* xL = r->xLeft;  PrimitiveState* xR = r->xRight;
+    size_t nxF = r->numXFaces;
+    if (xL) {
+        #pragma omp target exit data map(delete: xL[0:nxF], xR[0:nxF])
+    }
+    if (r->dim >= 2 && r->yLeft) {
+        PrimitiveState* yL = r->yLeft;  PrimitiveState* yR = r->yRight;
+        size_t nyF = r->numYFaces;
+        #pragma omp target exit data map(delete: yL[0:nyF], yR[0:nyF])
+    }
+    if (r->dim >= 3 && r->zLeft) {
+        PrimitiveState* zL = r->zLeft;  PrimitiveState* zR = r->zRight;
+        size_t nzF = r->numZFaces;
+        #pragma omp target exit data map(delete: zL[0:nzF], zR[0:nzF])
+    }
+
     free(r->xLeft);  r->xLeft = NULL;
     free(r->xRight); r->xRight = NULL;
     free(r->yLeft);  r->yLeft = NULL;
@@ -961,9 +1107,19 @@ void reconstruct(struct ReconstructorData* r,
 {
     NVTX_PUSH("Reconstruction");
     assert(config->nGhost >= reconstructor_required_ghost_cells(r));
+    NVTX_PUSH("Recon::X");
     reconstructX(r, config, mesh, state);
-    if (r->dim >= 2) reconstructY(r, config, mesh, state);
-    if (r->dim >= 3) reconstructZ(r, config, mesh, state);
+    NVTX_POP();
+    if (r->dim >= 2) {
+        NVTX_PUSH("Recon::Y");
+        reconstructY(r, config, mesh, state);
+        NVTX_POP();
+    }
+    if (r->dim >= 3) {
+        NVTX_PUSH("Recon::Z");
+        reconstructZ(r, config, mesh, state);
+        NVTX_POP();
+    }
 
     /* MTHINC: overwrite alpha face values with multi-dimensional THINC
      * reconstruction at interface cells */

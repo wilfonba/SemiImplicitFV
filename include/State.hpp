@@ -13,7 +13,6 @@ struct PrimitiveState {
     double rho;
     double u[3];
     double p;
-    double T;
     double sigma;
     double gammaEff;
     double piInfEff;

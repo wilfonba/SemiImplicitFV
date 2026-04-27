@@ -24,4 +24,18 @@ void add_viscous_fluxes(
     double* rhsRhoW,
     double* rhsRhoE);
 
+/* GPU-offload variant.  All field pointers (state->velU/V/W, state->alpha,
+ * rhsRho*) must be device-resident.  Uses a cell-based parallel pattern:
+ * each cell computes viscous flux contributions from both of its faces in
+ * each direction, so interior faces are computed twice.  This matches the
+ * Riemann flux pattern in explicit_compute_rhs and avoids atomics. */
+void add_viscous_fluxes_device(
+    const struct SimulationConfig* config,
+    const struct RectilinearMesh* mesh,
+    const struct SolutionState* state,
+    double* rhsRhoU,
+    double* rhsRhoV,
+    double* rhsRhoW,
+    double* rhsRhoE);
+
 #endif /* VISCOUS_FLUX_HPP */

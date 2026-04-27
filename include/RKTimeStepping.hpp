@@ -48,6 +48,22 @@ double computeAcousticTimeStep_config_mpi(const struct RectilinearMesh* mesh,
                                           double cfl, double maxDt,
                                           MPI_Comm comm);
 
+/* GPU-offload variants: the local cell-wise min-reduction runs as an omp
+ * target kernel and reads state->{rho,velU,velV,velW,pres} directly from
+ * device memory.  Single-phase only; multi-phase config falls back to the
+ * host path (which pulls prim state from device first). */
+double computeAcousticTimeStep_device(const struct RectilinearMesh* mesh,
+                                      const struct SolutionState* state,
+                                      const struct EOSData* eos,
+                                      double cfl, double maxDt);
+
+double computeAcousticTimeStep_config_mpi_device(const struct RectilinearMesh* mesh,
+                                                 struct SolutionState* state,
+                                                 const struct EOSData* eos,
+                                                 const struct SimulationConfig* config,
+                                                 double cfl, double maxDt,
+                                                 MPI_Comm comm);
+
 /* Viscous time step */
 double computeViscousDt(const struct RectilinearMesh* mesh,
                         const struct SolutionState* state,
@@ -68,6 +84,14 @@ double computeViscousDt_config_mpi(const struct RectilinearMesh* mesh,
                                    const struct SimulationConfig* config,
                                    double cfl, double maxDt,
                                    MPI_Comm comm);
+
+/* GPU variant: reads device-resident rho (and alpha for per-phase) and runs a
+ * target min-reduction.  Supports single-phase and multi-phase configs. */
+double computeViscousDt_config_mpi_device(const struct RectilinearMesh* mesh,
+                                          const struct SolutionState* state,
+                                          const struct SimulationConfig* config,
+                                          double cfl, double maxDt,
+                                          MPI_Comm comm);
 
 /* Capillary time step */
 double computeCapillaryDt(const struct RectilinearMesh* mesh,

@@ -83,7 +83,6 @@ static void applyCellState(
     W.u[2] = st->w;
     W.p = st->p;
     W.sigma = st->sigma;
-    W.T = eos_temperature(eos, &W);
 
     state_set_primitive(state, idx, &W);
 

@@ -44,4 +44,12 @@ static inline int mpi_is_physical_boundary(const struct MPIContext* ctx, int fac
     return ctx->neighbors[face] == MPI_PROC_NULL;
 }
 
+/* True (non-zero) iff the neighbour on this face is a different rank — i.e.,
+ * an actual MPI exchange is needed.  Self (single-rank periodic wrap) and
+ * MPI_PROC_NULL (physical boundary) both return false. */
+static inline int mpi_neighbor_is_remote(const struct MPIContext* ctx, int face) {
+    int n = ctx->neighbors[face];
+    return (n != MPI_PROC_NULL) && (n != ctx->rank);
+}
+
 #endif /* MPI_CONTEXT_HPP */

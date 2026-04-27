@@ -1,0 +1,104 @@
+{
+    // 3D Performance Test — mirror of MFC's examples/3D_performance_test:
+    //   https://github.com/MFlowCode/MFC/blob/master/examples/3D_performance_test/case.py
+    //
+    // Intent: a one-to-one perf comparison between SIFV (GPU offload) and MFC.
+    // Physics reproduced as closely as the SIFV input schema allows; the few
+    // intentional deviations are listed below.
+    //
+    // Setup
+    //   - Domain: [0, 4]^3 (length scale 1e-3 m → dimensionless 1.0)
+    //   - 201 cells per direction (m=n=p=200 in MFC = 201 cells)
+    //   - 5-equation two-fluid model (water + air), HLLC, WENO5, SSP-RK3
+    //   - Patch 1 (default): high-pressure water/air mixture filling the box
+    //   - Patch 2: low-pressure bubble (sphere at origin, r=1) inside it
+    //   - 30 fixed timesteps, dt = 2e-7
+    //   - BC: symmetry on the *low* faces (matches MFC bc_*%beg = -2)
+    //         outflow on the *high* faces (closest to MFC bc_*%end = -6 buffer)
+    //
+    // Deviations from MFC, with rationale
+    //   1. **No mesh stretching.** MFC stretches the mesh (a=4 tanh blend
+    //      around [-1.5, 1.5]).  SIFV's JSON path only supports uniform
+    //      grids; the cell count and bandwidth pattern that drive perf are
+    //      unchanged, but the per-cell positions are uniform here.
+    //   2. **Standard WENO5, not mapped WENO5.** SIFV does not implement
+    //      mapped weights.  Both schemes have the same arithmetic intensity
+    //      so the kernel cost should be near-identical.
+    //   3. **bc_*%end = -6 (non-reflecting buffer) → "Outflow".** SIFV's
+    //      Outflow is a zero-order extrapolation, similar in cost.
+    //   4. **mpp_lim → alphaMin = 1e-8.** SIFV's volume-fraction floor is
+    //      the closest analogue to MFC's positivity limiter.
+    //   5. **Patch 2 smoothing (MFC smooth_coeff=0.5)** is approximated via
+    //      SIFV's top-level `smoothing.iterations`.  Small effect on perf.
+    "config": {
+        "dim": 3,
+        "RKOrder": 3,
+        "reconOrder": "WENO5",
+        "wenoEps": 1.0e-16,
+        "semiImplicit": false,
+        "explicitParams": { "constDt": 2.0e-7 },
+        "multiPhaseParams": {
+            "nPhases": 2,
+            "phases": [
+                // fluid 1: water (stiffened gas).  MFC uses
+                //   gamma_param = 1/(gamma-1)        → gamma   = 4.4
+                //   pi_inf_param = gamma*pInf/(gamma-1) → pInf = 6e8
+                { "gamma": 4.4, "pInf": 6.0e8 },
+                // fluid 2: air (ideal gas)
+                { "gamma": 1.4, "pInf": 0.0 }
+            ],
+            "alphaMin": 1.0e-8
+        }
+    },
+    // SIFV requires a top-level eos.  HLLC reads gammaEff/piInfEff from the
+    // reconstructed face state (which the multi-phase mixture rule sets);
+    // the global eos here is only used for fallback paths and does not
+    // affect the multi-phase fluxes.
+    "eos": { "type": "IdealGas", "gamma": 1.4, "R": 287.0 },
+    "riemannSolver": "HLLC",
+    "mesh": {
+        "nx": 200, "xMin": 0.0, "xMax": 4.0,
+        "ny": 200, "yMin": 0.0, "yMax": 4.0,
+        "nz": 200, "zMin": 0.0, "zMax": 4.0
+    },
+    "boundaryConditions": {
+        "xLow": "Symmetry", "xHigh": "Outflow",
+        "yLow": "Symmetry", "yHigh": "Outflow",
+        "zLow": "Symmetry", "zHigh": "Outflow"
+    },
+    // 30 timesteps × dt = 6e-6.  Output disabled (perf-focused run).
+    "timeLoop": { "endTime": 2e-6, "outputInterval": 1.0e30, "printInterval": 1 },
+    "output": { "baseName": "3D_performance_test", "format": "VTKRaw" },
+    // Patch 1 fills the entire domain (MFC patch 1: box at (80,80,80) of
+    // length 160 in dimensionless units — well outside [0,4], so the box
+    // covers the whole domain).  Implemented here as the default state.
+    //
+    // Patch 2: low-pressure air bubble centered at the origin, r=1.  In MFC
+    // this uses alter_patch(1)=T so the bubble overrides the high-pressure
+    // mixture inside the sphere — same effect as a SIFV sphere patch with
+    // its own state below.
+    "initialConditions": {
+        "default": {
+            "rho": 900.1,
+            "u": 0.0, "v": 0.0, "w": 0.0,
+            "p": 1.0e5,
+            "alpha":    [0.9, 0.1],
+            "alphaRho": [1000.0, 0.1]
+        },
+        "patches": [
+            {
+                "geometry": { "type": "sphere", "center": [0.0, 0.0, 0.0], "radius": 1.0 },
+                "state": {
+                    "rho": 100.9,
+                    "u": 0.0, "v": 0.0, "w": 0.0,
+                    "p": 1.0e3,
+                    "alpha":    [0.1, 0.9],
+                    "alphaRho": [100.0, 0.9]
+                }
+            }
+        ]
+    },
+    // Approximates MFC's smooth_coeff=0.5 on patch 2.  Smoothing is
+    // pre-time-loop and does not affect per-step perf.
+    "smoothing": { "iterations": 5 }
+}

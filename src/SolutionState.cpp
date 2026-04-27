@@ -23,6 +23,33 @@ static void free_field(double** p)
     *p = NULL;
 }
 
+/* Map / unmap a single double field on the device.  Callers pass the same
+ * extent used at the map site so OpenMP 5.x exit-data matches the original
+ * allocation entry. */
+static inline void device_attach_field(double* p, size_t n)
+{
+    if (p == NULL || n == 0) return;
+    #pragma omp target enter data map(alloc: p[0:n])
+}
+
+static inline void device_detach_field(double* p, size_t n)
+{
+    if (p == NULL || n == 0) return;
+    #pragma omp target exit data map(delete: p[0:n])
+}
+
+static inline void device_update_to(double* p, size_t n)
+{
+    if (p == NULL || n == 0) return;
+    #pragma omp target update to(p[0:n])
+}
+
+static inline void device_update_from(double* p, size_t n)
+{
+    if (p == NULL || n == 0) return;
+    #pragma omp target update from(p[0:n])
+}
+
 /* ---------------------------------------------------------------------------
    Init / Free
    --------------------------------------------------------------------------- */
@@ -87,10 +114,74 @@ void solution_state_init(struct SolutionState* s, size_t totalCells,
             s->alphaRho0 = alloc_field((size_t)nPh * totalCells);
         }
     }
+
+    /* Allocate device-side copies of every field.  No data is transferred yet;
+     * the caller (typically runtime_init) issues a `target update to` after
+     * initial conditions + smoothing are applied on the host. */
+    size_t mp = (size_t)s->nPhases * totalCells;
+    device_attach_field(s->rho,  totalCells);
+    device_attach_field(s->rhoU, totalCells);
+    device_attach_field(s->rhoV, totalCells);
+    device_attach_field(s->rhoW, totalCells);
+    device_attach_field(s->rhoE, totalCells);
+    device_attach_field(s->velU, totalCells);
+    device_attach_field(s->velV, totalCells);
+    device_attach_field(s->velW, totalCells);
+    device_attach_field(s->pres, totalCells);
+    device_attach_field(s->sigma, totalCells);
+    device_attach_field(s->rho0,  totalCells);
+    device_attach_field(s->rhoU0, totalCells);
+    device_attach_field(s->rhoV0, totalCells);
+    device_attach_field(s->rhoW0, totalCells);
+    device_attach_field(s->rhoE0, totalCells);
+    device_attach_field(s->pres0, totalCells);
+    device_attach_field(s->rhoUStar, totalCells);
+    device_attach_field(s->rhoVStar, totalCells);
+    device_attach_field(s->rhoWStar, totalCells);
+    device_attach_field(s->rhoEstar, totalCells);
+    device_attach_field(s->pAdvected, totalCells);
+    device_attach_field(s->rhoc2, totalCells);
+    device_attach_field(s->divUStar, totalCells);
+    device_attach_field(s->aux, totalCells);
+    device_attach_field(s->alpha, mp);
+    device_attach_field(s->alphaRho, mp);
+    device_attach_field(s->alpha0, mp);
+    device_attach_field(s->alphaRho0, mp);
 }
 
 void solution_state_free(struct SolutionState* s)
 {
+    size_t tc = s->totalCells;
+    size_t mp = (size_t)s->nPhases * tc;
+    device_detach_field(s->rho,  tc);
+    device_detach_field(s->rhoU, tc);
+    device_detach_field(s->rhoV, tc);
+    device_detach_field(s->rhoW, tc);
+    device_detach_field(s->rhoE, tc);
+    device_detach_field(s->velU, tc);
+    device_detach_field(s->velV, tc);
+    device_detach_field(s->velW, tc);
+    device_detach_field(s->pres, tc);
+    device_detach_field(s->sigma, tc);
+    device_detach_field(s->rho0,  tc);
+    device_detach_field(s->rhoU0, tc);
+    device_detach_field(s->rhoV0, tc);
+    device_detach_field(s->rhoW0, tc);
+    device_detach_field(s->rhoE0, tc);
+    device_detach_field(s->pres0, tc);
+    device_detach_field(s->rhoUStar, tc);
+    device_detach_field(s->rhoVStar, tc);
+    device_detach_field(s->rhoWStar, tc);
+    device_detach_field(s->rhoEstar, tc);
+    device_detach_field(s->pAdvected, tc);
+    device_detach_field(s->rhoc2, tc);
+    device_detach_field(s->divUStar, tc);
+    device_detach_field(s->aux, tc);
+    device_detach_field(s->alpha, mp);
+    device_detach_field(s->alphaRho, mp);
+    device_detach_field(s->alpha0, mp);
+    device_detach_field(s->alphaRho0, mp);
+
     free_field(&s->rho);
     free_field(&s->rhoU);
     free_field(&s->rhoV);
@@ -214,6 +305,7 @@ void state_copy_cell(struct SolutionState* s, size_t dst, size_t src,
    Gather / Scatter state bundles
    --------------------------------------------------------------------------- */
 
+#pragma omp declare target
 ConservativeState state_get_conservative(const struct SolutionState* s, size_t idx)
 {
     ConservativeState U;
@@ -258,25 +350,129 @@ void state_set_primitive(struct SolutionState* s, size_t idx,
     s->pres[idx]  = W->p;
     s->sigma[idx] = W->sigma;
 }
+#pragma omp end declare target
+
+/* ---------------------------------------------------------------------------
+   Bulk host <-> device synchronisation
+   --------------------------------------------------------------------------- */
+
+void solution_state_update_to_device(struct SolutionState* s)
+{
+    size_t tc = s->totalCells;
+    size_t mp = (size_t)s->nPhases * tc;
+    device_update_to(s->rho,  tc);
+    device_update_to(s->rhoU, tc);
+    device_update_to(s->rhoV, tc);
+    device_update_to(s->rhoW, tc);
+    device_update_to(s->rhoE, tc);
+    device_update_to(s->velU, tc);
+    device_update_to(s->velV, tc);
+    device_update_to(s->velW, tc);
+    device_update_to(s->pres, tc);
+    device_update_to(s->sigma, tc);
+    device_update_to(s->rho0,  tc);
+    device_update_to(s->rhoU0, tc);
+    device_update_to(s->rhoV0, tc);
+    device_update_to(s->rhoW0, tc);
+    device_update_to(s->rhoE0, tc);
+    device_update_to(s->pres0, tc);
+    device_update_to(s->aux, tc);
+    device_update_to(s->alpha, mp);
+    device_update_to(s->alphaRho, mp);
+}
+
+void solution_state_update_prim_from_device(struct SolutionState* s)
+{
+    size_t tc = s->totalCells;
+    size_t mp = (size_t)s->nPhases * tc;
+    /* VTK and checkpoint readers need current rho + primitives */
+    device_update_from(s->rho,  tc);
+    device_update_from(s->rhoU, tc);
+    device_update_from(s->rhoV, tc);
+    device_update_from(s->rhoW, tc);
+    device_update_from(s->rhoE, tc);
+    device_update_from(s->velU, tc);
+    device_update_from(s->velV, tc);
+    device_update_from(s->velW, tc);
+    device_update_from(s->pres, tc);
+    device_update_from(s->sigma, tc);
+    device_update_from(s->alpha, mp);
+    device_update_from(s->alphaRho, mp);
+}
+
+void solution_state_update_prim_to_device(struct SolutionState* s)
+{
+    size_t tc = s->totalCells;
+    size_t mp = (size_t)s->nPhases * tc;
+    device_update_to(s->rho,  tc);
+    device_update_to(s->rhoU, tc);
+    device_update_to(s->rhoV, tc);
+    device_update_to(s->rhoW, tc);
+    device_update_to(s->rhoE, tc);
+    device_update_to(s->velU, tc);
+    device_update_to(s->velV, tc);
+    device_update_to(s->velW, tc);
+    device_update_to(s->pres, tc);
+    device_update_to(s->sigma, tc);
+    device_update_to(s->alpha, mp);
+    device_update_to(s->alphaRho, mp);
+}
 
 /* ---------------------------------------------------------------------------
    Conservative <-> Primitive conversion (whole physical domain)
    --------------------------------------------------------------------------- */
 
+/*
+ * Design note for the pointwise GPU kernels below:
+ *
+ * Struct pointers (`s`, `mesh`) can't be dereferenced from inside a
+ * `#pragma omp target` region — the struct memory lives on the host, only
+ * the individual `double*` arrays have been mapped to the device.  So every
+ * kernel extracts the raw array pointers and the handful of needed scalars
+ * into locals first, then the loop body uses those captures directly.
+ * Helper functions that take `SolutionState*` / `RectilinearMesh*`
+ * (state_get_*, mesh_index, ...) are NOT called from inside these kernels
+ * for the same reason — the logic is inlined instead.
+ */
+
 void state_cons_to_prim(struct SolutionState* s,
                         const struct RectilinearMesh* mesh,
                         const struct EOSData* eos)
 {
-    for (int k = 0; k < mesh->nz; ++k) {
-        for (int j = 0; j < mesh->ny; ++j) {
-            for (int i = 0; i < mesh->nx; ++i) {
-                size_t idx = mesh_index(mesh, i, j, k);
-                ConservativeState U = state_get_conservative(s, idx);
-                PrimitiveState W = eos_to_primitive(eos, &U);
-                s->velU[idx] = W.u[0];
-                if (s->dim >= 2) s->velV[idx] = W.u[1];
-                if (s->dim >= 3) s->velW[idx] = W.u[2];
-                s->pres[idx] = W.p;
+    const int nx = mesh->nx, ny = mesh->ny, nz = mesh->nz;
+    const int ngx = mesh->ngx, ngy = mesh->ngy, ngz = mesh->ngz;
+    const int nxTot = nx + 2 * ngx;
+    const int nyTot = ny + 2 * ngy;
+    const int dim = s->dim;
+    const double gamma = eos->gamma;
+    const double pInf  = eos->pInf;
+
+    double* rho  = s->rho;
+    double* rhoU = s->rhoU;
+    double* rhoV = s->rhoV;
+    double* rhoW = s->rhoW;
+    double* rhoE = s->rhoE;
+    double* velU = s->velU;
+    double* velV = s->velV;
+    double* velW = s->velW;
+    double* pres = s->pres;
+
+    #pragma omp target teams distribute parallel for collapse(3)
+    for (int k = 0; k < nz; ++k) {
+        for (int j = 0; j < ny; ++j) {
+            for (int i = 0; i < nx; ++i) {
+                size_t idx = (size_t)((i + ngx) + nxTot * ((j + ngy) + nyTot * (k + ngz)));
+                double rhoSafe = rho[idx] > 1e-14 ? rho[idx] : 1e-14;
+                double u = rhoU[idx] / rhoSafe;
+                double v = (dim >= 2) ? rhoV[idx] / rhoSafe : 0.0;
+                double w = (dim >= 3) ? rhoW[idx] / rhoSafe : 0.0;
+                double ke = 0.5 * rhoSafe * (u * u + v * v + w * w);
+                double e = rhoE[idx] - ke;
+                double p = (gamma - 1.0) * e - gamma * pInf;
+                velU[idx] = u;
+                if (dim >= 2) velV[idx] = v;
+                if (dim >= 3) velW[idx] = w;
+                pres[idx] = p;
             }
         }
     }
@@ -286,17 +482,39 @@ void state_prim_to_cons(struct SolutionState* s,
                         const struct RectilinearMesh* mesh,
                         const struct EOSData* eos)
 {
-    for (int k = 0; k < mesh->nz; ++k) {
-        for (int j = 0; j < mesh->ny; ++j) {
-            for (int i = 0; i < mesh->nx; ++i) {
-                size_t idx = mesh_index(mesh, i, j, k);
-                PrimitiveState W = state_get_primitive(s, idx);
-                ConservativeState U = eos_to_conservative(eos, &W);
-                s->rho[idx]  = U.rho;
-                s->rhoU[idx] = U.rhoU[0];
-                if (s->dim >= 2) s->rhoV[idx] = U.rhoU[1];
-                if (s->dim >= 3) s->rhoW[idx] = U.rhoU[2];
-                s->rhoE[idx] = U.rhoE;
+    const int nx = mesh->nx, ny = mesh->ny, nz = mesh->nz;
+    const int ngx = mesh->ngx, ngy = mesh->ngy, ngz = mesh->ngz;
+    const int nxTot = nx + 2 * ngx;
+    const int nyTot = ny + 2 * ngy;
+    const int dim = s->dim;
+    const double gamma = eos->gamma;
+    const double pInf  = eos->pInf;
+
+    double* rho  = s->rho;
+    double* rhoU = s->rhoU;
+    double* rhoV = s->rhoV;
+    double* rhoW = s->rhoW;
+    double* rhoE = s->rhoE;
+    double* velU = s->velU;
+    double* velV = s->velV;
+    double* velW = s->velW;
+    double* pres = s->pres;
+
+    #pragma omp target teams distribute parallel for collapse(3)
+    for (int k = 0; k < nz; ++k) {
+        for (int j = 0; j < ny; ++j) {
+            for (int i = 0; i < nx; ++i) {
+                size_t idx = (size_t)((i + ngx) + nxTot * ((j + ngy) + nyTot * (k + ngz)));
+                double r = rho[idx];
+                double u = velU[idx];
+                double v = (dim >= 2) ? velV[idx] : 0.0;
+                double w = (dim >= 3) ? velW[idx] : 0.0;
+                double ke = 0.5 * r * (u * u + v * v + w * w);
+                double ei = (pres[idx] + gamma * pInf) / (gamma - 1.0);
+                rhoU[idx] = r * u;
+                if (dim >= 2) rhoV[idx] = r * v;
+                if (dim >= 3) rhoW[idx] = r * w;
+                rhoE[idx] = ei + ke;
             }
         }
     }

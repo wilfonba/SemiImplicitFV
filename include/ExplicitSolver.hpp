@@ -47,6 +47,11 @@ struct ExplicitSolverWork {
     size_t totalCells;
     int dim;
     int nPhases;
+
+    /* One-shot flag: 0 until the first explicit_step has primed CUDA-aware
+     * MPI Allreduce + the dt reduction kernel.  The very first call would
+     * otherwise pay multi-second JIT/handshake costs on the timing path. */
+    int firstStepDone;
 };
 
 void explicit_solver_init(struct ExplicitSolverWork* w,

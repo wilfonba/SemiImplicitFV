@@ -41,6 +41,7 @@ void reconstruct(struct ReconstructorData* r,
 int reconstructor_required_ghost_cells(const struct ReconstructorData* r);
 
 /* Inline face index functions */
+#pragma omp declare target
 static inline size_t x_face_index(const struct ReconstructorData* r, int i, int j, int k) {
     return (size_t)(i + (r->nx + 1) * (j + r->ny * k));
 }
@@ -77,5 +78,6 @@ static inline const PrimitiveState* z_face_left(const struct ReconstructorData* 
 static inline const PrimitiveState* z_face_right(const struct ReconstructorData* r, size_t f) {
     return &r->zRight[f];
 }
+#pragma omp end declare target
 
 #endif /* RECONSTRUCTION_HPP */

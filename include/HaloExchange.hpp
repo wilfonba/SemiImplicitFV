@@ -49,4 +49,23 @@ void halo_exchange_scalar_direction(struct HaloExchange* h,
                                     double* field,
                                     int direction);
 
+/* GPU-offload variant: packs interior-slab cells into sendBuf via a target
+ * kernel (sendBuf is device-resident), transfers only the packed buffer
+ * across PCIe, runs MPI on the host, transfers recvBuf back to the device,
+ * and unpacks into ghost slabs with another target kernel.  The full
+ * SolutionState is never copied — only ~one face slab per direction.
+ *
+ * Supports VARSET_PRIM and VARSET_CONS at any nPhases. */
+void halo_exchange_state_direction_device(struct HaloExchange* h,
+                                          struct SolutionState* state,
+                                          enum VarSet varSet,
+                                          int direction);
+
+/* Single-scalar device halo exchange.  `field` must be a device-resident
+ * pointer.  Pack/unpack run as omp target kernels; only the packed face
+ * slab crosses PCIe. */
+void halo_exchange_scalar_direction_device(struct HaloExchange* h,
+                                           double* field,
+                                           int direction);
+
 #endif /* HALO_EXCHANGE_HPP */

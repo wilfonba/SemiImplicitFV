@@ -271,6 +271,11 @@ int main(int argc, char** argv) {
                                      input.smoothingParams.iterations, config);
     }
 
+    /* Initial host -> device copy: ICs (and, on restart, checkpoint data)
+     * were populated on the host; the GPU kernels in explicit_step consume
+     * device-side state.  One bulk upload covers every subsequent step. */
+    solution_state_update_to_device(&state);
+
     /* ---- VTK output ---- */
     VTKSession vtk;
     vtk_session_init(&vtk, &rt, input.outputParams.baseName, &mesh, config,

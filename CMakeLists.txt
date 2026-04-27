@@ -11,16 +11,67 @@ option(BUILD_TESTS "Build unit tests" OFF)
 option(BUILD_DRIVER "Build generic sifv driver executable" ON)
 option(ENABLE_PETSC "Enable PETSc pressure solver (KSP+GAMG)" OFF)
 option(ENABLE_NVTX "Enable NVTX profiling ranges for Nsight Systems" OFF)
+option(ENABLE_GPU_OFFLOAD "Enable OpenMP target offload to NVIDIA GPUs (requires NVHPC)" OFF)
+set(GPU_OFFLOAD_CC "" CACHE STRING "Optional target compute capability (e.g. cc80 for A100, cc90 for H100). Empty = NVHPC default (multi-cc).")
 
 # Compiler flags
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-Wall -Wextra -Wpedantic)
+    # OpenMP `target` / `declare target` pragmas are intentional; silence them
+    # when building without an offload-capable OpenMP mode.
+    add_compile_options(-Wno-unknown-pragmas)
     if(CMAKE_BUILD_TYPE STREQUAL "Release")
         add_compile_options(-O3 -march=native)
     elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
         add_compile_options(-g -fsanitize=address -fno-omit-frame-pointer)
         add_link_options(-fsanitize=address)
     endif()
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "NVHPC|PGI")
+    # nvc++ defaults to -O0; we have to ask for optimization explicitly.
+    if(CMAKE_BUILD_TYPE STREQUAL "Release" OR NOT CMAKE_BUILD_TYPE)
+        # -fast: enables -O2, -Munroll=c:1, -Mlre, -Mautoinline, -Mvect=simd,
+        #        -Mflushz, -Mcache_align, -Mpre — nvc++'s standard release
+        #        bundle.  -Mfprelaxed lets the GPU back-end use rsqrt/rcp etc.
+        add_compile_options(-fast -Mfprelaxed)
+        add_link_options(-fast)
+    elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        add_compile_options(-O0 -g)
+    endif()
+endif()
+
+# GPU offload (NVHPC) --------------------------------------------------------
+# Uses OpenMP target directives.  Flags are scoped to the core
+# SemiImplicitFV library (applied later via target_compile_options) rather
+# than globally, so that the exprtk-backed input library — whose template
+# pathology exhausts nvc++'s frontend under -mp=gpu — can build with the
+# default (host-only) codegen.
+if(ENABLE_GPU_OFFLOAD)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "NVHPC|PGI")
+        message(FATAL_ERROR
+            "ENABLE_GPU_OFFLOAD=ON requires the NVHPC C++ compiler (nvc++). "
+            "Current compiler: ${CMAKE_CXX_COMPILER_ID}.")
+    endif()
+    set(_gpu_target "gpu")
+    # -mp=gpu                : OpenMP target offload to GPU.
+    # -gpu=lineinfo          : line-number debug for nsys/ncu source attrib.
+    # -gpu=fastmath          : let the device math library use approximate
+    #                          intrinsics (rsqrt, rcp, sin/cos units).  Same
+    #                          spirit as nvcc -use_fast_math.
+    # -gpu=unified           : place automatic vars in unified-memory pools
+    #                          when needed (NVHPC 24.x+).  Cheap to leave on.
+    # -Mloop-count=...       : not used here; we rely on `omp target teams
+    #                          distribute parallel for collapse(3)` for shape.
+    # -Minfo=accel,opt,mp    : print kernel codegen + register/spill info to
+    #                          stderr at compile time.  Invaluable for
+    #                          spotting register spills and parallelism loss.
+    set(SIFV_GPU_FLAGS "-mp=gpu;-gpu=lineinfo;-gpu=fastmath;-Minfo=accel,mp")
+    set(SIFV_GPU_LINK_FLAGS "-mp=gpu")
+    if(GPU_OFFLOAD_CC)
+        set(_gpu_target "gpu=${GPU_OFFLOAD_CC}")
+        list(APPEND SIFV_GPU_FLAGS "-gpu=${GPU_OFFLOAD_CC}")
+        list(APPEND SIFV_GPU_LINK_FLAGS "-gpu=${GPU_OFFLOAD_CC}")
+    endif()
+    message(STATUS "GPU offload: enabled (${_gpu_target})")
 endif()
 
 # MPI
@@ -148,6 +199,16 @@ target_include_directories(SemiImplicitFV PUBLIC
 
 target_link_libraries(SemiImplicitFV PUBLIC MPI::MPI_CXX)
 
+# Apply GPU offload flags.  Compile flags are PRIVATE — only translation
+# units in SemiImplicitFV see -mp=gpu, which keeps exprtk-heavy files in
+# the input library out of the offload codegen path.  Link flags are
+# PUBLIC so downstream binaries (sifv driver, tests) link the OpenMP
+# runtime too.
+if(ENABLE_GPU_OFFLOAD)
+    target_compile_options(SemiImplicitFV PRIVATE ${SIFV_GPU_FLAGS})
+    target_link_options(SemiImplicitFV PUBLIC ${SIFV_GPU_LINK_FLAGS})
+endif()
+
 # PETSc integration
 if(ENABLE_PETSC)
     target_sources(SemiImplicitFV PRIVATE src/PETScPressureSolver.cpp)
@@ -192,17 +253,59 @@ if(BUILD_DRIVER OR BUILD_TESTS)
     )
     FetchContent_Populate(exprtk)
 
-    # Input library (keeps core library dependency-free)
-    add_library(SemiImplicitFV_input
-        src/InputParser.cpp
-        src/ICPatch.cpp
-        src/ExpressionEvaluator.cpp
-    )
-    target_link_libraries(SemiImplicitFV_input PUBLIC SemiImplicitFV nlohmann_json::nlohmann_json)
-    target_include_directories(SemiImplicitFV_input PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    )
-    target_include_directories(SemiImplicitFV_input PRIVATE ${exprtk_SOURCE_DIR})
+    if(ENABLE_GPU_OFFLOAD)
+        # nvc++'s frontend (nvcpfe) cannot compile exprtk — the template
+        # pathology exhausts its memory and the process is killed.  Build
+        # the input library with the host compiler (g++/clang++) instead
+        # and link the resulting objects in alongside the nvc++-built core.
+        find_program(SIFV_HOST_CXX NAMES g++ c++ clang++ REQUIRED
+            DOC "Host C++ compiler used for exprtk-backed input library")
+        message(STATUS "Input library host compiler: ${SIFV_HOST_CXX}")
+
+        set(_sifv_input_srcs
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/InputParser.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/ICPatch.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/ExpressionEvaluator.cpp
+        )
+        set(_sifv_input_objdir ${CMAKE_CURRENT_BINARY_DIR}/input_host_objs)
+        file(MAKE_DIRECTORY ${_sifv_input_objdir})
+        set(_sifv_input_objs "")
+        foreach(_src ${_sifv_input_srcs})
+            get_filename_component(_name ${_src} NAME_WE)
+            set(_obj ${_sifv_input_objdir}/${_name}.o)
+            add_custom_command(
+                OUTPUT ${_obj}
+                COMMAND ${SIFV_HOST_CXX} -std=c++17 -O3 -fPIC
+                    -I${CMAKE_CURRENT_SOURCE_DIR}/include
+                    -I${nlohmann_json_SOURCE_DIR}/include
+                    -I${exprtk_SOURCE_DIR}
+                    -c ${_src} -o ${_obj}
+                DEPENDS ${_src}
+                VERBATIM
+                COMMENT "Building CXX object (host compiler) ${_name}.cpp.o"
+            )
+            list(APPEND _sifv_input_objs ${_obj})
+        endforeach()
+
+        add_library(SemiImplicitFV_input STATIC ${_sifv_input_objs})
+        set_target_properties(SemiImplicitFV_input PROPERTIES LINKER_LANGUAGE CXX)
+        target_link_libraries(SemiImplicitFV_input PUBLIC SemiImplicitFV nlohmann_json::nlohmann_json)
+        target_include_directories(SemiImplicitFV_input PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    else()
+        # Input library (keeps core library dependency-free)
+        add_library(SemiImplicitFV_input
+            src/InputParser.cpp
+            src/ICPatch.cpp
+            src/ExpressionEvaluator.cpp
+        )
+        target_link_libraries(SemiImplicitFV_input PUBLIC SemiImplicitFV nlohmann_json::nlohmann_json)
+        target_include_directories(SemiImplicitFV_input PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+        target_include_directories(SemiImplicitFV_input PRIVATE ${exprtk_SOURCE_DIR})
+    endif()
 endif()
 
 # ---- JSON Driver (sifv) ----

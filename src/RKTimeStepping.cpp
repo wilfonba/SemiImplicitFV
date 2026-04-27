@@ -145,6 +145,168 @@ double computeAcousticTimeStep_config_mpi(const RectilinearMesh* mesh,
     return globalDt;
 }
 
+/* GPU min-reduction over every interior cell.  Reads rho/velU/velV/velW/pres
+ * and the mesh xExt/yExt/zExt node arrays directly from device memory. */
+double computeAcousticTimeStep_device(const RectilinearMesh* mesh,
+                                      const SolutionState* state,
+                                      const EOSData* eos,
+                                      double cfl, double maxDt) {
+    const int nx = mesh->nx, ny = mesh->ny, nz = mesh->nz;
+    const int ngx = mesh->ngx, ngy = mesh->ngy, ngz = mesh->ngz;
+    const int nxTot = nx + 2 * ngx;
+    const int nyTot = ny + 2 * ngy;
+    const int dim = mesh->dim;
+    const double gamma = eos->gamma;
+    const double pInf  = eos->pInf;
+    const double* xExt = mesh->xNodesExt;
+    const double* yExt = mesh->yNodesExt;
+    const double* zExt = mesh->zNodesExt;
+    double* rho  = state->rho;
+    double* velU = state->velU;
+    double* velV = state->velV;
+    double* velW = state->velW;
+    double* pres = state->pres;
+
+    double dt = maxDt;
+
+    #pragma omp target teams distribute parallel for collapse(3) reduction(min:dt)
+    for (int k = 0; k < nz; ++k) {
+        for (int j = 0; j < ny; ++j) {
+            for (int i = 0; i < nx; ++i) {
+                size_t idx = (size_t)((i + ngx) + nxTot * ((j + ngy) + nyTot * (k + ngz)));
+
+                double rhoSafe = rho[idx] > 1e-14 ? rho[idx] : 1e-14;
+                double pTot    = pres[idx] + pInf;
+                if (pTot < 1e-14) pTot = 1e-14;
+                double c = std::sqrt(gamma * pTot / rhoSafe);
+
+                double dx = xExt[i + ngx + 1] - xExt[i + ngx];
+                double u = velU[idx]; if (u < 0) u = -u;
+                double dtCell = dx / (u + c);
+                if (dim >= 2) {
+                    double dy = yExt[j + ngy + 1] - yExt[j + ngy];
+                    double v = velV[idx]; if (v < 0) v = -v;
+                    double d = dy / (v + c);
+                    if (d < dtCell) dtCell = d;
+                }
+                if (dim >= 3) {
+                    double dz = zExt[k + ngz + 1] - zExt[k + ngz];
+                    double w = velW[idx]; if (w < 0) w = -w;
+                    double d = dz / (w + c);
+                    if (d < dtCell) dtCell = d;
+                }
+                double dtCfl = cfl * dtCell;
+                if (dtCfl < dt) dt = dtCfl;
+            }
+        }
+    }
+    return dt;
+}
+
+/* Multi-phase variant.  Computes Wood's mixture sound speed inline — the
+ * per-phase gamma/pInf are copied into small local arrays and captured by
+ * value via map(to:).  Avoids calling mixture_sound_speed() directly so we
+ * don't need to map MultiPhaseParams::phases (a host struct) to the device. */
+static double computeAcousticTimeStep_multi_device(const RectilinearMesh* mesh,
+                                                   const SolutionState* state,
+                                                   const MultiPhaseParams* mp,
+                                                   double cfl, double maxDt) {
+    const int nx = mesh->nx, ny = mesh->ny, nz = mesh->nz;
+    const int ngx = mesh->ngx, ngy = mesh->ngy, ngz = mesh->ngz;
+    const int nxTot = nx + 2 * ngx;
+    const int nyTot = ny + 2 * ngy;
+    const int dim = mesh->dim;
+    const int nPhases = mp->nPhases;
+    const size_t tc = state->totalCells;
+    const double* xExt = mesh->xNodesExt;
+    const double* yExt = mesh->yNodesExt;
+    const double* zExt = mesh->zNodesExt;
+    double* rho    = state->rho;
+    double* velU   = state->velU;
+    double* velV   = state->velV;
+    double* velW   = state->velW;
+    double* pres   = state->pres;
+    double* alpha  = state->alpha;
+    double* alphaR = state->alphaRho;
+
+    double phaseGamma[MAX_PHASES];
+    double phasePinf[MAX_PHASES];
+    for (int ph = 0; ph < nPhases; ++ph) {
+        phaseGamma[ph] = mp->phases[ph].gamma;
+        phasePinf[ph]  = mp->phases[ph].pInf;
+    }
+
+    double dt = maxDt;
+
+    #pragma omp target teams distribute parallel for collapse(3) reduction(min:dt) \
+        map(to: phaseGamma[0:MAX_PHASES], phasePinf[0:MAX_PHASES])
+    for (int k = 0; k < nz; ++k) {
+        for (int j = 0; j < ny; ++j) {
+            for (int i = 0; i < nx; ++i) {
+                size_t idx = (size_t)((i + ngx) + nxTot * ((j + ngy) + nyTot * (k + ngz)));
+
+                double rhoSafe = rho[idx] > 1e-14 ? rho[idx] : 1e-14;
+                double p = pres[idx];
+
+                /* Wood's mixture sound speed: 1/(rho c^2) = sum alpha_k /(rho_k c_k^2) */
+                double sumInvRhoC2 = 0.0;
+                for (int ph = 0; ph < nPhases; ++ph) {
+                    double aph = alpha[(size_t)ph * tc + idx];
+                    double arh = alphaR[(size_t)ph * tc + idx];
+                    double aSafe = aph > 1e-14 ? aph : 1e-14;
+                    double arSafe = arh > 1e-14 ? arh : 1e-14;
+                    double rho_k = arSafe / aSafe;
+                    double gk = phaseGamma[ph];
+                    double pInfk = phasePinf[ph];
+                    double ck2 = gk * (p + pInfk) / rho_k;
+                    if (ck2 < 1e-14) ck2 = 1e-14;
+                    sumInvRhoC2 += aph / (rho_k * ck2);
+                }
+                double invRhoSum = sumInvRhoC2 > 1e-30 ? sumInvRhoC2 : 1e-30;
+                double c2 = 1.0 / (rhoSafe * invRhoSum);
+                double c = std::sqrt(c2 > 0.0 ? c2 : 0.0);
+
+                double dx = xExt[i + ngx + 1] - xExt[i + ngx];
+                double u = velU[idx]; if (u < 0) u = -u;
+                double dtCell = dx / (u + c);
+                if (dim >= 2) {
+                    double dy = yExt[j + ngy + 1] - yExt[j + ngy];
+                    double v = velV[idx]; if (v < 0) v = -v;
+                    double d = dy / (v + c);
+                    if (d < dtCell) dtCell = d;
+                }
+                if (dim >= 3) {
+                    double dz = zExt[k + ngz + 1] - zExt[k + ngz];
+                    double w = velW[idx]; if (w < 0) w = -w;
+                    double d = dz / (w + c);
+                    if (d < dtCell) dtCell = d;
+                }
+                double dtCfl = cfl * dtCell;
+                if (dtCfl < dt) dt = dtCfl;
+            }
+        }
+    }
+    return dt;
+}
+
+double computeAcousticTimeStep_config_mpi_device(const RectilinearMesh* mesh,
+                                                 SolutionState* state,
+                                                 const EOSData* eos,
+                                                 const SimulationConfig* config,
+                                                 double cfl, double maxDt,
+                                                 MPI_Comm comm) {
+    double localDt;
+    if (!config_is_multi_phase(config)) {
+        localDt = computeAcousticTimeStep_device(mesh, state, eos, cfl, maxDt);
+    } else {
+        localDt = computeAcousticTimeStep_multi_device(
+            mesh, state, &config->multiPhaseParams, cfl, maxDt);
+    }
+    double globalDt;
+    MPI_Allreduce(&localDt, &globalDt, 1, MPI_DOUBLE, MPI_MIN, comm);
+    return globalDt;
+}
+
 double computeViscousDt(const RectilinearMesh* mesh,
                         const SolutionState* state,
                         double mu, double cfl, double maxDt) {
@@ -226,6 +388,84 @@ double computeViscousDt_config_mpi(const RectilinearMesh* mesh,
                                    double cfl, double maxDt,
                                    MPI_Comm comm) {
     double localDt = computeViscousDt_config(mesh, state, config, cfl, maxDt);
+    double globalDt;
+    MPI_Allreduce(&localDt, &globalDt, 1, MPI_DOUBLE, MPI_MIN, comm);
+    return globalDt;
+}
+
+/* GPU min-reduction for the viscous dt.  Handles the constant-mu and
+ * per-phase mixture cases uniformly — the per-phase branch is taken based on
+ * the nPhaseMu flag which is uniform per launch. */
+static double computeViscousDt_config_device(const RectilinearMesh* mesh,
+                                             const SolutionState* state,
+                                             const SimulationConfig* config,
+                                             double cfl, double maxDt)
+{
+    const int nx = mesh->nx, ny = mesh->ny, nz = mesh->nz;
+    const int ngx = mesh->ngx, ngy = mesh->ngy, ngz = mesh->ngz;
+    const int nxTot = nx + 2 * ngx;
+    const int nyTot = ny + 2 * ngy;
+    const int dim = mesh->dim;
+    const ViscousParams* vp = &config->viscousParams;
+    const int perPhase = (vp->nPhaseMu > 0);
+    const int nPhases = config->multiPhaseParams.nPhases;
+    const double muConst = vp->mu;
+    const size_t tc = state->totalCells;
+    const double* xExt = mesh->xNodesExt;
+    const double* yExt = mesh->yNodesExt;
+    const double* zExt = mesh->zNodesExt;
+    double* rho   = state->rho;
+    double* alpha = state->alpha;
+
+    double phaseMu[MAX_PHASES];
+    for (int ph = 0; ph < MAX_PHASES; ++ph)
+        phaseMu[ph] = (perPhase && ph < nPhases) ? vp->phaseMu[ph] : 0.0;
+
+    double dt = maxDt;
+
+    #pragma omp target teams distribute parallel for collapse(3) reduction(min:dt) \
+        map(to: phaseMu[0:MAX_PHASES])
+    for (int k = 0; k < nz; ++k) {
+        for (int j = 0; j < ny; ++j) {
+            for (int i = 0; i < nx; ++i) {
+                size_t idx = (size_t)((i + ngx) + nxTot * ((j + ngy) + nyTot * (k + ngz)));
+
+                double muEff = muConst;
+                if (perPhase) {
+                    muEff = 0.0;
+                    for (int ph = 0; ph < nPhases; ++ph)
+                        muEff += alpha[(size_t)ph * tc + idx] * phaseMu[ph];
+                }
+                if (muEff <= 0.0) continue;
+
+                double dx = xExt[i + ngx + 1] - xExt[i + ngx];
+                double dxMin = dx;
+                if (dim >= 2) {
+                    double dy = yExt[j + ngy + 1] - yExt[j + ngy];
+                    if (dy < dxMin) dxMin = dy;
+                }
+                if (dim >= 3) {
+                    double dz = zExt[k + ngz + 1] - zExt[k + ngz];
+                    if (dz < dxMin) dxMin = dz;
+                }
+
+                double rhoSafe = rho[idx] > 1e-14 ? rho[idx] : 1e-14;
+                double nu = muEff / rhoSafe;
+                double dtCell = dxMin * dxMin / (2.0 * dim * nu);
+                double dtCfl = cfl * dtCell;
+                if (dtCfl < dt) dt = dtCfl;
+            }
+        }
+    }
+    return dt;
+}
+
+double computeViscousDt_config_mpi_device(const RectilinearMesh* mesh,
+                                          const SolutionState* state,
+                                          const SimulationConfig* config,
+                                          double cfl, double maxDt,
+                                          MPI_Comm comm) {
+    double localDt = computeViscousDt_config_device(mesh, state, config, cfl, maxDt);
     double globalDt;
     MPI_Allreduce(&localDt, &globalDt, 1, MPI_DOUBLE, MPI_MIN, comm);
     return globalDt;
@@ -338,7 +578,20 @@ void run_time_loop(
         config->time = time;
         config->step++;
 
-        if (time >= nextOutput - 1e-12 * params->outputInterval) {
+        /* Pull primitive + conservative state back to the host only when an
+         * I/O event (VTK dump, NaN scan, checkpoint) actually needs it.  In
+         * the GPU-offload path this is the single per-interval sync; steps
+         * with no output keep the state device-resident across RK stages.
+         * Compiled without `-mp=gpu` the `target update` pragmas become
+         * no-ops, so host-only builds are unaffected. */
+        bool doOutputNow = (time >= nextOutput - 1e-12 * params->outputInterval);
+        bool doCheckpointNow = (doCheckpoint &&
+                                time >= nextCheckpoint - 1e-12 * params->outputInterval);
+        if (doOutputNow || doCheckpointNow) {
+            solution_state_update_prim_from_device(state);
+        }
+
+        if (doOutputNow) {
             NVTX_PUSH("VTK Output");
             vtk_session_write(vtk, state, time);
             NVTX_POP();
@@ -382,7 +635,7 @@ void run_time_loop(
         }
 
         /* Checkpoint writing */
-        if (doCheckpoint && time >= nextCheckpoint - 1e-12 * params->outputInterval) {
+        if (doCheckpointNow) {
             write_checkpoint("Checkpoint", mesh, state, config, rt->rank);
             nextCheckpoint += params->outputInterval;
             std::ostringstream oss;
