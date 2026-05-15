@@ -146,6 +146,8 @@ __pycache__
 *.h5
 *.hdf5
 *.txt
+!CMakeLists.txt
+!cases/2D_rising_bubble/referenceData/*.txt
 .sifv_toggles
 *.err
 *.out
