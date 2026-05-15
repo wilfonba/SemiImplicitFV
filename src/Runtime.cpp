@@ -6,6 +6,7 @@
 #ifdef SIFV_HAS_PETSC
 #include <petsc.h>
 #endif
+#include <omp.h>
 
 #include <cstdlib>
 #include <cstdio>
@@ -16,6 +17,39 @@ static void linspace(double a, double b, int n, double* out) {
         out[i] = a + (b - a) * i / (n - 1);
 }
 
+/* Pin each MPI rank to a distinct GPU.  Without this, every rank's OpenMP
+ * target offload defaults to device 0 and ranks serialize on the same GPU,
+ * which makes 4-rank runs slower than 1-rank runs.  We pick the local-rank
+ * environment variable that the active MPI launcher exports. */
+static void bind_rank_to_device(int worldRank) {
+    int ndev = omp_get_num_devices();
+    if (ndev <= 0) return;
+
+    int localRank = -1;
+    const char* envs[] = {
+        "OMPI_COMM_WORLD_LOCAL_RANK",  /* OpenMPI */
+        "MV2_COMM_WORLD_LOCAL_RANK",   /* MVAPICH2 */
+        "SLURM_LOCALID",               /* srun */
+        "MPI_LOCALRANKID",             /* Intel MPI */
+        "PMI_LOCAL_RANK",              /* MPICH/PMI */
+        NULL
+    };
+    for (int i = 0; envs[i]; ++i) {
+        const char* s = std::getenv(envs[i]);
+        if (s && *s) { localRank = std::atoi(s); break; }
+    }
+    if (localRank < 0) localRank = worldRank;  /* single-node fallback */
+
+    int dev = localRank % ndev;
+    omp_set_default_device(dev);
+
+    if (worldRank == 0) {
+        std::fprintf(stderr,
+            "[sifv] GPU binding: %d device(s) visible; rank 0 → device %d\n",
+            ndev, dev);
+    }
+}
+
 void runtime_init(Runtime* rt, int* argc, char*** argv) {
     std::memset(rt, 0, sizeof(Runtime));
     MPI_Init(argc, argv);
@@ -24,6 +58,7 @@ void runtime_init(Runtime* rt, int* argc, char*** argv) {
 #endif
     MPI_Comm_rank(MPI_COMM_WORLD, &rt->rank);
     MPI_Comm_size(MPI_COMM_WORLD, &rt->size);
+    bind_rank_to_device(rt->rank);
     rt->mpiCtx = NULL;
     rt->halo = NULL;
 }

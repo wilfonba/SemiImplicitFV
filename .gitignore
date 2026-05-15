@@ -140,10 +140,27 @@ Thumbs.db
 *.vtr
 *.pvtr
 VTK/*
+Checkpoint/
 __pycache__
 *.bin
-*.nsys-rep
+*.h5
+*.hdf5
 *.txt
 .sifv_toggles
 *.err
 *.out
+
+# Profiling outputs
+*.nsys-rep
+*.sqlite
+*.qdrep
+*.qdstrm
+*.ncu-rep
+*.nvprof
+*.prof
+gmon.out
+
+# Core dumps
+core
+core.[0-9]*
+vgcore.*
